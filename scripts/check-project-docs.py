@@ -26,7 +26,10 @@ REQUIRED_DOCS = {"docs/项目说明书.md", "docs/CHANGELOG.md"}
 
 def git(*args: str) -> str:
     return subprocess.check_output(
-        ["git", *args], text=True, encoding="utf-8", errors="strict"
+        ["git", "-c", "core.quotepath=false", *args],
+        text=True,
+        encoding="utf-8",
+        errors="strict",
     ).strip()
 
 
@@ -67,4 +70,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

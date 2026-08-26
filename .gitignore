@@ -1,0 +1,64 @@
+# Python
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+backend/build/
+backend/dist/
+backend/*.spec
+
+# Node / frontend build output
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Local configuration, credentials and financial data
+.env
+.env.*
+!.env.example
+data/
+output/
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite3-*
+**/financial_system_config.json
+**/auth.json
+**/.codex/
+**/.luna-codex-home/
+*.pem
+*.key
+
+# Customer statements and private test inputs
+9客户账单/
+客户账单/
+**/9客户账单/**
+**/客户账单/**
+**/客人账单.*
+**/微信图片_*
+**/Manulife\ Lam\ Siu\ Ping*
+
+# Generated releases, archives and local runtime dependencies
+release/
+release-*/
+release_*/
+*.zip
+*.7z
+*.exe
+*.dll
+*.pyd
+tools/*
+!tools/README.md
+
+# Local QA artifacts and personal reports
+qa_*.png
+*工作报告.docx
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+

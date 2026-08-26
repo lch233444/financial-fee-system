@@ -1,0 +1,107 @@
+[CmdletBinding()]
+param(
+    [string]$PnpmExecutable = "",
+    [string]$ReleaseRootName = "release"
+)
+
+$ErrorActionPreference = "Stop"
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+if ($ReleaseRootName -notmatch '^release(?:[-_][A-Za-z0-9]+)*$') {
+    throw "ReleaseRootName只能使用release或release-xxx格式。"
+}
+$ReleaseRoot = Join-Path $ProjectRoot $ReleaseRootName
+$ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
+
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    throw "开发环境尚未安装，请先运行scripts/setup-dev.ps1。"
+}
+if ($PnpmExecutable) {
+    & $PnpmExecutable --dir (Join-Path $ProjectRoot "frontend") run build
+} elseif (Get-Command pnpm -ErrorAction SilentlyContinue) {
+    & pnpm --dir (Join-Path $ProjectRoot "frontend") run build
+} elseif (Get-Command corepack -ErrorAction SilentlyContinue) {
+    & corepack pnpm --dir (Join-Path $ProjectRoot "frontend") run build
+} else {
+    throw "未找到pnpm或corepack。"
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "前端生产构建失败，Windows发布已停止。"
+}
+
+& $VenvPython -m pytest (Join-Path $ProjectRoot "backend\tests") -q
+if ($LASTEXITCODE -ne 0) {
+    throw "后端测试失败，Windows发布已停止。"
+}
+
+& $VenvPython -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onedir `
+    --windowed `
+    --name FinancialFeeSystem `
+    --version-file (Join-Path $ProjectRoot "packaging\version_info.txt") `
+    --distpath $ReleaseRoot `
+    --workpath (Join-Path $ProjectRoot "backend\build") `
+    --specpath (Join-Path $ProjectRoot "backend") `
+    --paths (Join-Path $ProjectRoot "backend") `
+    --add-data "$(Join-Path $ProjectRoot 'frontend\dist');frontend\dist" `
+    --add-data "$(Join-Path $ProjectRoot '新收费计划计算.xlsx');." `
+    --add-data "$(Join-Path $ProjectRoot 'backend\alembic.ini');." `
+    --add-data "$(Join-Path $ProjectRoot 'backend\alembic');alembic" `
+    --collect-submodules uvicorn `
+    --collect-data reportlab `
+    --collect-data alembic `
+    (Join-Path $ProjectRoot "backend\run_financial_system.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller构建失败，Windows发布已停止。"
+}
+
+$BundledOcr = Join-Path $ProjectRoot "tools\Tesseract-OCR"
+if (-not (Test-Path -LiteralPath (Join-Path $BundledOcr "tesseract.exe"))) {
+    throw "缺少tools/Tesseract-OCR，不能生成含OCR环境的一键版。"
+}
+Copy-Item -LiteralPath $BundledOcr -Destination (Join-Path $ReleaseApp "Tesseract-OCR") -Recurse -Force
+
+# 只复制发布方已核验的官方Codex CLI；不在构建期间下载程序，
+# 也绝不复制用户登录令牌。
+$BundledCodex = Join-Path $ProjectRoot "tools\Codex"
+$ExpectedCodexHashes = @{
+    "codex.exe" = "A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6"
+    "codex-code-mode-host.exe" = "8F98CC7AA079B51DBFBB16A8E655A468A9C37C1CD23E22422C10CDFD6CACE543"
+}
+foreach ($CodexFile in @("codex.exe", "codex-code-mode-host.exe")) {
+    $CodexPath = Join-Path $BundledCodex $CodexFile
+    if (-not (Test-Path -LiteralPath $CodexPath)) {
+        throw "缺少tools/Codex/$CodexFile，不能生成含ChatGPT Pro辅助识别的一键版。"
+    }
+    $CodexSignature = Get-AuthenticodeSignature -LiteralPath $CodexPath
+    if (
+        $CodexSignature.Status -ne "Valid" -or
+        -not $CodexSignature.SignerCertificate -or
+        $CodexSignature.SignerCertificate.Subject -notmatch 'O="OpenAI OpCo, LLC"'
+    ) {
+        throw "tools/Codex/$CodexFile 未通过OpenAI Authenticode签名校验，构建已停止。"
+    }
+    $ActualCodexHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $CodexPath).Hash
+    if ($ActualCodexHash -ne $ExpectedCodexHashes[$CodexFile]) {
+        throw "tools/Codex/$CodexFile 与已审计的SHA-256不一致，构建已停止。"
+    }
+}
+$CodexVersionOutput = (& (Join-Path $BundledCodex "codex.exe") --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $CodexVersionOutput -notmatch 'codex-cli\s+0\.149\.1') {
+    throw "Codex CLI版本与已审计的0.149.1不一致，构建已停止。实际输出：$CodexVersionOutput"
+}
+Copy-Item -LiteralPath $BundledCodex -Destination (Join-Path $ReleaseApp "Codex") -Recurse -Force
+Write-Host "已校验并包含OpenAI签名的Codex CLI 0.149.1；最终用户仍需使用自己的ChatGPT账号完成一次浏览器登录。"
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs") -Destination (Join-Path $ReleaseApp "docs") -Recurse -Force
+$BuildAuditDir = Join-Path $ReleaseApp "docs\build-dependencies"
+New-Item -ItemType Directory -Path $BuildAuditDir -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "backend\requirements-dev-lock.txt") -Destination $BuildAuditDir -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "frontend\pnpm-lock.yaml") -Destination $BuildAuditDir -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\启动金融计划收费系统.bat") -Destination $ReleaseApp -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\发布说明.txt") -Destination $ReleaseApp -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\构建清单.txt") -Destination $ReleaseApp -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $ReleaseApp -Force
+
+Write-Host "Windows一键版已生成：$ReleaseApp"

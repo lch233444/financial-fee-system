@@ -1,0 +1,33 @@
+金融计划收费计算系统 MVP 0.2.2 候选版构建清单
+验收日期：2026-08-26
+
+构建环境：
+- Python 3.12.13
+- Node.js 24.19.0（仅构建前端，发布包运行不需要Node.js）
+- pnpm 11.19.0
+- Python包：见 backend/requirements-dev-lock.txt
+- Node包：见 frontend/pnpm-lock.yaml
+
+内置运行组件：
+- OpenAI Codex CLI 0.149.1
+- Tesseract OCR 5.5.3.20260724
+
+关键输入SHA-256：
+- codex.exe: A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
+- codex-code-mode-host.exe: 8F98CC7AA079B51DBFBB16A8E655A468A9C37C1CD23E22422C10CDFD6CACE543
+- tesseract.exe: C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
+- 新收费计划计算.xlsx: 739A8CF0997C09AF5F2E09909A609AFE0D1B9C54A87B88F932571508190872F3
+
+本次发布输出：
+- release-0_2_2/FinancialFeeSystem/FinancialFeeSystem.exe SHA-256: 985B7C9C6986F9403B41776E87C053B48FE3458584C53038DE378D046CAD56F2
+- 发布目录文件数：343
+- 发布目录总字节数：610314260
+- Windows ProductVersion：0.2.2；FileVersion：0.2.2.0。
+- 源码回归：后端完整测试、前端TypeScript及生产构建均须通过后才生成候选包。
+- 样本验收：5份文档均完成本地OCR及固定gpt-5.6-luna单次识别；没有重试或模型回退。
+- 安全验收：2份非余额凭证均被正确分流并禁止生成余额快照；Luna使用独立登录目录。
+- 数据目录：本次验收使用隔离测试路径，不复制或覆盖0.2.1正式业务数据库。
+- 两个Codex可执行文件的Authenticode状态均为Valid，签发主体为OpenAI OpCo, LLC。
+- 构建时已强制校验Codex版本、SHA-256及Authenticode签名；任一不符都会停止构建。
+
+重新安装依赖、更新模板或替换任一内置程序后，必须重新生成本清单并执行完整验收。

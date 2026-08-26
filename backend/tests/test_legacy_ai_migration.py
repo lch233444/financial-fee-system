@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+import sqlite3
+
+from sqlalchemy import create_engine, inspect, text
+
+import app.config as config_module
+import app.database as database_module
+from app.config import Settings
+
+
+def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
+    tmp_path, monkeypatch
+) -> None:
+    data_root = tmp_path / "legacy-data"
+    database_path = data_root / "database" / "financial_system.sqlite3"
+    database_path.parent.mkdir(parents=True)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE statement_imports (
+                id INTEGER PRIMARY KEY,
+                original_name VARCHAR(255) NOT NULL,
+                stored_path VARCHAR(600) NOT NULL,
+                sha256 VARCHAR(64) NOT NULL UNIQUE,
+                mime_type VARCHAR(120) NOT NULL,
+                parser_name VARCHAR(80) NOT NULL DEFAULT 'EMPF_ACCOUNT_PAGE',
+                parser_version VARCHAR(30) NOT NULL DEFAULT '1.1',
+                status VARCHAR(30) NOT NULL DEFAULT 'NEEDS_REVIEW',
+                raw_text TEXT,
+                extracted_json JSON,
+                reviewed_json JSON,
+                revision_log_json JSON,
+                confidence_json JSON,
+                warnings_json JSON,
+                duplicate_of_id INTEGER,
+                confirmed_account_id INTEGER,
+                confirmed_snapshot_id INTEGER,
+                confirmed_at DATETIME,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO statement_imports
+                (id, original_name, stored_path, sha256, mime_type, parser_name,
+                 parser_version, status, extracted_json)
+            VALUES
+                (7, 'legacy.jpg', 'legacy.jpg', ?, 'image/jpeg',
+                 'EMPF_ACCOUNT_PAGE', '1.1', 'NEEDS_REVIEW', ?)
+            """,
+            ("a" * 64, '{"account_number":"24681357"}'),
+        )
+        connection.commit()
+
+    settings = Settings(data_root=data_root)
+    settings.ensure_directories()
+    legacy_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+
+    database_module.init_db()
+
+    columns = {column["name"] for column in inspect(legacy_engine).get_columns("statement_imports")}
+    assert {
+        "ai_recognition_json",
+        "ai_status",
+        "ai_model",
+        "ai_recognized_at",
+    }.issubset(columns)
+    with legacy_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT id, original_name, extracted_json, ai_recognition_json "
+                "FROM statement_imports WHERE id = 7"
+            )
+        ).one()
+        assert row.id == 7
+        assert row.original_name == "legacy.jpg"
+        assert "24681357" in row.extracted_json
+        assert row.ai_recognition_json is None
+        revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert revision == "d8f42c0b7a11"
+    legacy_engine.dispose()

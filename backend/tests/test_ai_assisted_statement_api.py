@@ -460,6 +460,12 @@ def test_non_balance_document_cannot_create_balance_snapshot() -> None:
                 "account_number": "87654321",
                 "holdings": [],
             }
+            item.ai_recognition_json = {
+                "status": "CONFLICT",
+                "values": _ai_values(),
+                "conflicts": [{"field": "document_type"}],
+            }
+            item.ai_status = "CONFLICT"
             db.commit()
 
         before = _financial_counts()
@@ -470,12 +476,146 @@ def test_non_balance_document_cannot_create_balance_snapshot() -> None:
                 "account_number": "87654321",
                 "as_of_date": "2026-03-31",
                 "total_balance": "5000.00",
+                "ai_conflicts_reviewed": True,
+                "luna_document_type_reviewed": True,
             },
         )
 
         assert response.status_code == 409
         assert "禁止生成余额快照" in response.json()["detail"]
         assert _financial_counts() == before
+
+
+def test_unknown_local_type_can_use_luna_balance_type_only_after_explicit_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
+        import_id = _create_statement()
+        account_number = f"LUNA{uuid4().hex[:10]}"
+        scheme_name = f"Luna Type Review {uuid4().hex[:8]}"
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert item is not None
+            item.extracted_json = {
+                **_ocr_values(),
+                "document_type": "unknown",
+                "account_number": account_number,
+                "scheme_name": scheme_name,
+            }
+            db.commit()
+
+        fake = FakeRecognitionClient(
+            {
+                **_ai_values(),
+                "account_number": account_number,
+                "scheme_name": scheme_name,
+            }
+        )
+        _install_fake(monkeypatch, fake)
+        recognized = client.post(f"/api/statement-imports/{import_id}/ai-recognize")
+        assert recognized.status_code == 200, recognized.text
+        assert recognized.json()["ai_status"] == "CONFLICT"
+
+        payload = {
+            "client_name": "SAMPLE CLIENT",
+            "account_number": account_number,
+            "scheme_name": scheme_name,
+            "trustee": "Bank Consortium Trust Company Limited",
+            "as_of_date": "2026-05-20",
+            "total_balance": "9736.57",
+            "ai_conflicts_reviewed": True,
+        }
+        rejected = client.post(f"/api/statement-imports/{import_id}/confirm", json=payload)
+        assert rejected.status_code == 409
+        assert "采用Luna余额页分类" in rejected.json()["detail"]
+
+        accepted = client.post(
+            f"/api/statement-imports/{import_id}/confirm",
+            json={**payload, "luna_document_type_reviewed": True},
+        )
+        assert accepted.status_code == 200, accepted.text
+        with SessionLocal() as db:
+            statement = db.get(StatementImport, import_id)
+            assert statement is not None
+            assert statement.reviewed_json["document_type"] == "empf_account_page"
+            audit = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == "STATEMENT_CONFIRMED",
+                    AuditEvent.entity_id == import_id,
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit is not None
+            assert audit.details_json["document_type_source"] == "LUNA_HUMAN_CONFIRMED"
+
+
+def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None:
+    with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
+        import_id = _create_statement()
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert item is not None
+            source_path = Path(item.stored_path)
+            item.ai_recognition_json = {"status": "CONFLICT", "values": _ai_values()}
+            item.ai_status = "CONFLICT"
+            db.commit()
+        assert source_path.exists()
+
+        response = client.delete(f"/api/statement-imports/{import_id}")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "deleted": True,
+            "import_id": import_id,
+            "source_file_deleted": True,
+        }
+        assert not source_path.exists()
+        with SessionLocal() as db:
+            assert db.get(StatementImport, import_id) is None
+            audit = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == "STATEMENT_IMPORT_DELETED",
+                    AuditEvent.entity_id == import_id,
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit is not None
+            assert audit.details_json["had_ai_recognition"] is True
+
+
+def test_import_delete_requires_local_write_marker_and_preserves_source() -> None:
+    import_id = _create_statement()
+    with SessionLocal() as db:
+        item = db.get(StatementImport, import_id)
+        assert item is not None
+        source_path = Path(item.stored_path)
+
+    with TestClient(app) as client:
+        response = client.delete(f"/api/statement-imports/{import_id}")
+
+    assert response.status_code == 403
+    assert source_path.exists()
+    with SessionLocal() as db:
+        assert db.get(StatementImport, import_id) is not None
+
+
+def test_confirmed_import_delete_is_rejected_and_keeps_source() -> None:
+    with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
+        import_id = _create_statement(status="CONFIRMED")
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert item is not None
+            source_path = Path(item.stored_path)
+
+        response = client.delete(f"/api/statement-imports/{import_id}")
+
+        assert response.status_code == 409
+        assert "不能删除" in response.json()["detail"]
+        assert source_path.exists()
+        with SessionLocal() as db:
+            assert db.get(StatementImport, import_id) is not None
 
 
 def test_confirmed_import_rejects_ai_before_any_model_call(

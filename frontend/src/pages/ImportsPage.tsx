@@ -5,6 +5,7 @@ import {
   FileSearch,
   RefreshCw,
   Sparkles,
+  Trash2,
   TriangleAlert,
   UploadCloud,
 } from "lucide-react";
@@ -267,6 +268,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [assistant, setAssistant] = useState<AiAssistantStatus | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(true);
   const [conflictsAcknowledged, setConflictsAcknowledged] = useState(false);
+  const [lunaDocumentTypeReviewed, setLunaDocumentTypeReviewed] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
   const holdings = (selected?.extracted?.holdings as Holding[] | undefined) || [];
@@ -277,6 +280,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const reviewIssueCount = reviewIssues.length;
   const aiNeedsReview = reviewIssueCount > 0 || selected?.ai_recognition?.status?.toUpperCase() !== "AGREED";
   const assistantReady = assistant?.status === "ready";
+  const localDocumentType = value(selected, "document_type") || "unknown";
+  const lunaDocumentType = aiValue(selected, "document_type");
+  const usesLunaBalanceClassification = localDocumentType === "unknown" && lunaDocumentType === "empf_account_page";
+  const canReviewAsBalancePage = localDocumentType === "empf_account_page" || usesLunaBalanceClassification;
 
   useEffect(() => {
     getAiAssistantStatus()
@@ -301,6 +308,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   useEffect(() => {
     setReviewValues(initialReviewValues(selected));
     setConflictsAcknowledged(false);
+    setLunaDocumentTypeReviewed(false);
     setHoldingsSource("ocr");
   }, [selected?.id]);
 
@@ -362,11 +370,35 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setReviewValues((current) => ({ ...current, [key]: source === "local" ? value(selected, key) : aiValue(selected, key) }));
   }
 
+  async function deleteImport(record: StatementImport) {
+    if (record.status === "CONFIRMED") {
+      setLocalError("已确认入账的导入记录不能删除。");
+      return;
+    }
+    if (!window.confirm(`确定删除导入记录 #${record.id}？原始文件及OCR/Luna结果也会删除，且不能撤销。`)) return;
+    setDeletingId(record.id);
+    setLocalError("");
+    try {
+      await api<{ deleted: boolean }>(`/api/statement-imports/${record.id}`, { method: "DELETE" });
+      if (selected?.id === record.id) setSelected(null);
+      await imports.reload();
+      notify("未确认导入记录及其原始文件已删除");
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "删除导入记录失败");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
     if (reviewIssueCount > 0 && !conflictsAcknowledged) {
       setLocalError("Luna与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
+      return;
+    }
+    if (usesLunaBalanceClassification && !lunaDocumentTypeReviewed) {
+      setLocalError("请查看原件并勾选已确认采用Luna的余额页分类。");
       return;
     }
     setLocalError("");
@@ -382,6 +414,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         account_id: data.get("account_id") ? Number(data.get("account_id")) : null,
         holdings: holdingsSource === "luna" ? aiHoldings : holdings,
         ai_conflicts_reviewed: reviewIssueCount > 0 && conflictsAcknowledged,
+        luna_document_type_reviewed: usesLunaBalanceClassification && lunaDocumentTypeReviewed,
       });
       await Promise.all([imports.reload(), accounts.reload()]);
       notify(result.created_draft ? "已入账并创建待确认客户/账户档案" : "余额快照已正式入账");
@@ -423,7 +456,15 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
 
       <div className="import-layout">
         <Panel title="导入记录" className="import-list-panel">
-          {imports.loading ? <Loading /> : imports.data.length ? <div className="import-list">{imports.data.map((item) => { const type = String(item.extracted?.document_type || "unknown"); return <button key={item.id} className={selected?.id === item.id ? "active" : ""} onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {documentTypeLabels[type] || documentTypeLabels.unknown}</small></span><StatusBadge value={item.status} /></button>; })}</div> : <EmptyState title="暂无导入记录" detail="上传第一份eMPF文件开始。" />}
+          {imports.loading ? <Loading /> : imports.data.length ? <div className="import-list">{imports.data.map((item) => {
+            const type = String(item.extracted?.document_type || "unknown");
+            const lunaType = String(item.ai_recognition?.values?.document_type ?? item.ai_recognition?.extracted?.document_type ?? "");
+            const typeLabel = type === "unknown" && lunaType === "empf_account_page" ? "本地未知 · Luna余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
+            return <div key={item.id} className={`import-list-item ${selected?.id === item.id ? "active" : ""}`}>
+              <button className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
+              <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "已确认入账，不能删除" : "删除未确认导入记录"} disabled={item.status === "CONFIRMED" || deletingId === item.id} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
+            </div>;
+          })}</div> : <EmptyState title="暂无导入记录" detail="上传第一份eMPF文件开始。" />}
         </Panel>
 
         <Panel title="原始文件" subtitle={selected ? selected.original_name : "选择一条记录查看"}>
@@ -431,7 +472,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         </Panel>
 
         <Panel title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接写入余额或流水">
-          {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-box"><CheckCircle2 /><strong>该账单已经复核入账</strong><span>Account #{selected.confirmed_account_id}</span></div> : value(selected, "document_type") !== "empf_account_page" ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
+          {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-box"><CheckCircle2 /><strong>该账单已经复核入账</strong><span>Account #{selected.confirmed_account_id}</span></div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
+            {usesLunaBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={lunaDocumentTypeReviewed} onChange={(event) => setLunaDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Luna的文档类型进入人工复核，Luna不会自动生成余额快照。</small></span></label> : null}
             <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition)} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : "重新执行本地OCR"}</button></div>
             {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
             {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Luna：{warning}</p>)}</div> : null}
@@ -495,7 +537,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div>
             </div> : null}
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit">{reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            <button className="primary" type="submit" disabled={usesLunaBalanceClassification && !lunaDocumentTypeReviewed}>{reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

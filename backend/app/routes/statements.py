@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -134,6 +135,79 @@ def get_statement_import(import_id: int, db: Session = Depends(get_db)) -> dict:
     if not item:
         raise HTTPException(status_code=404, detail="导入记录不存在")
     return _statement_dict(item)
+
+
+@router.delete("/{import_id}")
+def delete_statement_import(import_id: int, db: Session = Depends(get_db)) -> dict:
+    """Delete an unconfirmed import and its private source file.
+
+    The shared recognition lock prevents a delete from racing OCR, Luna, or
+    financial confirmation. Confirmed or snapshot-linked evidence is immutable.
+    """
+
+    with _STATEMENT_RECOGNITION_LOCK:
+        db.rollback()
+        db.expire_all()
+        item = db.get(StatementImport, import_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="导入记录不存在")
+        linked_snapshot_id = db.scalar(
+            select(BalanceSnapshot.id).where(BalanceSnapshot.statement_import_id == item.id).limit(1)
+        )
+        if (
+            item.status == "CONFIRMED"
+            or item.confirmed_account_id is not None
+            or item.confirmed_snapshot_id is not None
+            or linked_snapshot_id is not None
+        ):
+            raise HTTPException(status_code=409, detail="已确认入账或已关联余额快照的导入记录不能删除")
+
+        settings = get_settings()
+        source_path = Path(item.stored_path)
+        statement_root = settings.data_root / "statement_imports"
+        if not is_within(source_path, statement_root):
+            raise HTTPException(status_code=409, detail="导入原件路径不安全，已停止删除")
+        if source_path.exists() and not source_path.is_file():
+            raise HTTPException(status_code=409, detail="导入原件路径不是文件，已停止删除")
+
+        quarantine_path: Path | None = None
+        if source_path.exists():
+            quarantine_root = settings.data_root / "tmp" / "statement-delete"
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+            quarantine_path = quarantine_root / f"{uuid4().hex}{source_path.suffix.casefold()}"
+            source_path.replace(quarantine_path)
+
+        db.add(
+            AuditEvent(
+                action="STATEMENT_IMPORT_DELETED",
+                entity_type="STATEMENT_IMPORT",
+                entity_id=item.id,
+                details_json={
+                    "sha256": item.sha256,
+                    "previous_status": item.status,
+                    "had_ai_recognition": item.ai_recognition_json is not None,
+                    "source_file_found": quarantine_path is not None,
+                },
+            )
+        )
+        db.delete(item)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            if quarantine_path and quarantine_path.exists() and not source_path.exists():
+                quarantine_path.replace(source_path)
+            raise
+
+        if quarantine_path and quarantine_path.exists():
+            try:
+                quarantine_path.unlink()
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail="导入记录已删除，但隔离区原件清理失败；请联系维护人员检查数据目录tmp/statement-delete",
+                ) from exc
+        return {"deleted": True, "import_id": import_id, "source_file_deleted": quarantine_path is not None}
 
 
 @router.get("/{import_id}/file")
@@ -327,14 +401,26 @@ def _confirm_statement_locked(
         raise HTTPException(status_code=409, detail="该文件已经确认入账")
 
     document_type = (item.extracted_json or {}).get("document_type")
-    if document_type != "empf_account_page":
+    ai_review = item.ai_recognition_json or {}
+    ai_values = ai_review.get("values") or ai_review.get("extracted") or {}
+    luna_document_type = ai_values.get("document_type") if isinstance(ai_values, dict) else None
+    luna_balance_page_override = (
+        document_type == "unknown"
+        and luna_document_type == "empf_account_page"
+        and item.ai_status in {"AGREED", "CONFLICT", "INCOMPLETE"}
+    )
+    if document_type != "empf_account_page" and not luna_balance_page_override:
         label = DOCUMENT_TYPE_LABELS.get(str(document_type), DOCUMENT_TYPE_LABELS["unknown"])
         raise HTTPException(
             status_code=409,
             detail=f"该文件被识别为“{label}”，不是账户余额页面，禁止生成余额快照",
         )
+    if luna_balance_page_override and payload.luna_document_type_reviewed is not True:
+        raise HTTPException(
+            status_code=409,
+            detail="本地OCR未能确认文档类型；财务必须查看原件并勾选已确认采用Luna余额页分类",
+        )
 
-    ai_review = item.ai_recognition_json or {}
     ai_requires_acknowledgement = bool(
         item.ai_recognition_json
         and (
@@ -409,7 +495,6 @@ def _confirm_statement_locked(
         raise HTTPException(status_code=409, detail="账单Scheme与选定Sub Account不一致")
 
     recognized_holdings = _normalized_holdings((item.extracted_json or {}).get("holdings"))
-    ai_values = (item.ai_recognition_json or {}).get("values") or {}
     ai_holdings = _normalized_holdings(
         ai_values.get("holdings") if isinstance(ai_values, dict) else None
     )
@@ -450,8 +535,15 @@ def _confirm_statement_locked(
     reviewed_values = {
         **(item.extracted_json or {}),
         **payload.model_dump(
-            mode="json", exclude={"account_id", "ai_conflicts_reviewed", "holdings"}
+            mode="json",
+            exclude={
+                "account_id",
+                "ai_conflicts_reviewed",
+                "luna_document_type_reviewed",
+                "holdings",
+            },
         ),
+        "document_type": "empf_account_page",
         "holdings": confirmed_holdings,
     }
     changes = {
@@ -473,6 +565,7 @@ def _confirm_statement_locked(
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
             "changes": changes,
             "ai_review_acknowledged": bool(payload.ai_conflicts_reviewed),
+            "luna_document_type_reviewed": bool(payload.luna_document_type_reviewed),
         },
     ]
     item.status = "CONFIRMED"
@@ -490,6 +583,9 @@ def _confirm_statement_locked(
                 "changes": changes,
                 "ai_status": item.ai_status,
                 "ai_review_acknowledged": bool(payload.ai_conflicts_reviewed),
+                "document_type_source": (
+                    "LUNA_HUMAN_CONFIRMED" if luna_balance_page_override else "LOCAL_OCR"
+                ),
             },
         )
     )

@@ -1,4 +1,4 @@
-金融计划收费计算系统 MVP 0.2.3 Windows运行版构建清单
+金融计划收费计算系统 MVP 0.2.4 Windows运行版构建清单
 验收日期：2026-08-27
 
 构建环境：
@@ -19,10 +19,10 @@
 - 新收费计划计算.xlsx: 739A8CF0997C09AF5F2E09909A609AFE0D1B9C54A87B88F932571508190872F3
 
 本次发布输出：
-- release-0_2_3_luna_fix/FinancialFeeSystem/FinancialFeeSystem.exe SHA-256: 63454835363048CB087CFF20CBC03A81DF2202F9829178FFD7459988141C2AC9
+- release-0_2_4_import_review_delete/FinancialFeeSystem/FinancialFeeSystem.exe SHA-256: A7B71F209B2EE2AAD63ED25AB67606B2F6EDFC3D1F88B267C15371575593BF91
 - 发布目录文件数：395
-- 发布目录总字节数：612995200
-- Windows ProductVersion：0.2.3；FileVersion：0.2.3.0。
+- 发布目录总字节数：613008060
+- Windows ProductVersion：0.2.4；FileVersion：0.2.4.0。
 - 源码回归：后端完整测试、前端TypeScript及生产构建均须通过后才生成候选包。
 - PDF验收：两页合成PDF逐页生成独立传输图并全部进入同一Luna Turn；结算PDF完成视觉渲染检查。
 - 安全验收：App Server在隔离workspace初始化时不加载项目指令；任何非空instructionSources仍失败关闭。
@@ -31,11 +31,12 @@
 - 构建时已强制校验Codex版本、SHA-256及Authenticode签名；任一不符都会停止构建。
 
 正式提升结果：
-- 正式目录：F:\财务系统\金融计划收费系统_Windows运行版_0.2.3_20260827\FinancialFeeSystem
-- 正式目录包含独立数据根配置，共396个文件、612997392字节；主EXE哈希与上述候选构建一致。
-- 切换前备份：F:\财务系统\财务数据\backups\financial_system_backup_20260827_174100.zip
-- 备份SHA-256：A952DEAEB7F06B5C1D6D4F60FDCF2ED9D848118524A7A43784E6ACB2FA702C8D；ZIP完整性、清单格式及唯一数据库条目均已验证。
-- 正式EXE在8000端口返回0.2.3，使用F:\财务系统\财务数据，数据库Alembic版本为a6d1f4c28b73（head）。
-- 0.2.1旧目录完整保留作为回退；不得在0.2.3写入新业务数据后直接启动旧版连接同一数据库。
+- 正式目录：F:\财务系统\金融计划收费系统_Windows运行版_0.2.4_20260827\FinancialFeeSystem
+- 正式目录包含独立数据根配置，共396个文件、613008113字节；主EXE哈希与上述候选构建一致。
+- 切换前备份：F:\财务系统\财务数据\backups\financial_system_backup_20260827_191032.zip
+- 备份SHA-256：2C47BE4F524163CFA0509285674F4D2CD5C5FAB6F6B950835D59BC46E467D019；ZIP完整性、清单格式及唯一数据库条目均已验证。
+- 正式EXE在8000端口返回0.2.4，使用F:\财务系统\财务数据，数据库Alembic版本为a6d1f4c28b73（head）。
+- 正式OpenAPI包含DELETE及文档类型人工复核字段，线上前端资源包含新删除与Luna分类提示；专用Luna状态为ready。
+- 0.2.3和0.2.1旧目录完整保留作为回退；0.2.4写入新业务数据后不得让旧版直接连接同一数据库。
 
 重新安装依赖、更新模板或替换任一内置程序后，必须重新生成本清单并执行完整验收。

@@ -2,7 +2,7 @@
 
 Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-luna` 进行一次辅助识别。
 
-当前源码及Windows单机运行版为 **0.2.3**。开始开发前请先阅读 [项目说明书](docs/项目说明书.md)、[变更记录](docs/CHANGELOG.md) 和 [协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
+当前源码及Windows单机运行版为 **0.2.4**。开始开发前请先阅读 [项目说明书](docs/项目说明书.md)、[变更记录](docs/CHANGELOG.md) 和 [协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
 
 ## 工程接手入口
 
@@ -20,7 +20,7 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 
 用户在对话中确认的业务背景或规则必须在同一次任务中写回GitHub交接资料，不能依赖对话历史或Agent记忆继续传递。
 
-当前0.2.3已实现第一批财务完整性改造：每个Sub Account独立计算和继承HWM，并使用自己的Starting/Closing Date；Beginning/Closing必须来自账户级Snapshot，Contribution/Withdrawal及两端Snapshot缺凭证时只可保存Draft、不得Finalized；迁移前历史记录保留为`LEGACY_GROUP_HWM`。Luna已隔离出源码项目根，PDF辅助识别按最多20页逐页送审。跨Platform客户Invoice、二态Payment/差额退款和精简FC统计仍在后续批次。
+当前0.2.4延续账户级HWM、Snapshot凭证和Luna隔离边界，并补上导入复核闭环：本地OCR分类未知但Luna判断为余额页时，只有财务查看原件并分别确认文档类型及全部识别冲突后，才可生成余额快照；未确认导入可连同原件及OCR/Luna结果删除，已入账或已关联快照的记录不可删除。跨Platform客户Invoice、二态Payment/差额退款和精简FC统计仍在后续批次。
 
 ## 开发环境
 

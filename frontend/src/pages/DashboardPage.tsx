@@ -10,6 +10,7 @@ type Dashboard = {
   paid_amount: string;
   outstanding_amount: string;
   overdue_invoices: number;
+  period: { year: number; quarter: number | null };
 };
 
 type FCReport = {
@@ -29,7 +30,8 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([api<Dashboard>("/api/dashboard"), api<FCReport[]>("/api/reports/fc")])
+    const year = new Date().getFullYear();
+    Promise.all([api<Dashboard>(`/api/dashboard?year=${year}`), api<FCReport[]>(`/api/reports/fc?year=${year}`)])
       .then(([summary, rows]) => {
         setDashboard(summary);
         setFcs(rows);
@@ -41,7 +43,7 @@ export default function DashboardPage() {
   if (!dashboard) return <Loading />;
   return (
     <>
-      <PageHeader title="经营概览" subtitle="本机实时数据 · Finalized结算与已出具账单" />
+      <PageHeader title="经营概览" subtitle={`${dashboard.period.year}年度 · Finalized结算、Invoice与Payment统一口径`} />
       <div className="stats-grid">
         <article className="stat-card"><span className="stat-icon blue"><UsersRound /></span><div><small>管理客户</small><strong>{dashboard.active_clients}</strong><span>Active Client</span></div></article>
         <article className="stat-card"><span className="stat-icon teal"><WalletCards /></span><div><small>活跃账户</small><strong>{dashboard.active_accounts}</strong><span>Sub Account</span></div></article>
@@ -51,7 +53,7 @@ export default function DashboardPage() {
         <article className="stat-card"><span className="stat-icon red"><AlertTriangle /></span><div><small>逾期账单</small><strong>{dashboard.overdue_invoices}</strong><span>Overdue Invoice</span></div></article>
       </div>
 
-      <Panel title="FC业绩概览" subtitle="客户数量与Service Fee按负责人归集">
+      <Panel title="FC业绩概览" subtitle={`${dashboard.period.year}年度 · Service Fee按结算锁定时的负责人归集`}>
         {fcs.length ? (
           <div className="table-wrap">
             <table>
@@ -75,4 +77,3 @@ export default function DashboardPage() {
     </>
   );
 }
-

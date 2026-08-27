@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -29,6 +31,7 @@ from ..services.storage import is_within
 
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
+_invoice_issue_lock = Lock()
 
 
 def _invoice_query():
@@ -62,20 +65,20 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
     if settlement.service_fee_cents <= 0:
         raise HTTPException(status_code=400, detail="Service Fee为0时只生成结算单，不生成Invoice")
     client = db.get(Client, settlement.client_id)
-    if not client or not client.company_id or not client.fc_id or not client.management_start_date:
+    if not client or not settlement.company_id or not settlement.fc_id or not client.management_start_date:
         raise HTTPException(status_code=400, detail="Client必须补全Company、FC和Management Start Date")
     existing = db.scalar(
         select(Invoice).where(
             Invoice.settlement_id == settlement.id,
-            Invoice.lifecycle_status.in_(["DRAFT", "ISSUED"]),
+            Invoice.lifecycle_status.in_(["DRAFT", "ISSUING", "ISSUED"]),
         )
     )
     if existing:
         raise HTTPException(status_code=409, detail="该Settlement已有有效Invoice")
     item = Invoice(
         settlement_id=settlement.id,
-        company_id=client.company_id,
-        fc_id=client.fc_id,
+        company_id=settlement.company_id,
+        fc_id=settlement.fc_id,
         amount_cents=settlement.service_fee_cents,
         language=payload.language,
         lifecycle_status="DRAFT",
@@ -111,56 +114,93 @@ def issue_invoice(
     payload: InvoiceIssueRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    item = db.scalar(_invoice_query().where(Invoice.id == invoice_id))
-    if not item:
-        raise HTTPException(status_code=404, detail="Invoice不存在")
-    if item.lifecycle_status != "DRAFT":
-        raise HTTPException(status_code=409, detail="只有Draft Invoice可以Issued")
-    if item.settlement.status != "FINALIZED":
-        raise HTTPException(status_code=409, detail="Settlement不是Finalized状态")
-    issue_date = payload.issue_date or date.today()
-    due_date = payload.due_date or (issue_date + timedelta(days=item.company.payment_terms_days))
-    if due_date < issue_date:
-        raise HTTPException(status_code=400, detail="Payment Due Date不能早于Issue Date")
-    item.invoice_number = _next_number(db, item)
-    item.issue_date = issue_date
-    item.due_date = due_date
-    item.language = payload.language
-    item.lifecycle_status = "ISSUED"
-    item.issued_at = datetime.now(timezone.utc)
+    # Reserve the sequence in a short serialized transaction. Rendering the
+    # two PDFs must never hold the SQLite writer lock.
+    with _invoice_issue_lock:
+        item = db.scalar(_invoice_query().where(Invoice.id == invoice_id))
+        if not item:
+            raise HTTPException(status_code=404, detail="Invoice不存在")
+        if item.lifecycle_status != "DRAFT":
+            raise HTTPException(status_code=409, detail="只有Draft Invoice可以Issued")
+        if item.settlement.status != "FINALIZED":
+            raise HTTPException(status_code=409, detail="Settlement不是Finalized状态")
+        issue_date = payload.issue_date or date.today()
+        due_date = payload.due_date or (issue_date + timedelta(days=item.company.payment_terms_days))
+        if due_date < issue_date:
+            raise HTTPException(status_code=400, detail="Payment Due Date不能早于Issue Date")
+        item.invoice_number = _next_number(db, item)
+        item.issue_date = issue_date
+        item.due_date = due_date
+        item.language = payload.language
+        item.lifecycle_status = "ISSUING"
+        db.commit()
+
     settings = get_settings()
     pdf_paths: dict[str, str] = {}
-    db.flush()
-    for language in ("zh", "en"):
-        filename = f"{item.invoice_number}_{language}.pdf"
-        output_path = settings.data_root / "output" / "pdf" / filename
-        generate_settlement_pdf(
-            settlement=item.settlement,
-            invoice=item,
-            language=language,
-            output_path=output_path,
-        )
-        pdf_paths[language] = str(output_path)
+    temp_paths: dict[str, Path] = {}
+    final_paths: dict[str, Path] = {}
+    hashes: dict[str, str] = {}
+    try:
+        for language in ("zh", "en"):
+            filename = f"{item.invoice_number}_{language}.pdf"
+            output_path = settings.data_root / "output" / "pdf" / filename
+            temp_path = output_path.with_name(f".{output_path.name}.{uuid4().hex}.tmp")
+            generate_settlement_pdf(
+                settlement=item.settlement,
+                invoice=item,
+                language=language,
+                output_path=temp_path,
+            )
+            temp_paths[language] = temp_path
+            final_paths[language] = output_path
+            hashes[language] = file_sha256(temp_path)
+        for language, temp_path in temp_paths.items():
+            output_path = final_paths[language]
+            temp_path.replace(output_path)
+            pdf_paths[language] = str(output_path)
+    except Exception as exc:
+        db.rollback()
+        for path in [*temp_paths.values(), *final_paths.values()]:
+            path.unlink(missing_ok=True)
+        with _invoice_issue_lock:
+            failed = db.get(Invoice, invoice_id)
+            if failed and failed.lifecycle_status == "ISSUING":
+                failed.lifecycle_status = "DRAFT"
+                failed.invoice_number = None
+                failed.issue_date = None
+                failed.due_date = None
+                db.commit()
+        raise HTTPException(status_code=500, detail="Invoice PDF生成失败，Invoice已恢复为Draft") from exc
+
+    with _invoice_issue_lock:
+        item = db.scalar(_invoice_query().where(Invoice.id == invoice_id))
+        if not item or item.lifecycle_status != "ISSUING":
+            for path in final_paths.values():
+                path.unlink(missing_ok=True)
+            raise HTTPException(status_code=409, detail="Invoice签发状态已变化，请刷新后重试")
+        for language, output_path in final_paths.items():
+            db.add(
+                ExportRecord(
+                    export_type="PDF_INVOICE",
+                    entity_type="INVOICE",
+                    entity_id=item.id,
+                    stored_path=str(output_path),
+                    sha256=hashes[language],
+                    language=language,
+                )
+            )
+        item.pdf_paths_json = pdf_paths
+        item.lifecycle_status = "ISSUED"
+        item.issued_at = datetime.now(timezone.utc)
         db.add(
-            ExportRecord(
-                export_type="PDF_INVOICE",
+            AuditEvent(
+                action="INVOICE_ISSUED",
                 entity_type="INVOICE",
                 entity_id=item.id,
-                stored_path=str(output_path),
-                sha256=file_sha256(output_path),
-                language=language,
+                details_json={"invoice_number": item.invoice_number},
             )
         )
-    item.pdf_paths_json = pdf_paths
-    db.add(
-        AuditEvent(
-            action="INVOICE_ISSUED",
-            entity_type="INVOICE",
-            entity_id=item.id,
-            details_json={"invoice_number": item.invoice_number},
-        )
-    )
-    db.commit()
+        db.commit()
     db.expire_all()
     item = db.scalar(_invoice_query().where(Invoice.id == invoice_id))
     return invoice_dict(item)
@@ -173,6 +213,8 @@ def void_invoice(invoice_id: int, payload: VoidRequest, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="Invoice不存在")
     if item.lifecycle_status == "VOID":
         raise HTTPException(status_code=409, detail="Invoice已经作废")
+    if item.lifecycle_status == "ISSUING":
+        raise HTTPException(status_code=409, detail="Invoice正在签发，不能作废")
     if item.payments:
         raise HTTPException(status_code=409, detail="已有付款记录的Invoice不能直接作废")
     item.lifecycle_status = "VOID"
@@ -223,7 +265,7 @@ def create_payment(invoice_id: int, payload: PaymentCreate, db: Session = Depend
     return invoice_dict(item)
 
 
-@router.get("/{invoice_id}/pdf")
+@router.post("/{invoice_id}/pdf")
 def download_invoice_pdf(
     invoice_id: int,
     language: str = Query(default="zh", pattern="^(zh|en)$"),

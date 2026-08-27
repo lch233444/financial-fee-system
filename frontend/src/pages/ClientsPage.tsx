@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { postJson } from "../api";
+import { patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
 import type { Account, Client, Company, FC, FeePlan, Platform } from "../types";
@@ -13,9 +13,15 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [clientCompanyId, setClientCompanyId] = useState("");
   const [accountClientId, setAccountClientId] = useState("");
+  const [draftClientId, setDraftClientId] = useState("");
+  const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
+  const [draftAccountId, setDraftAccountId] = useState("");
   const [localError, setLocalError] = useState("");
   const error = localError || clients.error || accounts.error || companies.error || fcs.error || platforms.error || plans.error;
   const selectedAccountClient = clients.data.find((item) => item.id === Number(accountClientId));
+  const selectedDraftClient = clients.data.find((item) => item.id === Number(draftClientId));
+  const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId));
+  const selectedDraftAccountClient = clients.data.find((item) => item.id === selectedDraftAccount?.client_id);
 
   async function submitClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,6 +57,41 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
     } catch (err) { setLocalError(err instanceof Error ? err.message : "Sub Account保存失败"); }
   }
 
+  async function completeDraftClient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedDraftClient) return;
+    const data = new FormData(event.currentTarget);
+    setLocalError("");
+    try {
+      await patchJson(`/api/clients/${selectedDraftClient.id}`, {
+        company_id: Number(data.get("company_id")), fc_id: Number(data.get("fc_id")),
+        name: data.get("name"), management_start_date: data.get("start_date"),
+        contact: data.get("contact") || null, remark: data.get("remark") || null, status: "ACTIVE",
+      });
+      setDraftClientId("");
+      setDraftClientCompanyId("");
+      await Promise.all([clients.reload(), accounts.reload()]);
+      notify("待确认Client已补全并激活");
+    } catch (err) { setLocalError(err instanceof Error ? err.message : "Client补全失败"); }
+  }
+
+  async function completeDraftAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedDraftAccount) return;
+    const data = new FormData(event.currentTarget);
+    setLocalError("");
+    try {
+      await patchJson(`/api/accounts/${selectedDraftAccount.id}`, {
+        platform_id: Number(data.get("platform_id")), fee_plan_id: Number(data.get("fee_plan_id")),
+        scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
+        remark: data.get("remark") || null, status: "ACTIVE",
+      });
+      setDraftAccountId("");
+      await accounts.reload();
+      notify("待确认Sub Account已补全并激活");
+    } catch (err) { setLocalError(err instanceof Error ? err.message : "Sub Account补全失败"); }
+  }
+
   return (
     <>
       <PageHeader title="客户与账户" subtitle="Client可对应多个Platform；同Platform、同Fee Plan的账户会合并结算" />
@@ -77,6 +118,50 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <Field label="开始管理日期"><input name="start_date" type="date" /></Field>
             <button className="primary" type="submit">保存Sub Account</button>
           </form>
+        </Panel>
+      </div>
+
+      <div className="split-layout">
+        <Panel title="补全待确认Client" subtitle="OCR建立的Draft必须补齐归属和开始日期后才能激活">
+          <Field label="选择Draft Client">
+            <select
+              value={draftClientId}
+              onChange={(event) => {
+                const next = clients.data.find((item) => item.id === Number(event.target.value));
+                setDraftClientId(event.target.value);
+                setDraftClientCompanyId(next?.company_id ? String(next.company_id) : "");
+              }}
+            >
+              <option value="">请选择</option>
+              {clients.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          {selectedDraftClient ? (
+            <form className="form-grid" key={selectedDraftClient.id} onSubmit={(event) => void completeDraftClient(event)}>
+              <Field label="Company"><select name="company_id" value={draftClientCompanyId} required onChange={(event) => setDraftClientCompanyId(event.target.value)}><option value="" disabled>请选择</option>{companies.data.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></Field>
+              <Field label="FC"><select name="fc_id" defaultValue={selectedDraftClient.fc_id ?? ""} required><option value="" disabled>请选择</option>{fcs.data.filter((item) => item.company_id === Number(draftClientCompanyId)).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></Field>
+              <Field label="Client Name"><input name="name" defaultValue={selectedDraftClient.name} required /></Field>
+              <Field label="Management Start Date"><input name="start_date" type="date" defaultValue={selectedDraftClient.management_start_date ?? ""} required /></Field>
+              <Field label="联系方式"><input name="contact" defaultValue={selectedDraftClient.contact ?? ""} /></Field>
+              <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftClient.remark ?? ""} /></Field>
+              <button className="primary" type="submit">补全并激活Client</button>
+            </form>
+          ) : <small>当前共有 {clients.data.filter((item) => item.status === "DRAFT").length} 个待确认Client。</small>}
+        </Panel>
+
+        <Panel title="补全待确认Sub Account" subtitle="所属Client必须先激活，再补齐Platform和Fee Plan">
+          <Field label="选择Draft Sub Account"><select value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{item.client_name} · {item.account_number}</option>)}</select></Field>
+          {selectedDraftAccount ? (
+            <form className="form-grid" key={selectedDraftAccount.id} onSubmit={(event) => void completeDraftAccount(event)}>
+              <Field label="Client"><input value={`${selectedDraftAccount.client_name} (${selectedDraftAccountClient?.status ?? "UNKNOWN"})`} disabled /></Field>
+              <Field label="Platform"><select name="platform_id" defaultValue={selectedDraftAccount.platform_id ?? ""} required><option value="" disabled>请选择</option>{platforms.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+              <Field label="Fee Plan"><select name="fee_plan_id" defaultValue={selectedDraftAccount.fee_plan_id ?? ""} required><option value="" disabled>请选择</option>{plans.data.filter((item) => !selectedDraftAccountClient?.company_id || item.company_id === selectedDraftAccountClient.company_id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+              <Field label="Scheme Name"><input name="scheme_name" defaultValue={selectedDraftAccount.scheme_name ?? ""} /></Field>
+              <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} /></Field>
+              <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftAccount.remark ?? ""} /></Field>
+              <button className="primary" type="submit" disabled={selectedDraftAccountClient?.status !== "ACTIVE"}>补全并激活Sub Account</button>
+            </form>
+          ) : <small>当前共有 {accounts.data.filter((item) => item.status === "DRAFT").length} 个待确认Sub Account。</small>}
         </Panel>
       </div>
 

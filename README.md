@@ -2,7 +2,7 @@
 
 Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-luna` 进行一次辅助识别。
 
-当前源码版本为 **0.2.2**。开始开发前请先阅读 [项目说明书](docs/项目说明书.md)、[变更记录](docs/CHANGELOG.md) 和 [协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
+当前源码版本为 **0.2.3**。开始开发前请先阅读 [项目说明书](docs/项目说明书.md)、[变更记录](docs/CHANGELOG.md) 和 [协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
 
 ## 工程接手入口
 
@@ -60,7 +60,7 @@ cd financial-fee-system
 
 详细操作见 [用户操作手册](docs/用户操作手册.md)，AI 安全边界见 [ChatGPT Pro辅助识别说明](docs/ChatGPT%20Pro辅助识别说明.md)，技术规则见 [技术与验收说明](docs/技术与验收说明.md)。
 
-任何影响运行逻辑、业务规则、API、数据库、UI、OCR/Luna、依赖、构建、发布或安全边界的改动，都必须在同一次提交中更新 `docs/项目说明书.md` 和 `docs/CHANGELOG.md`。提交前运行 `python scripts/check-project-docs.py --base <基准提交>`，Pull Request模板也会要求逐项确认。
+对于项目每一次修改都要同步修改项目说明书。凡修改源码、测试、数据库、UI、配置、依赖、构建、发布、脚本或其他项目文件，都必须在同一次提交中更新 `docs/项目说明书.md`；行为或交付状态发生变化时还必须更新 `docs/CHANGELOG.md`。提交前运行 `python scripts/check-project-docs.py --base <基准提交>`，Pull Request模板也会要求逐项确认。
 
 ## 数据安全
 

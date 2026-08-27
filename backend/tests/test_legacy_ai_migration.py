@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect, text
 
 import app.config as config_module
 import app.database as database_module
+from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
@@ -85,5 +86,53 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "d8f42c0b7a11"
+        assert revision == "e91f7c6a2b40"
+
+    settlement_columns = {
+        column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
+    }
+    assert {"company_id", "fc_id", "previous_settlement_id"}.issubset(settlement_columns)
+    with legacy_engine.connect() as connection:
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+            )
+        }
+    assert "trg_transactions_block_finalized_period" in triggers
+    assert "trg_settlement_validate_finalize" in triggers
+    legacy_engine.dispose()
+
+
+def test_unstamped_current_shape_database_gains_missing_financial_triggers(
+    tmp_path, monkeypatch
+) -> None:
+    data_root = tmp_path / "current-shape-data"
+    settings = Settings(data_root=data_root)
+    settings.ensure_directories()
+    legacy_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    database_module.Base.metadata.create_all(bind=legacy_engine)
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+
+    database_module.init_db()
+
+    with legacy_engine.connect() as connection:
+        revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+            )
+        }
+    assert revision == "e91f7c6a2b40"
+    assert {
+        "trg_transactions_block_finalized_period",
+        "trg_settlement_block_out_of_order_insert",
+        "trg_settlement_validate_finalize",
+        "trg_settlement_validate_void",
+    }.issubset(triggers)
     legacy_engine.dispose()

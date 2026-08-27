@@ -13,6 +13,8 @@ from ..models import (
     FC,
     FeePlan,
     Platform,
+    QuarterlySettlement,
+    SettlementAccountLine,
     SubAccount,
     TransactionRecord,
 )
@@ -148,11 +150,16 @@ def create_fee_plan(payload: FeePlanCreate, db: Session = Depends(get_db)) -> di
         raise HTTPException(status_code=404, detail="Company不存在")
     data = payload.model_dump(exclude={"fee_rate_percent"})
     data["code"] = data["code"].strip().upper()
-    item = FeePlan(**data, fee_rate_bps=int(payload.fee_rate_percent * 100))
+    fee_rate_bps = int((payload.fee_rate_percent * 100).to_integral_exact())
+    item = FeePlan(**data, fee_rate_bps=fee_rate_bps)
     db.add(item)
     _commit(db, "同一Company下的Fee Plan Code必须唯一")
     db.refresh(item)
-    return {"id": item.id, **payload.model_dump()}
+    return {
+        "id": item.id,
+        **payload.model_dump(exclude={"fee_rate_percent"}),
+        "fee_rate_percent": item.fee_rate_bps / 100,
+    }
 
 
 @router.get("/clients")
@@ -257,6 +264,8 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
         raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
     if payload.status == "ACTIVE" and (not payload.platform_id or not payload.fee_plan_id):
         raise HTTPException(status_code=400, detail="Active Sub Account必须补全Platform和Fee Plan")
+    if payload.status == "ACTIVE" and client.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Client必须先补全并设为Active")
     if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="账户结束日期不能早于开始日期")
     item = SubAccount(**payload.model_dump(), currency="HKD")
@@ -286,6 +295,8 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
         raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
     if status == "ACTIVE" and (not platform_id or not fee_plan_id):
         raise HTTPException(status_code=400, detail="Active Sub Account必须补全Platform和Fee Plan")
+    if status == "ACTIVE" and item.client.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Client必须先补全并设为Active")
     if start_date and end_date and end_date < start_date:
         raise HTTPException(status_code=400, detail="账户结束日期不能早于开始日期")
     for key, value in changes.items():
@@ -321,6 +332,22 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Sub Account不存在")
     if account.start_date and payload.transaction_date < account.start_date:
         raise HTTPException(status_code=400, detail="交易日期不能早于账户开始管理日期")
+    locked_settlement_id = db.scalar(
+        select(QuarterlySettlement.id)
+        .join(SettlementAccountLine, SettlementAccountLine.settlement_id == QuarterlySettlement.id)
+        .where(
+            SettlementAccountLine.account_id == payload.account_id,
+            QuarterlySettlement.status == "FINALIZED",
+            QuarterlySettlement.start_date <= payload.transaction_date,
+            QuarterlySettlement.closing_date >= payload.transaction_date,
+        )
+        .limit(1)
+    )
+    if locked_settlement_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"交易日期已落入Finalized Settlement #{locked_settlement_id}，请先按顺序作废下游结算后再调整",
+        )
     item = TransactionRecord(
         account_id=payload.account_id,
         transaction_date=payload.transaction_date,
@@ -329,9 +356,13 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         remark=payload.remark,
     )
     db.add(item)
-    db.commit()
+    _commit(db, "交易日期已落入Finalized Settlement，不能补录")
     db.refresh(item)
-    return {"id": item.id, **payload.model_dump(mode="json")}
+    return {
+        "id": item.id,
+        **payload.model_dump(exclude={"amount"}, mode="json"),
+        "amount": money_string(item.amount_cents),
+    }
 
 
 @router.get("/balance-snapshots")
@@ -368,7 +399,7 @@ def create_balance_snapshot(payload: BalanceSnapshotCreate, db: Session = Depend
         account_id=payload.account_id,
         as_of_date=payload.as_of_date,
         total_balance_cents=to_cents(payload.total_balance),
-        eligible_for_closing=closing_eligible,
+        eligible_for_closing=payload.eligible_for_closing and closing_eligible,
         source_type="MANUAL",
         remark=payload.remark,
     )
@@ -377,7 +408,8 @@ def create_balance_snapshot(payload: BalanceSnapshotCreate, db: Session = Depend
     db.refresh(item)
     return {
         "id": item.id,
-        **payload.model_dump(mode="json"),
+        **payload.model_dump(exclude={"total_balance", "eligible_for_closing"}, mode="json"),
+        "total_balance": money_string(item.total_balance_cents),
         "eligible_for_closing": item.eligible_for_closing,
         "currency": "HKD",
     }

@@ -96,6 +96,8 @@ def _settlement_export_query():
     return select(QuarterlySettlement).options(
         selectinload(QuarterlySettlement.client).selectinload(Client.company),
         selectinload(QuarterlySettlement.client).selectinload(Client.fc),
+        selectinload(QuarterlySettlement.company),
+        selectinload(QuarterlySettlement.fc),
         selectinload(QuarterlySettlement.platform),
         selectinload(QuarterlySettlement.fee_plan),
         selectinload(QuarterlySettlement.account_lines).selectinload(SettlementAccountLine.account),
@@ -129,9 +131,18 @@ def dashboard(
     if quarter:
         query = query.where(QuarterlySettlement.quarter == quarter)
     settlements = db.scalars(query).all()
-    invoices = db.scalars(
-        select(Invoice).options(selectinload(Invoice.payments)).where(Invoice.lifecycle_status == "ISSUED")
-    ).all()
+    invoice_query = (
+        select(Invoice)
+        .options(selectinload(Invoice.payments))
+        .join(QuarterlySettlement, QuarterlySettlement.id == Invoice.settlement_id)
+        .where(
+            Invoice.lifecycle_status == "ISSUED",
+            QuarterlySettlement.year == year,
+        )
+    )
+    if quarter:
+        invoice_query = invoice_query.where(QuarterlySettlement.quarter == quarter)
+    invoices = db.scalars(invoice_query).all()
     generated_fee = sum(item.service_fee_cents for item in settlements)
     paid = sum(sum(payment.amount_cents for payment in invoice.payments) for invoice in invoices)
     outstanding = sum(max(invoice.amount_cents - sum(p.amount_cents for p in invoice.payments), 0) for invoice in invoices)
@@ -166,8 +177,7 @@ def fc_report(
         ) or 0
         settlement_query = (
             select(QuarterlySettlement)
-            .join(Client, Client.id == QuarterlySettlement.client_id)
-            .where(Client.fc_id == fc.id, QuarterlySettlement.status == "FINALIZED")
+            .where(QuarterlySettlement.fc_id == fc.id, QuarterlySettlement.status == "FINALIZED")
         )
         if year:
             settlement_query = settlement_query.where(QuarterlySettlement.year == year)
@@ -203,7 +213,7 @@ def fc_report(
     return result
 
 
-@router.get("/exports/excel")
+@router.post("/exports/excel")
 def export_excel(
     settlement_ids: str = Query(..., description="Comma-separated settlement IDs"),
     db: Session = Depends(get_db),
@@ -254,7 +264,7 @@ def export_excel(
     )
 
 
-@router.get("/exports/pdf")
+@router.post("/exports/pdf")
 def export_settlement_pdf(
     settlement_id: int,
     language: str = Query(default="zh", pattern="^(zh|en)$"),

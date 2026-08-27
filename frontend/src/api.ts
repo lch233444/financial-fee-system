@@ -70,8 +70,8 @@ export function shutdownFinancialSystem(): Promise<ShutdownResult> {
   return postJson<ShutdownResult>("/api/shutdown", {});
 }
 
-export async function download(path: string, suggestedName: string): Promise<void> {
-  const response = await fetch(path);
+export async function download(path: string, suggestedName: string, options: RequestInit = {}): Promise<void> {
+  const response = await fetch(path, withFinancialSystemRequestHeader(options));
   if (!response.ok) {
     let message = `下载失败 (${response.status})`;
     try {

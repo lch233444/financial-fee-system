@@ -2,12 +2,31 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
-## 未发布
+## 未发布（目标版本0.2.3）
+
+### 修复
+
+- Finalized结算覆盖期间禁止补录账户流水；HWM链持久化前序Settlement，并在Calculate、Finalize和Void时阻止倒序锁定、上游先作废及事后插入更早期间。
+- Settlement Finalize冻结Company/FC历史归属，FC报表、Invoice和Excel统一使用冻结归属，不再随Client后来转移负责人而变化。
+- 金额输入统一拒绝两位小数以外的静默精度损失，Fee Rate精确转换为bps；季末手工快照尊重用户取消Closing资格的选择。
+- Excel直接导出锁定的Service Fee分整数；Dashboard的Settlement、Invoice、Payment和FC概览统一使用同一年度/季度口径。
+- Settlement存在Draft/Issuing/Issued Invoice或下游结算时禁止Void，并拒绝重复Void。
+- 生成型Excel/PDF及旧Invoice补档改为受写请求保护的POST；GET不再写文件或ExportRecord。
+- Invoice签发拆成编号预留、事务外双语PDF渲染和最终确认三个阶段，并以进程内短锁保证单机并发编号唯一。
+- 修正前端DTO的nullability和状态联合类型，使其与后端实际JSON一致。
+
+### 新增
+
+- 新增Settlement冻结Company/FC与前序结算字段的Alembic迁移，为既有数据回填归属和HWM链，并用SQLite Trigger兜底并发期间的账本/HWM顺序。
+- “客户与账户”页面新增OCR生成Draft Client/Sub Account的补全及激活表单。
+- 新增代码审查缺陷回归测试，覆盖金额精度、Closing资格、账本/HWM锁定、历史FC、期间报表、导出方法与并发签发。
+- 文档同步检查提升为：除同步文档本身外，任何项目文件修改都必须同步项目说明书。
 
 ### 文档
 
 - 将项目说明书升级为工程师级持续交接手册，补齐运行拓扑、模块职责、领域关系、状态机、完整API地图、前端页面、配置项、迁移/备份、测试矩阵、构建验收、故障定位、技术债优先级和Definition of Done。
 - 在README增加统一接手入口和阅读顺序，使新电脑、新工程师及新开发代理能够从GitHub直接建立可靠的项目上下文。
+- 明文写入强制规则“对于项目每一次修改都要同步修改项目说明书”，并同步更新API、状态机、迁移、前端与已知缺口。
 
 ### 新增
 
@@ -21,7 +40,7 @@
 
 ### 验证
 
-- 后端完整测试91/91通过；前端TypeScript与Vite生产构建通过。
+- 后端完整测试102/102通过；前端TypeScript与Vite生产构建通过。
 - 修正文档同步检查脚本在Windows中文路径下的Git文件名解析。
 
 ## 0.2.2 - 2026-08-26（候选版）

@@ -74,10 +74,33 @@ def init_db() -> None:
             "ai_model",
             "ai_recognized_at",
         }
+        settlement_columns = {
+            column["name"] for column in refreshed_inspector.get_columns("quarterly_settlements")
+        }
+        settlement_chain_columns = {"company_id", "fc_id", "previous_settlement_id"}
+        with engine.connect() as connection:
+            settlement_triggers = {
+                row[0]
+                for row in connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+                )
+            }
+        required_settlement_triggers = {
+            "trg_transactions_block_finalized_period",
+            "trg_settlement_block_out_of_order_insert",
+            "trg_settlement_validate_finalize",
+            "trg_settlement_validate_void",
+        }
         if not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
             # directly at head would falsely mark missing columns as applied.
             command.stamp(alembic_config, "b3c4b22cde0d")
+            command.upgrade(alembic_config, "head")
+        elif (
+            not settlement_chain_columns.issubset(settlement_columns)
+            or not required_settlement_triggers.issubset(settlement_triggers)
+        ):
+            command.stamp(alembic_config, "d8f42c0b7a11")
             command.upgrade(alembic_config, "head")
         else:
             command.stamp(alembic_config, "head")

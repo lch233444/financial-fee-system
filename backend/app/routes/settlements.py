@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
@@ -29,11 +30,22 @@ from ..services.calculation import AccountPeriodInput, calculate_settlement, qua
 router = APIRouter(prefix="/api/settlements", tags=["settlements"])
 
 
+def _commit_state_change(db: Session, detail: str) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=detail) from exc
+
+
 def _loaded_query():
     return select(QuarterlySettlement).options(
         selectinload(QuarterlySettlement.client),
         selectinload(QuarterlySettlement.platform),
         selectinload(QuarterlySettlement.fee_plan),
+        selectinload(QuarterlySettlement.company),
+        selectinload(QuarterlySettlement.fc),
+        selectinload(QuarterlySettlement.previous_settlement),
         selectinload(QuarterlySettlement.account_lines).selectinload(SettlementAccountLine.account),
     )
 
@@ -83,6 +95,21 @@ def _previous_finalized(
     return next((item for item in candidates if item.year * 4 + item.quarter < period_key), None)
 
 
+def _later_non_void(db: Session, item: QuarterlySettlement) -> QuarterlySettlement | None:
+    period_key = item.year * 4 + item.quarter
+    candidates = db.scalars(
+        select(QuarterlySettlement)
+        .where(
+            QuarterlySettlement.client_id == item.client_id,
+            QuarterlySettlement.platform_id == item.platform_id,
+            QuarterlySettlement.fee_plan_id == item.fee_plan_id,
+            QuarterlySettlement.status != "VOID",
+        )
+        .order_by(QuarterlySettlement.year, QuarterlySettlement.quarter)
+    ).all()
+    return next((candidate for candidate in candidates if candidate.year * 4 + candidate.quarter > period_key), None)
+
+
 @router.post("/calculate")
 def calculate_or_update_settlement(
     payload: SettlementCalculateRequest,
@@ -103,6 +130,31 @@ def calculate_or_update_settlement(
         raise HTTPException(status_code=400, detail="Starting Date必须位于所选季度内")
     if closing_date < start_date or closing_date > natural_end:
         raise HTTPException(status_code=400, detail="Closing Date必须位于所选季度且不早于Starting Date")
+
+    existing = db.scalar(
+        select(QuarterlySettlement).where(
+            QuarterlySettlement.client_id == payload.client_id,
+            QuarterlySettlement.platform_id == payload.platform_id,
+            QuarterlySettlement.fee_plan_id == payload.fee_plan_id,
+            QuarterlySettlement.year == payload.year,
+            QuarterlySettlement.quarter == payload.quarter,
+        )
+    )
+    if existing and existing.status != "DRAFT":
+        raise HTTPException(status_code=409, detail="已Finalized或Void的Settlement不能直接重算")
+    period_probe = existing or QuarterlySettlement(
+        client_id=payload.client_id,
+        platform_id=payload.platform_id,
+        fee_plan_id=payload.fee_plan_id,
+        year=payload.year,
+        quarter=payload.quarter,
+    )
+    later = _later_non_void(db, period_probe)
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），请先按时间倒序作废后再补算",
+        )
 
     account_ids = [line.account_id for line in payload.account_lines]
     if len(account_ids) != len(set(account_ids)):
@@ -185,17 +237,6 @@ def calculate_or_update_settlement(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    existing = db.scalar(
-        select(QuarterlySettlement).where(
-            QuarterlySettlement.client_id == payload.client_id,
-            QuarterlySettlement.platform_id == payload.platform_id,
-            QuarterlySettlement.fee_plan_id == payload.fee_plan_id,
-            QuarterlySettlement.year == payload.year,
-            QuarterlySettlement.quarter == payload.quarter,
-        )
-    )
-    if existing and existing.status != "DRAFT":
-        raise HTTPException(status_code=409, detail="已Finalized或Void的Settlement不能直接重算")
     if existing:
         item = existing
         item.account_lines.clear()
@@ -211,6 +252,7 @@ def calculate_or_update_settlement(
 
     for key, value in result.to_dict().items():
         setattr(item, key, value)
+    item.previous_settlement_id = previous.id if previous else None
     item.status = "DRAFT"
     for line in account_inputs:
         item.account_lines.append(
@@ -222,7 +264,7 @@ def calculate_or_update_settlement(
                 remark=line.remark,
             )
         )
-    db.commit()
+    _commit_state_change(db, "Settlement期间顺序或唯一性已被并发请求改变，请刷新后重试")
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == item.id))
     return settlement_dict(item)
 
@@ -238,10 +280,34 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
         raise HTTPException(status_code=400, detail="Period Rate分母为0，不能Finalized或出具账单")
     if not item.account_lines:
         raise HTTPException(status_code=400, detail="Settlement缺少账户明细")
+    client = item.client
+    if not client or not client.company_id or not client.fc_id:
+        raise HTTPException(status_code=400, detail="Client必须补全Company和FC后才能Finalized")
+    current_previous = _previous_finalized(
+        db,
+        client_id=item.client_id,
+        platform_id=item.platform_id,
+        fee_plan_id=item.fee_plan_id,
+        year=item.year,
+        quarter=item.quarter,
+    )
+    current_previous_id = current_previous.id if current_previous else None
+    if current_previous_id != item.previous_settlement_id:
+        raise HTTPException(status_code=409, detail="前序Finalized Settlement已变化，请重新Calculate后再锁定")
+    if current_previous and current_previous.next_hwm_cents != item.original_hwm_cents:
+        raise HTTPException(status_code=409, detail="Original HWM与当前前序Settlement不一致，请重新Calculate")
+    later = _later_non_void(db, item)
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），不能倒序Finalized",
+        )
+    item.company_id = client.company_id
+    item.fc_id = client.fc_id
     item.status = "FINALIZED"
     item.finalized_at = datetime.now(timezone.utc)
     db.add(AuditEvent(action="SETTLEMENT_FINALIZED", entity_type="SETTLEMENT", entity_id=item.id))
-    db.commit()
+    _commit_state_change(db, "Settlement前序HWM或下游状态已被并发请求改变，请重新Calculate")
     return settlement_dict(item)
 
 
@@ -250,14 +316,22 @@ def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depe
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == settlement_id))
     if not item:
         raise HTTPException(status_code=404, detail="Settlement不存在")
-    issued_invoice_exists = db.scalar(
+    if item.status == "VOID":
+        raise HTTPException(status_code=409, detail="Settlement已经作废")
+    active_invoice = db.scalar(
         select(Invoice.id).where(
             Invoice.settlement_id == item.id,
-            Invoice.lifecycle_status == "ISSUED",
+            Invoice.lifecycle_status.in_(["DRAFT", "ISSUING", "ISSUED"]),
         )
-    ) is not None
-    if issued_invoice_exists:
-        raise HTTPException(status_code=409, detail="请先作废关联的Issued Invoice")
+    )
+    if active_invoice is not None:
+        raise HTTPException(status_code=409, detail="请先作废关联的Draft或Issued Invoice")
+    later = _later_non_void(db, item)
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Settlement #{later.id} 依赖当前HWM，请先按时间倒序作废后续结算",
+        )
     item.status = "VOID"
     item.void_reason = payload.reason
     db.add(
@@ -268,5 +342,5 @@ def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depe
             details_json={"reason": payload.reason},
         )
     )
-    db.commit()
+    _commit_state_change(db, "Settlement存在下游依赖或有效Invoice，不能作废")
     return settlement_dict(item)

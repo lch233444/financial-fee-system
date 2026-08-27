@@ -52,11 +52,13 @@ def export_settlements_to_template(
         invoice = invoices_by_settlement.get(settlement.id)
         account_numbers = "\n".join(line.account.account_number for line in settlement.account_lines)
         sheet.cell(row, 1, index)
-        sheet.cell(row, 2, settlement.client.company.name if settlement.client.company else "")
+        company = settlement.company or settlement.client.company
+        fc = settlement.fc or settlement.client.fc
+        sheet.cell(row, 2, company.name if company else "")
         sheet.cell(row, 3, f"{settlement.year} Q{settlement.quarter}")
         sheet.cell(row, 4, invoice.invoice_number if invoice else "")
         sheet.cell(row, 5, settlement.client.name)
-        sheet.cell(row, 6, settlement.client.fc.name if settlement.client.fc else "")
+        sheet.cell(row, 6, fc.name if fc else "")
         sheet.cell(row, 7, settlement.platform.name)
         sheet.cell(row, 8, account_numbers)
         sheet.cell(row, 9, settlement.start_date)
@@ -72,11 +74,9 @@ def export_settlements_to_template(
         sheet.cell(row, 19, settlement.original_hwm_cents / 100)
         sheet.cell(row, 20, f"=S{row}+O{row}")
         sheet.cell(row, 21, f"=P{row}-T{row}")
-        if settlement.fee_rate_bps == 2000:
-            sheet.cell(row, 22, f"=IF(U{row}>0,U{row}*20%,0)")
-        else:
-            # 该模板是“利润20%”模板。其他费率保留已锁定计算值，避免错误展示20%。
-            sheet.cell(row, 22, settlement.service_fee_cents / 100)
+        # Export the exact locked integer-cent result. Recalculating from an
+        # unrounded Excel formula can differ from the finalized ledger by one cent.
+        sheet.cell(row, 22, settlement.service_fee_cents / 100)
         sheet.cell(row, 23, f"=MAX(T{row},P{row})")
         sheet.cell(row, 24, invoice.issue_date if invoice else None)
         sheet.cell(row, 25, invoice.due_date if invoice else None)

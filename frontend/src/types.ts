@@ -2,14 +2,15 @@ export type Company = {
   id: number;
   name: string;
   code: string;
-  address?: string;
-  contact?: string;
-  bank_information?: string;
+  address: string | null;
+  contact: string | null;
+  bank_information: string | null;
   payment_terms_days: number;
 };
 
 export type FC = { id: number; company_id: number; company_name: string; name: string; code: string };
-export type Platform = { id: number; name: string; code: string; trustee?: string };
+export type Platform = { id: number; name: string; code: string; trustee: string | null };
+export type MasterStatus = "DRAFT" | "ACTIVE" | "CLOSED";
 export type FeePlan = {
   id: number;
   company_id: number;
@@ -20,27 +21,30 @@ export type FeePlan = {
 };
 export type Client = {
   id: number;
-  company_id?: number;
-  company_name?: string;
-  fc_id?: number;
-  fc_name?: string;
+  company_id: number | null;
+  company_name: string | null;
+  fc_id: number | null;
+  fc_name: string | null;
   name: string;
-  management_start_date?: string;
-  status: string;
+  contact: string | null;
+  management_start_date: string | null;
+  remark: string | null;
+  status: MasterStatus;
 };
 export type Account = {
   id: number;
   client_id: number;
   client_name: string;
-  platform_id?: number;
-  platform_name?: string;
-  fee_plan_id?: number;
-  fee_plan_name?: string;
+  platform_id: number | null;
+  platform_name: string | null;
+  fee_plan_id: number | null;
+  fee_plan_name: string | null;
   account_number: string;
-  scheme_name?: string;
-  start_date?: string;
-  end_date?: string;
-  status: string;
+  scheme_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  remark: string | null;
+  status: MasterStatus;
 };
 export type StatementImport = {
   id: number;
@@ -111,6 +115,11 @@ export type Settlement = {
   id: number;
   client_id: number;
   client_name: string;
+  company_id: number | null;
+  company_name: string | null;
+  fc_id: number | null;
+  fc_name: string | null;
+  previous_settlement_id: number | null;
   platform_id: number;
   platform_name: string;
   fee_plan_id: number;
@@ -134,28 +143,28 @@ export type Settlement = {
   service_fee: string;
   next_hwm: string;
   fee_rate: number;
-  status: string;
+  status: "DRAFT" | "FINALIZED" | "VOID";
   account_lines: Array<{
     account_id: number;
     account_number: string;
     beginning: string;
     closing: string;
-    closing_snapshot_id?: number;
+    closing_snapshot_id: number | null;
   }>;
 };
 export type Invoice = {
   id: number;
   settlement_id: number;
-  invoice_number?: string;
-  lifecycle_status: string;
-  payment_status: string;
-  issue_date?: string;
-  due_date?: string;
+  invoice_number: string | null;
+  lifecycle_status: "DRAFT" | "ISSUING" | "ISSUED" | "VOID";
+  payment_status: "UNPAID" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
+  issue_date: string | null;
+  due_date: string | null;
   amount: string;
   paid_amount: string;
   outstanding_amount: string;
   language: string;
-  void_reason?: string;
+  void_reason: string | null;
   company_name: string;
   fc_name: string;
   client_name: string;

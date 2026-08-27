@@ -11,6 +11,11 @@ def settlement_dict(item: QuarterlySettlement) -> dict:
         "id": item.id,
         "client_id": item.client_id,
         "client_name": item.client.name if item.client else None,
+        "company_id": item.company_id,
+        "company_name": item.company.name if item.company else None,
+        "fc_id": item.fc_id,
+        "fc_name": item.fc.name if item.fc else None,
+        "previous_settlement_id": item.previous_settlement_id,
         "platform_id": item.platform_id,
         "platform_name": item.platform.name if item.platform else None,
         "fee_plan_id": item.fee_plan_id,
@@ -92,4 +97,3 @@ def invoice_dict(item: Invoice) -> dict:
             for payment in item.payments
         ],
     }
-

@@ -21,7 +21,9 @@ PROJECT_FILES = {
     "frontend/vite.config.ts",
     "新收费计划计算.xlsx",
 }
-REQUIRED_DOCS = {"docs/项目说明书.md", "docs/CHANGELOG.md"}
+PROJECT_MANUAL = "docs/项目说明书.md"
+CHANGELOG = "docs/CHANGELOG.md"
+SYNC_DOCS = {PROJECT_MANUAL, CHANGELOG}
 
 
 def git(*args: str) -> str:
@@ -53,18 +55,23 @@ def main() -> int:
     args = parser.parse_args()
 
     changed = changed_files(args.base)
-    if not any(affects_project(path) for path in changed):
-        print("No project behavior files changed; documentation sync check passed.")
+    project_changes = changed - SYNC_DOCS
+    if not project_changes:
+        print("Only synchronization documents changed; documentation sync check passed.")
         return 0
 
-    missing = sorted(REQUIRED_DOCS - changed)
+    missing = []
+    if PROJECT_MANUAL not in changed:
+        missing.append(PROJECT_MANUAL)
+    if any(affects_project(path) for path in project_changes) and CHANGELOG not in changed:
+        missing.append(CHANGELOG)
     if missing:
-        print("Project behavior changed without synchronized documentation:", file=sys.stderr)
+        print("Project changed without synchronized documentation:", file=sys.stderr)
         for path in missing:
             print(f"- {path}", file=sys.stderr)
         return 1
 
-    print("Project manual and changelog were updated with project changes.")
+    print("Project manual is synchronized; behavior changes also include the changelog.")
     return 0
 
 

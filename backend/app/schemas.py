@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -10,6 +10,34 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+CENT = Decimal("0.01")
+PERCENT_BASIS_POINT = Decimal("0.01")
+
+
+def _require_cent_precision(value: Decimal) -> Decimal:
+    """Reject values that would silently change when stored as integer cents."""
+
+    try:
+        rounded = value.quantize(CENT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValueError("金额格式无效") from exc
+    if value != rounded:
+        raise ValueError("金额最多只能有两位小数")
+    return rounded
+
+
+def _require_basis_point_precision(value: Decimal) -> Decimal:
+    """A percentage stored in bps must be exact to 0.01 percentage point."""
+
+    try:
+        rounded = value.quantize(PERCENT_BASIS_POINT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValueError("Fee Rate格式无效") from exc
+    if value != rounded:
+        raise ValueError("Fee Rate百分比最多只能有两位小数")
+    return rounded
 
 
 class CompanyCreate(BaseModel):
@@ -57,6 +85,11 @@ class FeePlanCreate(BaseModel):
     code: str = Field(min_length=1, max_length=40)
     fee_rate_percent: Decimal = Field(default=Decimal("20"), ge=0, le=100)
     calculation_method: str = "HIGH_WATER_MARK"
+
+    @field_validator("fee_rate_percent")
+    @classmethod
+    def validate_fee_rate_precision(cls, value: Decimal) -> Decimal:
+        return _require_basis_point_precision(value)
 
 
 class ClientCreate(BaseModel):
@@ -108,6 +141,11 @@ class TransactionCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     remark: str | None = None
 
+    @field_validator("amount")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
 
 class BalanceSnapshotCreate(BaseModel):
     account_id: int
@@ -116,6 +154,11 @@ class BalanceSnapshotCreate(BaseModel):
     eligible_for_closing: bool = False
     remark: str | None = None
 
+    @field_validator("total_balance")
+    @classmethod
+    def validate_balance_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
 
 class SettlementAccountInput(BaseModel):
     account_id: int
@@ -123,6 +166,11 @@ class SettlementAccountInput(BaseModel):
     closing: Decimal = Field(ge=0)
     closing_snapshot_id: int | None = None
     remark: str | None = None
+
+    @field_validator("beginning", "closing")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
 
 
 class SettlementCalculateRequest(BaseModel):
@@ -135,6 +183,11 @@ class SettlementCalculateRequest(BaseModel):
     closing_date: date | None = None
     original_hwm: Decimal | None = Field(default=None, ge=0)
     account_lines: list[SettlementAccountInput] = Field(min_length=1)
+
+    @field_validator("original_hwm")
+    @classmethod
+    def validate_hwm_precision(cls, value: Decimal | None) -> Decimal | None:
+        return None if value is None else _require_cent_precision(value)
 
 
 class InvoiceDraftCreate(BaseModel):
@@ -157,6 +210,11 @@ class PaymentCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     method: str = Field(min_length=1, max_length=80)
     remark: str | None = None
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
 
 
 class StatementHoldingInput(BaseModel):
@@ -228,6 +286,11 @@ class StatementConfirmRequest(BaseModel):
     # uncertainty, failed validation, or uncorroborated value.
     ai_conflicts_reviewed: bool | None = None
     holdings: list[StatementHoldingInput] | None = Field(default=None, max_length=200)
+
+    @field_validator("total_balance")
+    @classmethod
+    def validate_balance_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
 
 
 class BackupRestoreResult(BaseModel):

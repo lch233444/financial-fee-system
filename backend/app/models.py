@@ -171,6 +171,11 @@ class QuarterlySettlement(TimestampMixin, Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True)
     platform_id: Mapped[int] = mapped_column(ForeignKey("platforms.id", ondelete="RESTRICT"), index=True)
     fee_plan_id: Mapped[int] = mapped_column(ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
+    fc_id: Mapped[int | None] = mapped_column(ForeignKey("fcs.id", ondelete="RESTRICT"), index=True)
+    previous_settlement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("quarterly_settlements.id", ondelete="RESTRICT"), index=True
+    )
     year: Mapped[int] = mapped_column(Integer, index=True)
     quarter: Mapped[int] = mapped_column(Integer, index=True)
     start_date: Mapped[date] = mapped_column(Date)
@@ -198,6 +203,11 @@ class QuarterlySettlement(TimestampMixin, Base):
     client: Mapped[Client] = relationship()
     platform: Mapped[Platform] = relationship()
     fee_plan: Mapped[FeePlan] = relationship()
+    company: Mapped[Company | None] = relationship(foreign_keys=[company_id])
+    fc: Mapped[FC | None] = relationship(foreign_keys=[fc_id])
+    previous_settlement: Mapped[QuarterlySettlement | None] = relationship(
+        remote_side="QuarterlySettlement.id", foreign_keys=[previous_settlement_id]
+    )
     account_lines: Mapped[list[SettlementAccountLine]] = relationship(
         back_populates="settlement", cascade="all, delete-orphan"
     )

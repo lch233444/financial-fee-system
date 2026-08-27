@@ -70,12 +70,13 @@ def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, mon
             "SELECT calculation_mode, service_fee_cents, next_hwm_cents FROM quarterly_settlements WHERE id = 1"
         ).fetchone()
         line = connection.execute(
-            "SELECT beginning_cents, closing_cents, beginning_snapshot_id, service_fee_cents FROM settlement_account_lines WHERE id = 1"
+            "SELECT beginning_cents, closing_cents, beginning_snapshot_id, service_fee_cents, "
+            "start_date, closing_date, days FROM settlement_account_lines WHERE id = 1"
         ).fetchone()
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert settlement == ("LEGACY_GROUP_HWM", 2000, 110000)
-    assert line == (100000, 110000, None, None)
-    assert revision == "f2a8c7d41e90"
+    assert line == (100000, 110000, None, None, "2025-10-01", "2025-12-31", 92)
+    assert revision == "a6d1f4c28b73"
 
 
 def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
@@ -154,7 +155,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "f2a8c7d41e90"
+        assert revision == "a6d1f4c28b73"
 
     settlement_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
@@ -164,7 +165,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
     line_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("settlement_account_lines")
     }
-    assert {"previous_line_id", "beginning_snapshot_id", "service_fee_cents", "next_hwm_cents"}.issubset(
+    assert {"previous_line_id", "beginning_snapshot_id", "service_fee_cents", "next_hwm_cents", "start_date", "closing_date", "days"}.issubset(
         line_columns
     )
     with legacy_engine.connect() as connection:
@@ -204,7 +205,7 @@ def test_unstamped_current_shape_database_gains_missing_financial_triggers(
                 text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             )
         }
-        assert revision == "f2a8c7d41e90"
+        assert revision == "a6d1f4c28b73"
     assert {
         "trg_transactions_block_finalized_period",
         "trg_settlement_block_out_of_order_insert",

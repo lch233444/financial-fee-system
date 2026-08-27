@@ -15,6 +15,8 @@ type Snapshot = {
 };
 type LineState = Record<number, {
   enabled: boolean;
+  startDate: string;
+  closingDate: string;
   beginningSnapshotId: string;
   closingSnapshotId: string;
   originalHwm: string;
@@ -33,18 +35,10 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const [planId, setPlanId] = useState("");
   const [year, setYear] = useState(currentYear);
   const [quarter, setQuarter] = useState(1);
-  const [startDate, setStartDate] = useState(`${currentYear}-01-01`);
-  const [closingDate, setClosingDate] = useState(`${currentYear}-03-31`);
   const [lines, setLines] = useState<LineState>({});
   const [result, setResult] = useState<Settlement | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    const [start, close] = quarterDates(year, quarter);
-    setStartDate(start);
-    setClosingDate(close);
-  }, [year, quarter]);
 
   const groupAccounts = useMemo(() => accounts.data.filter((account) =>
     (!clientId || account.client_id === Number(clientId)) &&
@@ -54,9 +48,21 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   useEffect(() => {
     setLines((previous) => {
       const next: LineState = {};
+      const [quarterStart, quarterClosing] = quarterDates(year, quarter);
       for (const account of groupAccounts) {
-        next[account.id] = previous[account.id] || {
-          enabled: true,
+        const defaultStart = account.start_date && account.start_date > quarterStart ? account.start_date : quarterStart;
+        const defaultClosing = account.end_date && account.end_date < quarterClosing ? account.end_date : quarterClosing;
+        const existing = previous[account.id];
+        const existingIsValid = existing
+          && existing.startDate >= quarterStart
+          && existing.closingDate <= quarterClosing
+          && existing.startDate <= existing.closingDate
+          && (!account.start_date || existing.startDate >= account.start_date)
+          && (!account.end_date || existing.closingDate <= account.end_date);
+        next[account.id] = existingIsValid ? existing : {
+          enabled: defaultStart <= defaultClosing,
+          startDate: defaultStart,
+          closingDate: defaultClosing,
           beginningSnapshotId: "",
           closingSnapshotId: "",
           originalHwm: "",
@@ -64,7 +70,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       }
       return next;
     });
-  }, [groupAccounts]);
+  }, [groupAccounts, year, quarter]);
 
   function updateLine(accountId: number, patch: Partial<LineState[number]>) {
     setLines((current) => ({ ...current, [accountId]: { ...current[accountId], ...patch } }));
@@ -78,13 +84,15 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         .filter((account) => lines[account.id]?.enabled)
         .map((account) => ({
           account_id: account.id,
+          start_date: lines[account.id].startDate,
+          closing_date: lines[account.id].closingDate,
           beginning_snapshot_id: lines[account.id].beginningSnapshotId
             ? Number(lines[account.id].beginningSnapshotId)
             : null,
           closing_snapshot_id: Number(lines[account.id].closingSnapshotId),
           original_hwm: lines[account.id].originalHwm || null,
         }));
-      if (!accountLines.length || accountLines.some((line) => !line.closing_snapshot_id)) {
+      if (!accountLines.length || accountLines.some((line) => !line.start_date || !line.closing_date || !line.closing_snapshot_id)) {
         throw new Error("每个加入结算的Sub Account都必须选择Closing Snapshot");
       }
       const response = await postJson<Settlement>("/api/settlements/calculate", {
@@ -93,8 +101,6 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         fee_plan_id: Number(planId),
         year,
         quarter,
-        start_date: startDate,
-        closing_date: closingDate,
         account_lines: accountLines,
       });
       setResult(response);
@@ -129,17 +135,21 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
           <Field label="Fee Plan"><select value={planId} onChange={(e) => setPlanId(e.target.value)}><option value="">请选择</option>{plans.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="Year"><input type="number" min="2000" max="2200" value={year} onChange={(e) => setYear(Number(e.target.value))} /></Field>
           <Field label="Quarter"><select value={quarter} onChange={(e) => setQuarter(Number(e.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field>
-          <Field label="Starting Date"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></Field>
-          <Field label="Closing Date"><input type="date" value={closingDate} onChange={(e) => setClosingDate(e.target.value)} /></Field>
         </div>
         <div className="account-entry-table">
-          <div className="account-entry header"><span>加入</span><span>Sub Account</span><span>Beginning Snapshot</span><span>Closing Snapshot</span><span>Original HWM</span></div>
+          <div className="account-entry header"><span>加入</span><span>Sub Account</span><span>Starting Date</span><span>Closing Date</span><span>Beginning Snapshot</span><span>Closing Snapshot</span><span>Original HWM</span></div>
           {groupAccounts.length ? groupAccounts.map((account) => {
-            const beginningOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === startDate);
-            const closingOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === closingDate && snapshot.eligible_for_closing);
+            const line = lines[account.id];
+            const [quarterStart, quarterClosing] = quarterDates(year, quarter);
+            const minimumStart = account.start_date && account.start_date > quarterStart ? account.start_date : quarterStart;
+            const maximumClosing = account.end_date && account.end_date < quarterClosing ? account.end_date : quarterClosing;
+            const beginningOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.startDate);
+            const closingOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.closingDate && snapshot.eligible_for_closing);
             return <div className="account-entry" key={account.id}>
               <span><input type="checkbox" checked={lines[account.id]?.enabled ?? true} onChange={(e) => updateLine(account.id, { enabled: e.target.checked })} /></span>
               <span><strong>{account.account_number}</strong><small>{account.client_name}</small></span>
+              <span><input type="date" disabled={!line?.enabled} min={minimumStart} max={line?.closingDate || maximumClosing} value={line?.startDate || ""} onChange={(e) => updateLine(account.id, { startDate: e.target.value, beginningSnapshotId: "" })} /></span>
+              <span><input type="date" disabled={!line?.enabled} min={line?.startDate || minimumStart} max={maximumClosing} value={line?.closingDate || ""} onChange={(e) => updateLine(account.id, { closingDate: e.target.value, closingSnapshotId: "" })} /></span>
               <span><select disabled={!lines[account.id]?.enabled} value={lines[account.id]?.beginningSnapshotId || ""} onChange={(e) => updateLine(account.id, { beginningSnapshotId: e.target.value })}><option value="">自动继承；首次请选择</option>{beginningOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
               <span><select disabled={!lines[account.id]?.enabled} value={lines[account.id]?.closingSnapshotId || ""} onChange={(e) => updateLine(account.id, { closingSnapshotId: e.target.value })}><option value="">请选择Closing</option>{closingOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
               <span><input type="number" min="0" step="0.01" placeholder="首次账户必填" disabled={!lines[account.id]?.enabled} value={lines[account.id]?.originalHwm || ""} onChange={(e) => updateLine(account.id, { originalHwm: e.target.value })} /></span>
@@ -151,7 +161,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
       {result ? <Panel title="计算结果" subtitle={`${result.calculation_mode === "ACCOUNT_HWM" ? "账户级HWM" : "历史组合HWM"} · Formula ${result.formula_version} · ${result.status === "DRAFT" ? "尚未锁定" : "已锁定"}`}>
         <div className="calculation-grid"><span><small>Beginning</small><Money value={result.beginning} /></span><span><small>Net Contribution</small><Money value={result.net_contribution} /></span><span><small>Closing</small><Money value={result.closing} /></span><span><small>Gain / Loss</small><Money value={result.gain_loss} /></span><span><small>Period Rate</small><strong>{result.period_rate == null ? "N/A" : `${(result.period_rate * 100).toFixed(2)}%`}</strong></span><span><small>Days（仅展示）</small><strong>{result.days}</strong></span><span><small>Adjusted HWM合计</small><Money value={result.adjusted_hwm} /></span><span><small>各账户Above HWM合计</small><Money value={result.chargeable_above_hwm} /></span><span className="highlight"><small>各账户Service Fee合计</small><Money value={result.service_fee} emphasis /></span><span><small>Next HWM合计</small><Money value={result.next_hwm} /></span></div>
-        {result.account_lines.length ? <div className="table-wrap settlement-line-results"><table><thead><tr><th>Sub Account</th><th>Beginning</th><th>Net Contribution</th><th>Closing</th><th>Original HWM</th><th>Above HWM</th><th>Service Fee</th><th>凭证</th></tr></thead><tbody>{result.account_lines.map((line) => <tr key={line.id}><td>{line.account_number}</td><td><Money value={line.beginning} /></td><td><Money value={line.net_contribution || "0.00"} /></td><td><Money value={line.closing} /></td><td><Money value={line.original_hwm || "0.00"} /></td><td><Money value={line.chargeable_above_hwm || "0.00"} /></td><td><Money value={line.service_fee || "0.00"} /></td><td>{(line.beginning_evidence_count || 0) > 0 && (line.closing_evidence_count || 0) > 0 ? "完整" : "待补"}</td></tr>)}</tbody></table></div> : null}
+        {result.account_lines.length ? <div className="table-wrap settlement-line-results"><table><thead><tr><th>Sub Account</th><th>账户期间</th><th>Beginning</th><th>Net Contribution</th><th>Closing</th><th>Original HWM</th><th>Above HWM</th><th>Service Fee</th><th>凭证</th></tr></thead><tbody>{result.account_lines.map((line) => <tr key={line.id}><td>{line.account_number}</td><td>{line.start_date} 至 {line.closing_date}<small className="cell-note">{line.days}天</small></td><td><Money value={line.beginning} /></td><td><Money value={line.net_contribution || "0.00"} /></td><td><Money value={line.closing} /></td><td><Money value={line.original_hwm || "0.00"} /></td><td><Money value={line.chargeable_above_hwm || "0.00"} /></td><td><Money value={line.service_fee || "0.00"} /></td><td>{(line.beginning_evidence_count || 0) > 0 && (line.closing_evidence_count || 0) > 0 ? "完整" : "待补"}</td></tr>)}</tbody></table></div> : null}
         <div className="form-actions">{result.status === "DRAFT" ? <button className="primary" onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />Finalized并锁定</button> : <><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=zh`, `settlement_${result.id}_zh.pdf`, { method: "POST" })}><FileText size={17} />中文结算PDF</button><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=en`, `settlement_${result.id}_en.pdf`, { method: "POST" })}><FileText size={17} />English PDF</button><button className="ghost" onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button></>}</div>
       </Panel> : null}
 

@@ -90,6 +90,7 @@ def init_db() -> None:
             "service_fee_cents",
             "formula_version",
         }
+        account_period_columns = {"start_date", "closing_date", "days"}
         with engine.connect() as connection:
             settlement_triggers = {
                 row[0]
@@ -120,6 +121,9 @@ def init_db() -> None:
             or not required_settlement_triggers.issubset(settlement_triggers)
         ):
             command.stamp(alembic_config, "e91f7c6a2b40")
+            command.upgrade(alembic_config, "head")
+        elif not account_period_columns.issubset(account_line_columns):
+            command.stamp(alembic_config, "f2a8c7d41e90")
             command.upgrade(alembic_config, "head")
         else:
             command.stamp(alembic_config, "head")

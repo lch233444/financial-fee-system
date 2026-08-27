@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import pymupdf as fitz
 from PIL import Image
 
 import app.services.codex_app_server as codex_app_server_module
@@ -13,6 +14,7 @@ from app.config import get_settings
 
 from app.services.codex_app_server import (
     CODEX_EXTRACTION_CONFIG,
+    CODEX_RECOGNITION_ROOT_MARKER,
     FIXED_AI_MODEL,
     CodexAppServerClient,
     CodexModelReroutedError,
@@ -26,6 +28,8 @@ from app.services.codex_app_server import (
     _codex_app_server_command,
     _codex_subprocess_environment,
     _image_for_codex,
+    _images_for_codex,
+    _recognition_workspace,
     _validate_bundled_codex_runtime,
     build_ai_review_result,
     compare_ocr_and_ai,
@@ -84,6 +88,7 @@ def test_extraction_subprocess_disables_agent_and_external_tools() -> None:
     assert "plugins={}" in CODEX_EXTRACTION_CONFIG
     assert "project_doc_max_bytes=0" in CODEX_EXTRACTION_CONFIG
     assert "project_doc_fallback_filenames=[]" in CODEX_EXTRACTION_CONFIG
+    assert f'project_root_markers=["{CODEX_RECOGNITION_ROOT_MARKER}"]' in CODEX_EXTRACTION_CONFIG
 
 
 def test_app_server_command_keeps_all_overrides_without_strict_config() -> None:
@@ -559,6 +564,32 @@ def test_customer_image_is_reencoded_to_temporary_png_without_exif(tmp_path: Pat
     assert not transport.exists()
 
 
+def test_recognition_workspace_is_private_project_root() -> None:
+    workspace = _recognition_workspace()
+
+    assert workspace == get_settings().codex_recognition_workspace.resolve()
+    assert (workspace / CODEX_RECOGNITION_ROOT_MARKER).is_file()
+    assert workspace != get_settings().data_root.resolve()
+
+
+def test_pdf_all_pages_are_reencoded_for_luna_and_removed(tmp_path: Path) -> None:
+    source = tmp_path / "statement.pdf"
+    with fitz.open() as document:
+        for page_number in (1, 2):
+            page = document.new_page()
+            page.insert_text((72, 72), f"Statement page {page_number}")
+        document.save(source)
+
+    with _images_for_codex(source) as transports:
+        assert len(transports) == 2
+        assert all(path.is_file() and path.suffix == ".png" for path in transports)
+        assert all(path != source.resolve() for path in transports)
+        with Image.open(transports[1]) as second_page:
+            assert second_page.width > 100
+            assert second_page.height > 100
+    assert all(not path.exists() for path in transports)
+
+
 def test_login_rejects_non_https_auth_url(monkeypatch) -> None:
     client = CodexAppServerClient()
     monkeypatch.setattr(client, "_ensure_started", lambda: None)
@@ -683,11 +714,32 @@ def test_recognition_uses_local_image_schema_and_fixed_luna_only(tmp_path: Path)
     assert transported_path.suffix == ".png"
     assert transported_path != image.resolve()
     assert not transported_path.exists()
+    expected_cwd = str(get_settings().codex_recognition_workspace.resolve())
+    assert thread_params["cwd"] == expected_cwd
+    assert turn_params["cwd"] == expected_cwd
     assert [params["model"] for method, params in client.requests if method in {"thread/start", "turn/start"}] == [
         FIXED_AI_MODEL,
         FIXED_AI_MODEL,
     ]
     assert any(method == "thread/delete" for method, _params in client.requests)
+
+
+def test_pdf_recognition_sends_every_page_as_local_image(tmp_path: Path) -> None:
+    source = tmp_path / "statement.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.new_page()
+        document.save(source)
+    client = _FakeRecognitionClient()
+
+    client.recognize_statement(source)
+
+    turn_params = next(params for method, params in client.requests if method == "turn/start")
+    assert turn_params is not None
+    local_images = [item for item in turn_params["input"] if item["type"] == "localImage"]
+    assert len(local_images) == 2
+    assert all(Path(item["path"]).suffix == ".png" for item in local_images)
+    assert all(not Path(item["path"]).exists() for item in local_images)
 
 
 def test_model_reroute_is_rejected_without_fallback(tmp_path: Path) -> None:

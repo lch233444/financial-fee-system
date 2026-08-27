@@ -229,6 +229,9 @@ class SettlementAccountLine(TimestampMixin, Base):
     beginning_snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("balance_snapshots.id", ondelete="RESTRICT"), index=True
     )
+    start_date: Mapped[date] = mapped_column(Date)
+    closing_date: Mapped[date] = mapped_column(Date)
+    days: Mapped[int] = mapped_column(Integer)
     beginning_cents: Mapped[int] = mapped_column(Integer)
     closing_cents: Mapped[int] = mapped_column(Integer)
     closing_snapshot_id: Mapped[int | None] = mapped_column(

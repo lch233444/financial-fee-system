@@ -36,7 +36,9 @@
 
 ## 3. 登录和状态
 
-Luna使用应用专用的 `CODEX_HOME` 和独立ChatGPT登录。它不会继承桌面Codex的全局 `AGENTS.md`、插件、Hook或MCP配置；退出Luna登录也不会退出Codex桌面应用。每次识别在发送图片前仍会检查安全配置和 `instructionSources`，发现非空来源即停止并转人工复核。
+Luna使用应用专用的 `CODEX_HOME` 和独立ChatGPT登录。App Server进程、Thread和Turn统一使用该目录下带固定项目根标记的`recognition-workspace`，因此源码仓库中的`AGENTS.md`不会因Codex从项目根到cwd的指令发现机制而进入识别Turn。它也不会继承桌面Codex的全局插件、Hook或MCP配置；退出Luna登录不会退出Codex桌面应用。每次识别仍会检查安全配置和 `instructionSources`，隔离后若发现非空来源仍停止并转人工复核。
+
+JPG/PNG会先转成删除EXIF/ICC的临时PNG。PDF会逐页渲染并按原顺序把全部页面作为独立`localImage`送给同一个Luna Turn，单次最多20页；超过20页明确提示拆分，不会再静默只识别第一页。临时图片在识别结束、失败或中断后都会删除。
 
 AI状态可能显示：
 

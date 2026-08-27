@@ -130,6 +130,86 @@ def test_each_account_fee_is_calculated_before_group_total() -> None:
         assert pdf.status_code == 200, pdf.text
 
 
+def test_each_account_uses_its_own_starting_and_closing_dates() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "ACCTPERIOD", accounts=2)
+        first, second = data["accounts"]
+        updated = client.patch(
+            f"/api/accounts/{second['id']}", json={"end_date": "2026-02-28"}
+        )
+        assert updated.status_code == 200, updated.text
+
+        first_beginning = _snapshot(client, first["id"], "2026-01-01", "1000.00", closing=False, evidence=True)
+        first_closing = _snapshot(client, first["id"], "2026-03-31", "1100.00", closing=True, evidence=True)
+        second_beginning = _snapshot(client, second["id"], "2026-02-01", "2000.00", closing=False, evidence=True)
+        second_closing = _snapshot(client, second["id"], "2026-02-28", "2200.00", closing=True, evidence=True)
+        before_second_account_period = client.post(
+            "/api/transactions",
+            json={
+                "account_id": second["id"],
+                "transaction_date": "2026-01-15",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "500.00",
+            },
+        )
+        assert before_second_account_period.status_code == 201, before_second_account_period.text
+
+        settlement = _calculate(
+            client,
+            data,
+            [
+                {
+                    "account_id": first["id"],
+                    "start_date": "2026-01-01",
+                    "closing_date": "2026-03-31",
+                    "beginning_snapshot_id": first_beginning["id"],
+                    "closing_snapshot_id": first_closing["id"],
+                    "original_hwm": "1000.00",
+                },
+                {
+                    "account_id": second["id"],
+                    "start_date": "2026-02-01",
+                    "closing_date": "2026-02-28",
+                    "beginning_snapshot_id": second_beginning["id"],
+                    "closing_snapshot_id": second_closing["id"],
+                    "original_hwm": "2000.00",
+                },
+            ],
+        )
+
+        assert settlement["start_date"] == "2026-01-01"
+        assert settlement["closing_date"] == "2026-03-31"
+        assert [
+            (line["start_date"], line["closing_date"], line["days"])
+            for line in settlement["account_lines"]
+        ] == [
+            ("2026-01-01", "2026-03-31", 90),
+            ("2026-02-01", "2026-02-28", 28),
+        ]
+        assert settlement["account_lines"][1]["contribution"] == "0.00"
+        finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+        assert finalized.status_code == 200, finalized.text
+
+        after_second_account_period = client.post(
+            "/api/transactions",
+            json={
+                "account_id": second["id"],
+                "transaction_date": "2026-03-15",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "100.00",
+            },
+        )
+        assert after_second_account_period.status_code == 201, after_second_account_period.text
+
+        excel = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
+        assert excel.status_code == 200, excel.text
+        sheet = load_workbook(BytesIO(excel.content), data_only=False)["利润20%"]
+        assert sheet["I3"].value.strftime("%Y-%m-%d") == "2026-01-01"
+        assert sheet["J3"].value.strftime("%Y-%m-%d") == "2026-03-31"
+        assert sheet["I4"].value.strftime("%Y-%m-%d") == "2026-02-01"
+        assert sheet["J4"].value.strftime("%Y-%m-%d") == "2026-02-28"
+
+
 def test_draft_allows_missing_snapshot_evidence_but_finalize_blocks_it() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "EVIDENCE")
@@ -153,6 +233,28 @@ def test_draft_allows_missing_snapshot_evidence_but_finalize_blocks_it() -> None
         _attach(client, "SNAPSHOT", closing["id"])
         finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
         assert finalized.status_code == 200, finalized.text
+
+
+def test_one_zero_denominator_account_blocks_group_finalize() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "ZERODENOM", accounts=2)
+        lines = []
+        for account, balance in zip(data["accounts"], ["1000.00", "0.00"], strict=True):
+            beginning = _snapshot(client, account["id"], "2026-01-01", balance, closing=False, evidence=True)
+            closing = _snapshot(client, account["id"], "2026-03-31", balance, closing=True, evidence=True)
+            lines.append({
+                "account_id": account["id"],
+                "beginning_snapshot_id": beginning["id"],
+                "closing_snapshot_id": closing["id"],
+                "original_hwm": balance,
+            })
+
+        settlement = _calculate(client, data, lines)
+        assert settlement["period_rate"] == 0
+        assert settlement["account_lines"][1]["period_rate"] is None
+        blocked = client.post(f"/api/settlements/{settlement['id']}/finalize")
+        assert blocked.status_code == 400
+        assert data["accounts"][1]["account_number"] in blocked.json()["detail"]
 
 
 def test_transaction_requires_its_own_evidence_before_finalize() -> None:

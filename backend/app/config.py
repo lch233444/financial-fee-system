@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         return f"sqlite:///{self.database_path.as_posix()}"
 
+    @property
+    def codex_recognition_workspace(self) -> Path:
+        """Project-isolated working directory for Luna extraction turns."""
+
+        return self.codex_home / "recognition-workspace"
+
     def ensure_directories(self) -> None:
         for path in (
             self.data_root / "database",
@@ -115,6 +121,7 @@ class Settings(BaseSettings):
             self.data_root / "tmp",
             self.data_root / "tmp" / "ai-codex",
             self.codex_home,
+            self.codex_recognition_workspace,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

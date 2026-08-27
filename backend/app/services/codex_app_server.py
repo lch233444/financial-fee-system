@@ -29,6 +29,8 @@ from ..config import APP_VERSION, application_root, get_settings, installation_r
 
 FIXED_AI_MODEL = "gpt-5.6-luna"
 AI_PARSER_VERSION = "CODEX_APP_SERVER_EMPF_1.1"
+CODEX_RECOGNITION_ROOT_MARKER = ".financial-luna-root"
+MAX_AI_PDF_PAGES = 20
 BUNDLED_CODEX_HASHES = {
     "codex.exe": "A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6",
     "codex-code-mode-host.exe": "8F98CC7AA079B51DBFBB16A8E655A468A9C37C1CD23E22422C10CDFD6CACE543",
@@ -51,6 +53,7 @@ CODEX_EXTRACTION_CONFIG = (
     "check_for_update_on_startup=false",
     "project_doc_max_bytes=0",
     "project_doc_fallback_filenames=[]",
+    f'project_root_markers=["{CODEX_RECOGNITION_ROOT_MARKER}"]',
 )
 CRITICAL_FIELDS = ("client_name", "account_number", "as_of_date", "total_balance")
 COMPARABLE_FIELDS = (
@@ -154,6 +157,19 @@ def _codex_subprocess_environment() -> dict[str, str]:
     luna_home.mkdir(parents=True, exist_ok=True)
     scrubbed["CODEX_HOME"] = str(luna_home)
     return scrubbed
+
+
+def _recognition_workspace() -> Path:
+    """Return a private project root that cannot inherit repository guidance."""
+
+    workspace = get_settings().codex_recognition_workspace.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    marker = workspace / CODEX_RECOGNITION_ROOT_MARKER
+    try:
+        marker.touch(exist_ok=True)
+    except OSError as exc:
+        raise CodexUnavailableError("无法建立Luna隔离工作目录") from exc
+    return workspace
 
 
 def _file_sha256(path: Path) -> str:
@@ -677,35 +693,68 @@ Return only the object required by the supplied output schema.
 """
 
 
+def _save_transport_image(image: Image.Image, target: Path) -> None:
+    normalized = image.convert("RGB")
+    normalized.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+    normalized.save(target, format="PNG", optimize=True)
+
+
 @contextmanager
-def _image_for_codex(source: Path) -> Iterator[Path]:
-    """Yield a metadata-free PNG, never the customer's original file."""
+def _images_for_codex(source: Path) -> Iterator[tuple[Path, ...]]:
+    """Yield metadata-free PNG pages, never the customer's original file."""
 
     settings = get_settings()
     target_dir = settings.data_root / "tmp" / "ai-codex"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"statement-{uuid4().hex}.png"
+    batch_id = uuid4().hex
+    targets: list[Path] = []
     try:
         if source.suffix.lower() == ".pdf":
             with fitz.open(source) as document:
                 if not document.page_count:
                     raise CodexRecognitionError("PDF没有可识别页面")
-                pixmap = document.load_page(0).get_pixmap(
-                    matrix=fitz.Matrix(2, 2), alpha=False
-                )
-                image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-                image.save(target, format="PNG")
+                if document.page_count > MAX_AI_PDF_PAGES:
+                    raise CodexRecognitionError(
+                        f"PDF共{document.page_count}页，超过Luna单次最多{MAX_AI_PDF_PAGES}页，请拆分后识别"
+                    )
+                for page_index in range(document.page_count):
+                    pixmap = document.load_page(page_index).get_pixmap(
+                        matrix=fitz.Matrix(2, 2), alpha=False
+                    )
+                    image = Image.frombytes(
+                        "RGB", (pixmap.width, pixmap.height), pixmap.samples
+                    )
+                    target = target_dir / (
+                        f"statement-{batch_id}-page-{page_index + 1:03d}.png"
+                    )
+                    _save_transport_image(image, target)
+                    targets.append(target.resolve())
         else:
             with Image.open(source) as original:
                 # Apply orientation, flatten the pixels, and intentionally omit
                 # EXIF/ICC/text chunks when saving the transport copy.
-                normalized = ImageOps.exif_transpose(original).convert("RGB")
-                normalized.save(target, format="PNG")
-        yield target.resolve()
+                target = target_dir / f"statement-{batch_id}.png"
+                _save_transport_image(ImageOps.exif_transpose(original), target)
+                targets.append(target.resolve())
+        yield tuple(targets)
+    except CodexRecognitionError:
+        raise
     except (OSError, ValueError, fitz.FileDataError) as exc:
-        raise CodexRecognitionError("PDF无法转换为AI识别图片") from exc
+        message = "PDF无法转换为AI识别图片" if source.suffix.lower() == ".pdf" else "账单图片无法转换为AI识别图片"
+        raise CodexRecognitionError(message) from exc
     finally:
-        target.unlink(missing_ok=True)
+        for target in targets:
+            target.unlink(missing_ok=True)
+
+
+@contextmanager
+def _image_for_codex(source: Path) -> Iterator[Path]:
+    """Compatibility wrapper for callers that require exactly one image."""
+
+    with _images_for_codex(source) as images:
+        if len(images) != 1:
+            raise CodexRecognitionError("该文件包含多页，请使用多页识别流程")
+        yield images[0]
 
 
 class CodexAppServerClient:
@@ -881,6 +930,7 @@ class CodexAppServerClient:
                 bufsize=1,
                 creationflags=creation_flags,
                 env=_codex_subprocess_environment(),
+                cwd=str(_recognition_workspace()),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             self._process = None
@@ -1255,9 +1305,8 @@ class CodexAppServerClient:
             thread_id: str | None = None
             turn_id: str | None = None
             try:
-                with _image_for_codex(source) as image_path:
-                    cwd = get_settings().data_root / "tmp" / "ai-codex"
-                    cwd.mkdir(parents=True, exist_ok=True)
+                with _images_for_codex(source) as image_paths:
+                    cwd = _recognition_workspace()
                     thread_result = self._rpc(
                         "thread/start",
                         {
@@ -1280,7 +1329,10 @@ class CodexAppServerClient:
                             "threadId": thread_id,
                             "input": [
                                 {"type": "text", "text": EXTRACTION_PROMPT},
-                                {"type": "localImage", "path": str(image_path)},
+                                *(
+                                    {"type": "localImage", "path": str(image_path)}
+                                    for image_path in image_paths
+                                ),
                             ],
                             "cwd": str(cwd.resolve()),
                             "approvalPolicy": "never",

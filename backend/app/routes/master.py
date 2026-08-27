@@ -347,8 +347,8 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         .where(
             SettlementAccountLine.account_id == payload.account_id,
             QuarterlySettlement.status == "FINALIZED",
-            QuarterlySettlement.start_date <= payload.transaction_date,
-            QuarterlySettlement.closing_date >= payload.transaction_date,
+            SettlementAccountLine.start_date <= payload.transaction_date,
+            SettlementAccountLine.closing_date >= payload.transaction_date,
         )
         .limit(1)
     )

@@ -67,6 +67,8 @@ def _labels(language: str) -> dict[str, str]:
             "period": "Settlement Period",
             "calculation": "Settlement Calculation",
             "account_breakdown": "Account-level Service Fee Breakdown",
+            "account_period": "Period",
+            "closing_short": "Closing",
             "item": "Item",
             "amount": "Amount (HKD)",
             "beginning": "Beginning Balance",
@@ -85,6 +87,7 @@ def _labels(language: str) -> dict[str, str]:
             "next_hwm": "High Water Mark in Next Period",
             "net_short": "Net Contribution",
             "above_short": "Above HWM",
+            "service_fee_short": "Service Fee",
             "payment": "Payment Information",
             "bank": "Bank Transfer",
             "cheque": "Cheque",
@@ -104,6 +107,8 @@ def _labels(language: str) -> dict[str, str]:
         "period": "结算期间 Settlement Period",
         "calculation": "结算计算 Settlement Calculation",
         "account_breakdown": "账户级收费明细 Account-level Breakdown",
+        "account_period": "期间 Period",
+        "closing_short": "期末 Closing",
         "item": "项目 Item",
         "amount": "金额 Amount (HKD)",
         "beginning": "期初余额 Beginning",
@@ -120,8 +125,9 @@ def _labels(language: str) -> dict[str, str]:
         "fee_rate": "服务费率 Fee Rate",
         "service_fee": "应付服务费 Service Fee",
         "next_hwm": "下期高水位 Next HWM",
-        "net_short": "净资金 Net Contribution",
-        "above_short": "超出HWM Above HWM",
+        "net_short": "净资金 Net",
+        "above_short": "超额 Above HWM",
+        "service_fee_short": "服务费 Service Fee",
         "payment": "付款信息 Payment Information",
         "bank": "银行转账 Bank Transfer",
         "cheque": "支票 Cheque",
@@ -255,23 +261,29 @@ def generate_settlement_pdf(
     story.append(meta)
 
     if settlement.calculation_mode == "ACCOUNT_HWM":
-        account_rows = [[labels["accounts"], labels["closing"], labels["net_short"], labels["above_short"], labels["service_fee"]]]
+        account_rows = [[labels["accounts"], labels["account_period"], labels["closing_short"], labels["net_short"], labels["above_short"], labels["service_fee_short"]]]
         for line in settlement.account_lines:
             account_rows.append(
                 [
                     line.account.account_number,
+                    f"{line.start_date:%d/%m/%Y} - {line.closing_date:%d/%m/%Y}",
                     _money(line.closing_cents),
                     _money(line.net_contribution_cents or 0),
                     _money(line.chargeable_above_hwm_cents or 0),
                     _money(line.service_fee_cents or 0),
                 ]
             )
-        account_table = Table(account_rows, colWidths=[42 * mm, 33 * mm, 33 * mm, 33 * mm, 33 * mm], repeatRows=1)
+        account_table = Table(
+            account_rows,
+            colWidths=[29 * mm, 42 * mm, 25 * mm, 24 * mm, 27 * mm, 27 * mm],
+            repeatRows=1,
+        )
         account_table.setStyle(
             TableStyle(
                 [
                     ("FONTNAME", (0, 0), (-1, -1), font),
                     ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("FONTSIZE", (0, 0), (-1, 0), 6.5),
                     ("BACKGROUND", (0, 0), (-1, 0), BRAND),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("ALIGN", (1, 1), (-1, -1), "RIGHT"),

@@ -236,13 +236,29 @@ def calculate_or_update_settlement(
             detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），请先按时间倒序作废后再补算",
         )
 
-    line_results: list[tuple[SettlementAccountInput, SettlementCalculation, int, int, int | None]] = []
+    line_results: list[
+        tuple[SettlementAccountInput, SettlementCalculation, int, int, int | None]
+    ] = []
     for line in payload.account_lines:
+        line_start_date = line.start_date or start_date
+        line_closing_date = line.closing_date or closing_date
+        if line_start_date < natural_start or line_start_date > natural_end:
+            raise HTTPException(status_code=400, detail="账户Starting Date必须位于所选季度内")
+        if line_closing_date < line_start_date or line_closing_date > natural_end:
+            raise HTTPException(
+                status_code=400, detail="账户Closing Date必须位于所选季度且不早于Starting Date"
+            )
+        account = accounts[line.account_id]
+        if account.start_date and line_start_date < account.start_date:
+            raise HTTPException(status_code=400, detail="账户Starting Date不能早于Sub Account开始管理日期")
+        if account.end_date and line_closing_date > account.end_date:
+            raise HTTPException(status_code=400, detail="账户Closing Date不能晚于Sub Account结束管理日期")
+
         closing_snapshot = db.get(BalanceSnapshot, line.closing_snapshot_id)
         if not closing_snapshot or closing_snapshot.account_id != line.account_id:
             raise HTTPException(status_code=400, detail="Closing Snapshot与Sub Account不匹配")
-        if closing_snapshot.as_of_date != closing_date:
-            raise HTTPException(status_code=400, detail="Closing Snapshot日期必须等于Closing Date")
+        if closing_snapshot.as_of_date != line_closing_date:
+            raise HTTPException(status_code=400, detail="Closing Snapshot日期必须等于该账户Closing Date")
         if not closing_snapshot.eligible_for_closing:
             raise HTTPException(status_code=400, detail="该余额快照不是季末或退出日，不能作为Closing")
 
@@ -265,8 +281,8 @@ def calculate_or_update_settlement(
             beginning_snapshot = db.get(BalanceSnapshot, line.beginning_snapshot_id)
             if not beginning_snapshot or beginning_snapshot.account_id != line.account_id:
                 raise HTTPException(status_code=400, detail="Beginning Snapshot与Sub Account不匹配")
-            if beginning_snapshot.as_of_date != start_date:
-                raise HTTPException(status_code=400, detail="首次Beginning Snapshot日期必须等于Starting Date")
+            if beginning_snapshot.as_of_date != line_start_date:
+                raise HTTPException(status_code=400, detail="首次Beginning Snapshot日期必须等于该账户Starting Date")
             if line.original_hwm is None:
                 raise HTTPException(status_code=400, detail="首次账户结算必须输入该Sub Account的Original HWM")
             beginning_snapshot_id = beginning_snapshot.id
@@ -277,22 +293,22 @@ def calculate_or_update_settlement(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
                 TransactionRecord.account_id == line.account_id,
                 TransactionRecord.transaction_type == "CONTRIBUTION",
-                TransactionRecord.transaction_date > start_date,
-                TransactionRecord.transaction_date <= closing_date,
+                TransactionRecord.transaction_date > line_start_date,
+                TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0
         withdrawal_cents = db.scalar(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
                 TransactionRecord.account_id == line.account_id,
                 TransactionRecord.transaction_type == "WITHDRAWAL",
-                TransactionRecord.transaction_date > start_date,
-                TransactionRecord.transaction_date <= closing_date,
+                TransactionRecord.transaction_date > line_start_date,
+                TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0
         try:
             result = calculate_account_settlement(
-                start_date=start_date,
-                closing_date=closing_date,
+                start_date=line_start_date,
+                closing_date=line_closing_date,
                 beginning_cents=beginning_cents,
                 closing_cents=closing_snapshot.total_balance_cents,
                 contribution_cents=int(contribution_cents),
@@ -302,11 +318,21 @@ def calculate_or_update_settlement(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        line_results.append((line, result, beginning_snapshot_id, closing_snapshot.id, previous_line.id if previous_line else None))
+        line_results.append(
+            (
+                line,
+                result,
+                beginning_snapshot_id,
+                closing_snapshot.id,
+                previous_line.id if previous_line else None,
+            )
+        )
 
+    aggregate_start_date = min(entry[1].start_date for entry in line_results)
+    aggregate_closing_date = max(entry[1].closing_date for entry in line_results)
     aggregate = aggregate_account_settlements(
-        start_date=start_date,
-        closing_date=closing_date,
+        start_date=aggregate_start_date,
+        closing_date=aggregate_closing_date,
         calculations=[entry[1] for entry in line_results],
     )
     previous_group = _previous_finalized(
@@ -344,6 +370,9 @@ def calculate_or_update_settlement(
                 previous_line_id=previous_line_id,
                 beginning_snapshot_id=beginning_snapshot_id,
                 closing_snapshot_id=closing_snapshot_id,
+                start_date=result.start_date,
+                closing_date=result.closing_date,
+                days=result.days,
                 beginning_cents=result.beginning_cents,
                 closing_cents=result.closing_cents,
                 contribution_cents=result.contribution_cents,
@@ -380,8 +409,8 @@ def _missing_evidence(db: Session, item: QuarterlySettlement) -> list[str]:
         transactions = db.scalars(
             select(TransactionRecord).where(
                 TransactionRecord.account_id == line.account_id,
-                TransactionRecord.transaction_date > item.start_date,
-                TransactionRecord.transaction_date <= item.closing_date,
+                TransactionRecord.transaction_date > line.start_date,
+                TransactionRecord.transaction_date <= line.closing_date,
             )
         ).all()
         for transaction in transactions:
@@ -397,10 +426,21 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
         raise HTTPException(status_code=404, detail="Settlement不存在")
     if item.status != "DRAFT":
         raise HTTPException(status_code=409, detail="只有Draft Settlement可以Finalized")
-    if item.period_rate_ppm is None:
-        raise HTTPException(status_code=400, detail="Period Rate分母为0，不能Finalized或出具账单")
     if not item.account_lines:
         raise HTTPException(status_code=400, detail="Settlement缺少账户明细")
+    if item.calculation_mode == ACCOUNT_HWM_MODE:
+        zero_denominator_lines = [
+            line.account.account_number if line.account else f"#{line.account_id}"
+            for line in item.account_lines
+            if line.period_rate_ppm is None
+        ]
+        if zero_denominator_lines:
+            raise HTTPException(
+                status_code=400,
+                detail=f"以下Sub Account的Period Rate分母为0，不能Finalized或出具账单：{'、'.join(zero_denominator_lines)}",
+            )
+    elif item.period_rate_ppm is None:
+        raise HTTPException(status_code=400, detail="Period Rate分母为0，不能Finalized或出具账单")
     client = item.client
     if not client or not client.company_id or not client.fc_id:
         raise HTTPException(status_code=400, detail="Client必须补全Company和FC后才能Finalized")

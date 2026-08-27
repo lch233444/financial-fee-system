@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 修复Luna App Server继承源码仓库cwd而加载`AGENTS.md`、导致辅助识别全部转人工的问题：进程、Thread和Turn统一切换到应用专用、带固定项目根标记的隔离workspace；任何残留`instructionSources`仍失败关闭。
+- 修复Luna对PDF只发送第一页的问题：20页内逐页渲染为无元数据PNG并在同一Turn按序识别，超过20页明确要求拆分，临时图片始终清理。
 - Finalized结算覆盖期间禁止补录账户流水；HWM链持久化前序Settlement，并在Calculate、Finalize和Void时阻止倒序锁定、上游先作废及事后插入更早期间。
 - Settlement Finalize冻结Company/FC历史归属，FC报表、Invoice和Excel统一使用冻结归属，不再随Client后来转移负责人而变化。
 - 金额输入统一拒绝两位小数以外的静默精度损失，Fee Rate精确转换为bps；季末手工快照尊重用户取消Closing资格的选择。
@@ -17,6 +19,8 @@
 
 ### 新增
 
+- 用户确认每个Sub Account使用自己的Starting Date和Closing Date独立计算。结算明细新增账户日期和Days，流水汇总、Snapshot匹配、凭证检查、Finalized期间锁定、Excel及PDF均改用账户期间；容器日期只表示最早至最晚的汇总展示范围。
+- 新增`a6d1f4c28b73`迁移，为历史账户明细从容器无损回填期间，并把SQLite财务Trigger切换到账户级日期。
 - Settlement正式切换为Sub Account级HWM：每条账户明细独立保存Original/Adjusted/Next HWM、Contribution/Withdrawal、Above HWM和Service Fee，容器层只汇总各账户结果，账户间盈亏不再抵销。
 - Beginning必须来自首次明确期初Snapshot或自动继承该账户上期Closing Snapshot；Closing必须来自日期匹配且符合资格的Snapshot，正式API不再接受手填Beginning/Closing。
 - Snapshot和Transaction列表新增记录级凭证状态；Draft允许缺凭证，Finalize同时由路由与SQLite Trigger阻止缺少Beginning、Closing、Contribution或Withdrawal凭证的结算。
@@ -51,7 +55,7 @@
 
 ### 验证
 
-- 后端完整测试106/106通过；前端TypeScript与Vite生产构建通过。
+- 后端完整测试111/111通过；前端TypeScript与Vite生产构建通过；两页合成PDF逐页传输测试及结算PDF视觉渲染检查通过。
 - 修正文档同步检查脚本在Windows中文路径下的Git文件名解析。
 
 ## 0.2.2 - 2026-08-26（候选版）

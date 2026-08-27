@@ -162,6 +162,8 @@ class BalanceSnapshotCreate(BaseModel):
 
 class SettlementAccountInput(BaseModel):
     account_id: int
+    start_date: date | None = None
+    closing_date: date | None = None
     beginning_snapshot_id: int | None = None
     closing_snapshot_id: int
     original_hwm: Decimal | None = Field(default=None, ge=0)

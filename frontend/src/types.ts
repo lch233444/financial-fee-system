@@ -151,6 +151,9 @@ export type Settlement = {
     account_id: number;
     account_number: string;
     previous_line_id: number | null;
+    start_date: string;
+    closing_date: string;
+    days: number;
     beginning_snapshot_id: number | null;
     beginning: string;
     contribution: string | null;

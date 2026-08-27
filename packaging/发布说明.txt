@@ -1,12 +1,12 @@
-金融计划收费计算系统 MVP 0.2.2
-构建日期：2026-08-26
+金融计划收费计算系统 MVP 0.2.3
+构建日期：2026-08-27
 
 本版主要更新：
-- 区分账户余额页、供款记录、供款/资产转入记录和未知文件；非余额凭证禁止生成余额快照。
-- PDF优先读取原生文字层，扫描PDF支持多页OCR；长截图采用重叠分段识别。
-- 增强Manulife多基金表、受托人、小额持仓及BCT供款分类字段提取。
-- 增加余额算术校验，并按基金名称执行OCR/Luna字段级核验，避免行序不同产生假冲突。
-- Luna改用金融系统专用独立登录目录，不继承桌面Codex配置。
+- 修复Luna继承源码或发布目录项目指令、点击识别后直接转人工的问题；进程、Thread和Turn统一使用隔离工作目录，残留指令来源仍会安全停止。
+- PDF辅助识别由仅发送第一页改为最多20页逐页发送；超过20页明确提示拆分，不静默漏页。
+- 每个Sub Account使用自己的Starting Date、Closing Date、Days、流水区间和HWM独立计算；Excel/PDF同步展示账户期间。
+- Beginning/Closing必须来自账户级Snapshot，账户HWM按自身前序Finalized结算继承；缺少Snapshot或本期资金流水凭证时不得Finalize。
+- 保留本地OCR、Luna单模型、人工最终确认、loopback监听和不可自动升级模型等安全边界。
 
 启动方式：
 1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。

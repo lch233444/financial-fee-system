@@ -162,15 +162,15 @@ class BalanceSnapshotCreate(BaseModel):
 
 class SettlementAccountInput(BaseModel):
     account_id: int
-    beginning: Decimal = Field(ge=0)
-    closing: Decimal = Field(ge=0)
-    closing_snapshot_id: int | None = None
+    beginning_snapshot_id: int | None = None
+    closing_snapshot_id: int
+    original_hwm: Decimal | None = Field(default=None, ge=0)
     remark: str | None = None
 
-    @field_validator("beginning", "closing")
+    @field_validator("original_hwm")
     @classmethod
-    def validate_amount_precision(cls, value: Decimal) -> Decimal:
-        return _require_cent_precision(value)
+    def validate_amount_precision(cls, value: Decimal | None) -> Decimal | None:
+        return None if value is None else _require_cent_precision(value)
 
 
 class SettlementCalculateRequest(BaseModel):
@@ -181,13 +181,7 @@ class SettlementCalculateRequest(BaseModel):
     quarter: int = Field(ge=1, le=4)
     start_date: date | None = None
     closing_date: date | None = None
-    original_hwm: Decimal | None = Field(default=None, ge=0)
     account_lines: list[SettlementAccountInput] = Field(min_length=1)
-
-    @field_validator("original_hwm")
-    @classmethod
-    def validate_hwm_precision(cls, value: Decimal | None) -> Decimal | None:
-        return None if value is None else _require_cent_precision(value)
 
 
 class InvoiceDraftCreate(BaseModel):

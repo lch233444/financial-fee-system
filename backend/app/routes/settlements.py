@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -10,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import (
+    Attachment,
     AuditEvent,
     BalanceSnapshot,
     Client,
@@ -22,12 +22,18 @@ from ..models import (
     TransactionRecord,
 )
 from ..money import to_cents
-from ..schemas import SettlementCalculateRequest, VoidRequest
+from ..schemas import SettlementAccountInput, SettlementCalculateRequest, VoidRequest
 from ..serializers import settlement_dict
-from ..services.calculation import AccountPeriodInput, calculate_settlement, quarter_dates
+from ..services.calculation import (
+    SettlementCalculation,
+    aggregate_account_settlements,
+    calculate_account_settlement,
+    quarter_dates,
+)
 
 
 router = APIRouter(prefix="/api/settlements", tags=["settlements"])
+ACCOUNT_HWM_MODE = "ACCOUNT_HWM"
 
 
 def _commit_state_change(db: Session, detail: str) -> None:
@@ -61,7 +67,7 @@ def list_settlements(
         query = query.where(QuarterlySettlement.year == year)
     if quarter:
         query = query.where(QuarterlySettlement.quarter == quarter)
-    return [settlement_dict(item) for item in db.scalars(query).unique().all()]
+    return [settlement_dict(item, db=db) for item in db.scalars(query).unique().all()]
 
 
 @router.get("/{settlement_id}")
@@ -69,7 +75,7 @@ def get_settlement(settlement_id: int, db: Session = Depends(get_db)) -> dict:
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == settlement_id))
     if not item:
         raise HTTPException(status_code=404, detail="Settlement不存在")
-    return settlement_dict(item)
+    return settlement_dict(item, db=db)
 
 
 def _previous_finalized(
@@ -95,6 +101,24 @@ def _previous_finalized(
     return next((item for item in candidates if item.year * 4 + item.quarter < period_key), None)
 
 
+def _previous_finalized_line(
+    db: Session, *, account_id: int, year: int, quarter: int
+) -> SettlementAccountLine | None:
+    period_key = year * 4 + quarter
+    return db.scalar(
+        select(SettlementAccountLine)
+        .join(QuarterlySettlement, QuarterlySettlement.id == SettlementAccountLine.settlement_id)
+        .where(
+            SettlementAccountLine.account_id == account_id,
+            QuarterlySettlement.calculation_mode == ACCOUNT_HWM_MODE,
+            QuarterlySettlement.status == "FINALIZED",
+            (QuarterlySettlement.year * 4 + QuarterlySettlement.quarter) < period_key,
+        )
+        .order_by(QuarterlySettlement.year.desc(), QuarterlySettlement.quarter.desc())
+        .limit(1)
+    )
+
+
 def _later_non_void(db: Session, item: QuarterlySettlement) -> QuarterlySettlement | None:
     period_key = item.year * 4 + item.quarter
     candidates = db.scalars(
@@ -108,6 +132,48 @@ def _later_non_void(db: Session, item: QuarterlySettlement) -> QuarterlySettleme
         .order_by(QuarterlySettlement.year, QuarterlySettlement.quarter)
     ).all()
     return next((candidate for candidate in candidates if candidate.year * 4 + candidate.quarter > period_key), None)
+
+
+def _later_for_accounts(
+    db: Session, *, account_ids: list[int], year: int, quarter: int, exclude_id: int | None = None
+) -> QuarterlySettlement | None:
+    if not account_ids:
+        return None
+    period_key = year * 4 + quarter
+    query = (
+        select(QuarterlySettlement)
+        .join(SettlementAccountLine, SettlementAccountLine.settlement_id == QuarterlySettlement.id)
+        .where(
+            SettlementAccountLine.account_id.in_(account_ids),
+            QuarterlySettlement.status != "VOID",
+            (QuarterlySettlement.year * 4 + QuarterlySettlement.quarter) > period_key,
+        )
+        .order_by(QuarterlySettlement.year, QuarterlySettlement.quarter)
+        .limit(1)
+    )
+    if exclude_id is not None:
+        query = query.where(QuarterlySettlement.id != exclude_id)
+    return db.scalar(query)
+
+
+def _snapshot_has_evidence(db: Session, snapshot: BalanceSnapshot) -> bool:
+    if snapshot.statement_import_id is not None:
+        return True
+    return db.scalar(
+        select(Attachment.id).where(
+            Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == snapshot.id
+        ).limit(1)
+    ) is not None
+
+
+def _transaction_has_evidence(db: Session, transaction: TransactionRecord) -> bool:
+    if transaction.attachment_id is not None:
+        return True
+    return db.scalar(
+        select(Attachment.id).where(
+            Attachment.entity_type == "TRANSACTION", Attachment.entity_id == transaction.id
+        ).limit(1)
+    ) is not None
 
 
 @router.post("/calculate")
@@ -142,19 +208,6 @@ def calculate_or_update_settlement(
     )
     if existing and existing.status != "DRAFT":
         raise HTTPException(status_code=409, detail="已Finalized或Void的Settlement不能直接重算")
-    period_probe = existing or QuarterlySettlement(
-        client_id=payload.client_id,
-        platform_id=payload.platform_id,
-        fee_plan_id=payload.fee_plan_id,
-        year=payload.year,
-        quarter=payload.quarter,
-    )
-    later = _later_non_void(db, period_probe)
-    if later:
-        raise HTTPException(
-            status_code=409,
-            detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），请先按时间倒序作废后再补算",
-        )
 
     account_ids = [line.account_id for line in payload.account_lines]
     if len(account_ids) != len(set(account_ids)):
@@ -170,36 +223,93 @@ def calculate_or_update_settlement(
         ):
             raise HTTPException(status_code=400, detail="所有Sub Account必须属于同一Client + Platform + Fee Plan")
 
+    later = _later_for_accounts(
+        db,
+        account_ids=account_ids,
+        year=payload.year,
+        quarter=payload.quarter,
+        exclude_id=existing.id if existing else None,
+    )
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），请先按时间倒序作废后再补算",
+        )
+
+    line_results: list[tuple[SettlementAccountInput, SettlementCalculation, int, int, int | None]] = []
     for line in payload.account_lines:
-        if line.closing_snapshot_id:
-            snapshot = db.get(BalanceSnapshot, line.closing_snapshot_id)
-            if not snapshot or snapshot.account_id != line.account_id:
-                raise HTTPException(status_code=400, detail="Closing Snapshot与Sub Account不匹配")
-            if snapshot.as_of_date != closing_date:
-                raise HTTPException(status_code=400, detail="Closing Snapshot日期必须等于Closing Date")
-            if not snapshot.eligible_for_closing:
-                raise HTTPException(status_code=400, detail="该余额快照不是季末或退出日，不能作为Closing")
-            if to_cents(line.closing) != snapshot.total_balance_cents:
-                raise HTTPException(status_code=400, detail="Closing金额与所选余额快照不一致")
+        closing_snapshot = db.get(BalanceSnapshot, line.closing_snapshot_id)
+        if not closing_snapshot or closing_snapshot.account_id != line.account_id:
+            raise HTTPException(status_code=400, detail="Closing Snapshot与Sub Account不匹配")
+        if closing_snapshot.as_of_date != closing_date:
+            raise HTTPException(status_code=400, detail="Closing Snapshot日期必须等于Closing Date")
+        if not closing_snapshot.eligible_for_closing:
+            raise HTTPException(status_code=400, detail="该余额快照不是季末或退出日，不能作为Closing")
 
-    contribution_cents = db.scalar(
-        select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
-            TransactionRecord.account_id.in_(account_ids),
-            TransactionRecord.transaction_type == "CONTRIBUTION",
-            TransactionRecord.transaction_date > start_date,
-            TransactionRecord.transaction_date <= closing_date,
+        previous_line = _previous_finalized_line(
+            db, account_id=line.account_id, year=payload.year, quarter=payload.quarter
         )
-    ) or 0
-    withdrawal_cents = db.scalar(
-        select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
-            TransactionRecord.account_id.in_(account_ids),
-            TransactionRecord.transaction_type == "WITHDRAWAL",
-            TransactionRecord.transaction_date > start_date,
-            TransactionRecord.transaction_date <= closing_date,
-        )
-    ) or 0
+        if previous_line:
+            if previous_line.closing_snapshot_id is None or previous_line.next_hwm_cents is None:
+                raise HTTPException(status_code=409, detail="前序账户结算缺少Closing Snapshot或Next HWM")
+            if line.beginning_snapshot_id not in (None, previous_line.closing_snapshot_id):
+                raise HTTPException(status_code=400, detail="Beginning必须自动关联前序Closing Snapshot")
+            if line.original_hwm is not None and to_cents(line.original_hwm) != previous_line.next_hwm_cents:
+                raise HTTPException(status_code=400, detail="Original HWM必须自动继承前序账户Next HWM")
+            beginning_snapshot_id = previous_line.closing_snapshot_id
+            beginning_cents = previous_line.closing_cents
+            original_hwm_cents = previous_line.next_hwm_cents
+        else:
+            if line.beginning_snapshot_id is None:
+                raise HTTPException(status_code=400, detail="首次账户结算必须选择明确的Beginning Snapshot")
+            beginning_snapshot = db.get(BalanceSnapshot, line.beginning_snapshot_id)
+            if not beginning_snapshot or beginning_snapshot.account_id != line.account_id:
+                raise HTTPException(status_code=400, detail="Beginning Snapshot与Sub Account不匹配")
+            if beginning_snapshot.as_of_date != start_date:
+                raise HTTPException(status_code=400, detail="首次Beginning Snapshot日期必须等于Starting Date")
+            if line.original_hwm is None:
+                raise HTTPException(status_code=400, detail="首次账户结算必须输入该Sub Account的Original HWM")
+            beginning_snapshot_id = beginning_snapshot.id
+            beginning_cents = beginning_snapshot.total_balance_cents
+            original_hwm_cents = to_cents(line.original_hwm)
 
-    previous = _previous_finalized(
+        contribution_cents = db.scalar(
+            select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
+                TransactionRecord.account_id == line.account_id,
+                TransactionRecord.transaction_type == "CONTRIBUTION",
+                TransactionRecord.transaction_date > start_date,
+                TransactionRecord.transaction_date <= closing_date,
+            )
+        ) or 0
+        withdrawal_cents = db.scalar(
+            select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
+                TransactionRecord.account_id == line.account_id,
+                TransactionRecord.transaction_type == "WITHDRAWAL",
+                TransactionRecord.transaction_date > start_date,
+                TransactionRecord.transaction_date <= closing_date,
+            )
+        ) or 0
+        try:
+            result = calculate_account_settlement(
+                start_date=start_date,
+                closing_date=closing_date,
+                beginning_cents=beginning_cents,
+                closing_cents=closing_snapshot.total_balance_cents,
+                contribution_cents=int(contribution_cents),
+                withdrawal_cents=int(withdrawal_cents),
+                original_hwm_cents=original_hwm_cents,
+                fee_rate_bps=fee_plan.fee_rate_bps,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        line_results.append((line, result, beginning_snapshot_id, closing_snapshot.id, previous_line.id if previous_line else None))
+
+    aggregate = aggregate_account_settlements(
+        start_date=start_date,
+        closing_date=closing_date,
+        calculations=[entry[1] for entry in line_results],
+    )
+    previous_group = _previous_finalized(
         db,
         client_id=payload.client_id,
         platform_id=payload.platform_id,
@@ -207,39 +317,11 @@ def calculate_or_update_settlement(
         year=payload.year,
         quarter=payload.quarter,
     )
-    if previous:
-        original_hwm_cents = previous.next_hwm_cents
-    elif payload.original_hwm is not None:
-        original_hwm_cents = to_cents(payload.original_hwm)
-    else:
-        raise HTTPException(status_code=400, detail="首次结算必须由财务输入Original HWM")
-
-    account_inputs = [
-        AccountPeriodInput(
-            account_id=line.account_id,
-            beginning_cents=to_cents(line.beginning),
-            closing_cents=to_cents(line.closing),
-            closing_snapshot_id=line.closing_snapshot_id,
-            remark=line.remark,
-        )
-        for line in payload.account_lines
-    ]
-    try:
-        result = calculate_settlement(
-            start_date=start_date,
-            closing_date=closing_date,
-            account_lines=account_inputs,
-            contribution_cents=int(contribution_cents),
-            withdrawal_cents=int(withdrawal_cents),
-            original_hwm_cents=original_hwm_cents,
-            fee_rate_bps=fee_plan.fee_rate_bps,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if existing:
         item = existing
         item.account_lines.clear()
+        db.flush()
     else:
         item = QuarterlySettlement(
             client_id=payload.client_id,
@@ -249,24 +331,63 @@ def calculate_or_update_settlement(
             quarter=payload.quarter,
         )
         db.add(item)
-
-    for key, value in result.to_dict().items():
+    for key, value in aggregate.to_dict().items():
         setattr(item, key, value)
-    item.previous_settlement_id = previous.id if previous else None
+    item.calculation_mode = ACCOUNT_HWM_MODE
+    item.previous_settlement_id = previous_group.id if previous_group else None
     item.status = "DRAFT"
-    for line in account_inputs:
+
+    for input_line, result, beginning_snapshot_id, closing_snapshot_id, previous_line_id in line_results:
         item.account_lines.append(
             SettlementAccountLine(
-                account_id=line.account_id,
-                beginning_cents=line.beginning_cents,
-                closing_cents=line.closing_cents,
-                closing_snapshot_id=line.closing_snapshot_id,
-                remark=line.remark,
+                account_id=input_line.account_id,
+                previous_line_id=previous_line_id,
+                beginning_snapshot_id=beginning_snapshot_id,
+                closing_snapshot_id=closing_snapshot_id,
+                beginning_cents=result.beginning_cents,
+                closing_cents=result.closing_cents,
+                contribution_cents=result.contribution_cents,
+                withdrawal_cents=result.withdrawal_cents,
+                net_contribution_cents=result.net_contribution_cents,
+                gain_loss_cents=result.gain_loss_cents,
+                period_rate_ppm=result.period_rate_ppm,
+                original_hwm_cents=result.original_hwm_cents,
+                adjusted_hwm_cents=result.adjusted_hwm_cents,
+                watermark_difference_cents=result.watermark_difference_cents,
+                chargeable_above_hwm_cents=result.chargeable_above_hwm_cents,
+                service_fee_cents=result.service_fee_cents,
+                next_hwm_cents=result.next_hwm_cents,
+                fee_rate_bps=result.fee_rate_bps,
+                formula_version=result.formula_version,
+                remark=input_line.remark,
             )
         )
-    _commit_state_change(db, "Settlement期间顺序或唯一性已被并发请求改变，请刷新后重试")
+    _commit_state_change(db, "Settlement账户HWM期间顺序或唯一性已被并发请求改变，请刷新后重试")
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == item.id))
-    return settlement_dict(item)
+    return settlement_dict(item, db=db)
+
+
+def _missing_evidence(db: Session, item: QuarterlySettlement) -> list[str]:
+    missing: list[str] = []
+    for line in item.account_lines:
+        beginning = db.get(BalanceSnapshot, line.beginning_snapshot_id) if line.beginning_snapshot_id else None
+        closing = db.get(BalanceSnapshot, line.closing_snapshot_id) if line.closing_snapshot_id else None
+        label = line.account.account_number if line.account else f"#{line.account_id}"
+        if not beginning or not _snapshot_has_evidence(db, beginning):
+            missing.append(f"{label} Beginning Snapshot")
+        if not closing or not _snapshot_has_evidence(db, closing):
+            missing.append(f"{label} Closing Snapshot")
+        transactions = db.scalars(
+            select(TransactionRecord).where(
+                TransactionRecord.account_id == line.account_id,
+                TransactionRecord.transaction_date > item.start_date,
+                TransactionRecord.transaction_date <= item.closing_date,
+            )
+        ).all()
+        for transaction in transactions:
+            if not _transaction_has_evidence(db, transaction):
+                missing.append(f"{label} {transaction.transaction_date.isoformat()} {transaction.transaction_type}")
+    return missing
 
 
 @router.post("/{settlement_id}/finalize")
@@ -283,32 +404,56 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
     client = item.client
     if not client or not client.company_id or not client.fc_id:
         raise HTTPException(status_code=400, detail="Client必须补全Company和FC后才能Finalized")
-    current_previous = _previous_finalized(
-        db,
-        client_id=item.client_id,
-        platform_id=item.platform_id,
-        fee_plan_id=item.fee_plan_id,
-        year=item.year,
-        quarter=item.quarter,
-    )
-    current_previous_id = current_previous.id if current_previous else None
-    if current_previous_id != item.previous_settlement_id:
-        raise HTTPException(status_code=409, detail="前序Finalized Settlement已变化，请重新Calculate后再锁定")
-    if current_previous and current_previous.next_hwm_cents != item.original_hwm_cents:
-        raise HTTPException(status_code=409, detail="Original HWM与当前前序Settlement不一致，请重新Calculate")
-    later = _later_non_void(db, item)
-    if later:
-        raise HTTPException(
-            status_code=409,
-            detail=f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），不能倒序Finalized",
+
+    if item.calculation_mode == ACCOUNT_HWM_MODE:
+        for line in item.account_lines:
+            current_previous = _previous_finalized_line(
+                db, account_id=line.account_id, year=item.year, quarter=item.quarter
+            )
+            current_previous_id = current_previous.id if current_previous else None
+            if current_previous_id != line.previous_line_id:
+                raise HTTPException(status_code=409, detail="账户前序Finalized Settlement已变化，请重新Calculate")
+            if current_previous and current_previous.next_hwm_cents != line.original_hwm_cents:
+                raise HTTPException(status_code=409, detail="账户Original HWM与当前前序结算不一致，请重新Calculate")
+        later = _later_for_accounts(
+            db,
+            account_ids=[line.account_id for line in item.account_lines],
+            year=item.year,
+            quarter=item.quarter,
+            exclude_id=item.id,
         )
+        if later:
+            raise HTTPException(status_code=409, detail=f"存在后续Settlement #{later.id}，不能倒序Finalized")
+        missing = _missing_evidence(db, item)
+        if missing:
+            preview = "、".join(missing[:5])
+            suffix = "等" if len(missing) > 5 else ""
+            raise HTTPException(status_code=400, detail=f"以下项目缺少凭证，Draft可保存但不能Finalized：{preview}{suffix}")
+    else:
+        current_previous = _previous_finalized(
+            db,
+            client_id=item.client_id,
+            platform_id=item.platform_id,
+            fee_plan_id=item.fee_plan_id,
+            year=item.year,
+            quarter=item.quarter,
+        )
+        current_previous_id = current_previous.id if current_previous else None
+        if current_previous_id != item.previous_settlement_id:
+            raise HTTPException(status_code=409, detail="前序Finalized Settlement已变化，请重新Calculate后再锁定")
+        if current_previous and current_previous.next_hwm_cents != item.original_hwm_cents:
+            raise HTTPException(status_code=409, detail="Original HWM与当前前序Settlement不一致，请重新Calculate")
+        later = _later_non_void(db, item)
+        if later:
+            raise HTTPException(status_code=409, detail=f"存在后续Settlement #{later.id}，不能倒序Finalized")
+
     item.company_id = client.company_id
     item.fc_id = client.fc_id
     item.status = "FINALIZED"
     item.finalized_at = datetime.now(timezone.utc)
     db.add(AuditEvent(action="SETTLEMENT_FINALIZED", entity_type="SETTLEMENT", entity_id=item.id))
-    _commit_state_change(db, "Settlement前序HWM或下游状态已被并发请求改变，请重新Calculate")
-    return settlement_dict(item)
+    _commit_state_change(db, "Settlement账户HWM、凭证或下游状态已被并发请求改变，请重新Calculate")
+    return settlement_dict(item, db=db)
 
 
 @router.post("/{settlement_id}/void")
@@ -326,12 +471,18 @@ def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depe
     )
     if active_invoice is not None:
         raise HTTPException(status_code=409, detail="请先作废关联的Draft或Issued Invoice")
-    later = _later_non_void(db, item)
-    if later:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Settlement #{later.id} 依赖当前HWM，请先按时间倒序作废后续结算",
+    if item.calculation_mode == ACCOUNT_HWM_MODE:
+        later = _later_for_accounts(
+            db,
+            account_ids=[line.account_id for line in item.account_lines],
+            year=item.year,
+            quarter=item.quarter,
+            exclude_id=item.id,
         )
+    else:
+        later = _later_non_void(db, item)
+    if later:
+        raise HTTPException(status_code=409, detail=f"Settlement #{later.id} 依赖当前HWM，请先按时间倒序作废后续结算")
     item.status = "VOID"
     item.void_reason = payload.reason
     db.add(
@@ -343,4 +494,4 @@ def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depe
         )
     )
     _commit_state_change(db, "Settlement存在下游依赖或有效Invoice，不能作废")
-    return settlement_dict(item)
+    return settlement_dict(item, db=db)

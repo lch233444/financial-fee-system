@@ -2,11 +2,32 @@ from __future__ import annotations
 
 from datetime import date
 
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from .money import money_string
-from .models import Invoice, QuarterlySettlement
+from .models import Attachment, BalanceSnapshot, Invoice, QuarterlySettlement
 
 
-def settlement_dict(item: QuarterlySettlement) -> dict:
+def _optional_money(value: int | None) -> str | None:
+    return None if value is None else money_string(value)
+
+
+def _snapshot_evidence_count(db: Session | None, snapshot_id: int | None) -> int | None:
+    if db is None or snapshot_id is None:
+        return None
+    snapshot = db.get(BalanceSnapshot, snapshot_id)
+    if not snapshot:
+        return 0
+    attachment_count = db.scalar(
+        select(func.count(Attachment.id)).where(
+            Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == snapshot_id
+        )
+    ) or 0
+    return int(attachment_count) + (1 if snapshot.statement_import_id is not None else 0)
+
+
+def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> dict:
     return {
         "id": item.id,
         "client_id": item.client_id,
@@ -40,15 +61,31 @@ def settlement_dict(item: QuarterlySettlement) -> dict:
         "next_hwm": money_string(item.next_hwm_cents),
         "fee_rate": item.fee_rate_bps / 10_000,
         "formula_version": item.formula_version,
+        "calculation_mode": item.calculation_mode,
         "status": item.status,
         "account_lines": [
             {
                 "id": line.id,
                 "account_id": line.account_id,
                 "account_number": line.account.account_number if line.account else None,
+                "previous_line_id": line.previous_line_id,
+                "beginning_snapshot_id": line.beginning_snapshot_id,
                 "beginning": money_string(line.beginning_cents),
+                "contribution": _optional_money(line.contribution_cents),
+                "withdrawal": _optional_money(line.withdrawal_cents),
+                "net_contribution": _optional_money(line.net_contribution_cents),
                 "closing": money_string(line.closing_cents),
+                "gain_loss": _optional_money(line.gain_loss_cents),
+                "period_rate": None if line.period_rate_ppm is None else line.period_rate_ppm / 1_000_000,
+                "original_hwm": _optional_money(line.original_hwm_cents),
+                "adjusted_hwm": _optional_money(line.adjusted_hwm_cents),
+                "watermark_difference": _optional_money(line.watermark_difference_cents),
+                "chargeable_above_hwm": _optional_money(line.chargeable_above_hwm_cents),
+                "service_fee": _optional_money(line.service_fee_cents),
+                "next_hwm": _optional_money(line.next_hwm_cents),
                 "closing_snapshot_id": line.closing_snapshot_id,
+                "beginning_evidence_count": _snapshot_evidence_count(db, line.beginning_snapshot_id),
+                "closing_evidence_count": _snapshot_evidence_count(db, line.closing_snapshot_id),
                 "remark": line.remark,
             }
             for line in item.account_lines

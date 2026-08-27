@@ -8,6 +8,25 @@ from app.main import app
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 
 
+def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
+    item = client.post(
+        "/api/balance-snapshots",
+        json={
+            "account_id": account_id,
+            "as_of_date": as_of_date,
+            "total_balance": balance,
+            "eligible_for_closing": closing,
+        },
+    ).json()
+    uploaded = client.post(
+        "/api/attachments",
+        data={"entity_type": "SNAPSHOT", "entity_id": str(item["id"])},
+        files={"file": (f"snapshot-{item['id']}.pdf", b"%PDF-1.4\ntest\n%%EOF", "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    return item
+
+
 def _master(client: TestClient, suffix: str) -> dict:
     company = client.post(
         "/api/companies",
@@ -61,19 +80,31 @@ def _master(client: TestClient, suffix: str) -> dict:
 
 
 def _settlement(client: TestClient, data: dict, quarter: int, beginning: str, closing: str) -> dict:
+    start_dates = {1: "2026-01-15", 2: "2026-04-01", 3: "2026-07-01", 4: "2026-10-01"}
+    closing_dates = {1: "2026-03-31", 2: "2026-06-30", 3: "2026-09-30", 4: "2026-12-31"}
+    account_id = data["account"]["id"]
+    closing_snapshot = _snapshot(client, account_id, closing_dates[quarter], closing, closing=True)
+    finalized = [
+        item
+        for item in client.get("/api/settlements").json()
+        if item["status"] == "FINALIZED"
+        and any(line["account_id"] == account_id for line in item["account_lines"])
+        and item["year"] * 4 + item["quarter"] < 2026 * 4 + quarter
+    ]
+    line = {"account_id": account_id, "closing_snapshot_id": closing_snapshot["id"]}
+    if not finalized:
+        beginning_snapshot = _snapshot(client, account_id, start_dates[quarter], beginning, closing=False)
+        line.update({"beginning_snapshot_id": beginning_snapshot["id"], "original_hwm": beginning})
     payload = {
         "client_id": data["client"]["id"],
         "platform_id": data["platform"]["id"],
         "fee_plan_id": data["plan"]["id"],
         "year": 2026,
         "quarter": quarter,
-        "account_lines": [
-            {"account_id": data["account"]["id"], "beginning": beginning, "closing": closing}
-        ],
+        "start_date": start_dates[quarter],
+        "closing_date": closing_dates[quarter],
+        "account_lines": [line],
     }
-    if quarter == 1:
-        payload["start_date"] = "2026-01-15"
-        payload["original_hwm"] = beginning
     response = client.post("/api/settlements/calculate", json=payload)
     assert response.status_code == 200, response.text
     return response.json()
@@ -132,6 +163,9 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
 
         second = _settlement(client, data, 2, "1100.00", "1200.00")
         assert second["original_hwm"] == first["next_hwm"]
+        assert second["account_lines"][0]["previous_line_id"] == first["account_lines"][0]["id"]
+        assert second["account_lines"][0]["beginning_snapshot_id"] == first["account_lines"][0]["closing_snapshot_id"]
+        assert second["account_lines"][0]["original_hwm"] == first["account_lines"][0]["next_hwm"]
         assert client.post(f"/api/settlements/{second['id']}/finalize").status_code == 200
         second_draft = client.post("/api/invoices", json={"settlement_id": second["id"], "language": "en"}).json()
         second_issued = client.post(

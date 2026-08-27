@@ -15,9 +15,31 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import TransactionRecord
 from app.routes import invoices as invoices_module
+from app.services.calculation import quarter_dates
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
+
+
+def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
+    response = client.post(
+        "/api/balance-snapshots",
+        json={
+            "account_id": account_id,
+            "as_of_date": as_of_date,
+            "total_balance": balance,
+            "eligible_for_closing": closing,
+        },
+    )
+    assert response.status_code == 201, response.text
+    item = response.json()
+    uploaded = client.post(
+        "/api/attachments",
+        data={"entity_type": "SNAPSHOT", "entity_id": str(item["id"])},
+        files={"file": (f"snapshot-{item['id']}.pdf", b"%PDF-1.4\nreview\n%%EOF", "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    return item
 
 
 def _master(client: TestClient, suffix: str, *, start_date: str = "2025-01-01") -> dict:
@@ -80,6 +102,24 @@ def _settlement(
     beginning: str = "1000.00",
     closing: str = "1100.00",
 ) -> dict:
+    start_date, closing_date = quarter_dates(year, quarter)
+    account_id = data["account"]["id"]
+    closing_snapshot = _snapshot(
+        client, account_id, closing_date.isoformat(), closing, closing=True
+    )
+    finalized = [
+        item
+        for item in client.get("/api/settlements").json()
+        if item["status"] == "FINALIZED"
+        and any(line["account_id"] == account_id for line in item["account_lines"])
+        and item["year"] * 4 + item["quarter"] < year * 4 + quarter
+    ]
+    line = {"account_id": account_id, "closing_snapshot_id": closing_snapshot["id"]}
+    if not finalized:
+        beginning_snapshot = _snapshot(
+            client, account_id, start_date.isoformat(), beginning, closing=False
+        )
+        line.update({"beginning_snapshot_id": beginning_snapshot["id"], "original_hwm": beginning})
     response = client.post(
         "/api/settlements/calculate",
         json={
@@ -88,10 +128,9 @@ def _settlement(
             "fee_plan_id": data["plan"]["id"],
             "year": year,
             "quarter": quarter,
-            "original_hwm": beginning,
-            "account_lines": [
-                {"account_id": data["account"]["id"], "beginning": beginning, "closing": closing}
-            ],
+            "start_date": start_date.isoformat(),
+            "closing_date": closing_date.isoformat(),
+            "account_lines": [line],
         },
     )
     assert response.status_code == 200, response.text
@@ -239,9 +278,8 @@ def test_cannot_create_earlier_settlement_after_later_period_exists() -> None:
                 "fee_plan_id": data["plan"]["id"],
                 "year": 2026,
                 "quarter": 2,
-                "original_hwm": "1000.00",
                 "account_lines": [
-                    {"account_id": data["account"]["id"], "beginning": "1000.00", "closing": "1050.00"}
+                    {"account_id": data["account"]["id"], "closing_snapshot_id": 999999, "original_hwm": "1000.00"}
                 ],
             },
         )

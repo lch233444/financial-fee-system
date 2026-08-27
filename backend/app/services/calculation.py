@@ -6,16 +6,7 @@ from datetime import date
 from ..money import fee_from_bps, rate_to_ppm
 
 
-FORMULA_VERSION = "HWM-1.0"
-
-
-@dataclass(frozen=True)
-class AccountPeriodInput:
-    account_id: int
-    beginning_cents: int
-    closing_cents: int
-    closing_snapshot_id: int | None = None
-    remark: str | None = None
+FORMULA_VERSION = "HWM-2.0-ACCOUNT"
 
 
 @dataclass(frozen=True)
@@ -43,11 +34,12 @@ class SettlementCalculation:
         return asdict(self)
 
 
-def calculate_settlement(
+def calculate_account_settlement(
     *,
     start_date: date,
     closing_date: date,
-    account_lines: list[AccountPeriodInput],
+    beginning_cents: int,
+    closing_cents: int,
     contribution_cents: int,
     withdrawal_cents: int,
     original_hwm_cents: int,
@@ -55,13 +47,9 @@ def calculate_settlement(
 ) -> SettlementCalculation:
     if closing_date < start_date:
         raise ValueError("Closing Date不能早于Starting Date")
-    if not account_lines:
-        raise ValueError("结算至少需要一个子账户")
     if fee_rate_bps < 0 or fee_rate_bps > 10_000:
         raise ValueError("Fee Rate必须介于0%与100%之间")
 
-    beginning_cents = sum(line.beginning_cents for line in account_lines)
-    closing_cents = sum(line.closing_cents for line in account_lines)
     net_contribution_cents = contribution_cents - withdrawal_cents
     gain_loss_cents = closing_cents - beginning_cents - net_contribution_cents
     denominator_cents = beginning_cents + net_contribution_cents
@@ -93,6 +81,38 @@ def calculate_settlement(
     )
 
 
+def aggregate_account_settlements(
+    *, start_date: date, closing_date: date, calculations: list[SettlementCalculation]
+) -> SettlementCalculation:
+    if not calculations:
+        raise ValueError("结算至少需要一个子账户")
+    beginning_cents = sum(item.beginning_cents for item in calculations)
+    contribution_cents = sum(item.contribution_cents for item in calculations)
+    withdrawal_cents = sum(item.withdrawal_cents for item in calculations)
+    net_contribution_cents = sum(item.net_contribution_cents for item in calculations)
+    closing_cents = sum(item.closing_cents for item in calculations)
+    gain_loss_cents = sum(item.gain_loss_cents for item in calculations)
+    return SettlementCalculation(
+        start_date=start_date,
+        closing_date=closing_date,
+        days=(closing_date - start_date).days + 1,
+        beginning_cents=beginning_cents,
+        contribution_cents=contribution_cents,
+        withdrawal_cents=withdrawal_cents,
+        net_contribution_cents=net_contribution_cents,
+        closing_cents=closing_cents,
+        gain_loss_cents=gain_loss_cents,
+        period_rate_ppm=rate_to_ppm(gain_loss_cents, beginning_cents + net_contribution_cents),
+        original_hwm_cents=sum(item.original_hwm_cents for item in calculations),
+        adjusted_hwm_cents=sum(item.adjusted_hwm_cents for item in calculations),
+        watermark_difference_cents=sum(item.watermark_difference_cents for item in calculations),
+        chargeable_above_hwm_cents=sum(item.chargeable_above_hwm_cents for item in calculations),
+        service_fee_cents=sum(item.service_fee_cents for item in calculations),
+        next_hwm_cents=sum(item.next_hwm_cents for item in calculations),
+        fee_rate_bps=calculations[0].fee_rate_bps,
+    )
+
+
 def quarter_dates(year: int, quarter: int) -> tuple[date, date]:
     if quarter == 1:
         return date(year, 1, 1), date(year, 3, 31)
@@ -107,4 +127,3 @@ def quarter_dates(year: int, quarter: int) -> tuple[date, date]:
 
 def is_quarter_end(value: date) -> bool:
     return value in {date(value.year, 3, 31), date(value.year, 6, 30), date(value.year, 9, 30), date(value.year, 12, 31)}
-

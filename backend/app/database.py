@@ -78,6 +78,18 @@ def init_db() -> None:
             column["name"] for column in refreshed_inspector.get_columns("quarterly_settlements")
         }
         settlement_chain_columns = {"company_id", "fc_id", "previous_settlement_id"}
+        settlement_account_mode_columns = {"calculation_mode"}
+        account_line_columns = {
+            column["name"] for column in refreshed_inspector.get_columns("settlement_account_lines")
+        }
+        account_hwm_columns = {
+            "previous_line_id",
+            "beginning_snapshot_id",
+            "original_hwm_cents",
+            "next_hwm_cents",
+            "service_fee_cents",
+            "formula_version",
+        }
         with engine.connect() as connection:
             settlement_triggers = {
                 row[0]
@@ -90,6 +102,7 @@ def init_db() -> None:
             "trg_settlement_block_out_of_order_insert",
             "trg_settlement_validate_finalize",
             "trg_settlement_validate_void",
+            "trg_settlement_account_line_order",
         }
         if not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
@@ -98,9 +111,15 @@ def init_db() -> None:
             command.upgrade(alembic_config, "head")
         elif (
             not settlement_chain_columns.issubset(settlement_columns)
-            or not required_settlement_triggers.issubset(settlement_triggers)
         ):
             command.stamp(alembic_config, "d8f42c0b7a11")
+            command.upgrade(alembic_config, "head")
+        elif (
+            not settlement_account_mode_columns.issubset(settlement_columns)
+            or not account_hwm_columns.issubset(account_line_columns)
+            or not required_settlement_triggers.issubset(settlement_triggers)
+        ):
+            command.stamp(alembic_config, "e91f7c6a2b40")
             command.upgrade(alembic_config, "head")
         else:
             command.stamp(alembic_config, "head")

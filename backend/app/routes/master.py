@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import (
+    Attachment,
     BalanceSnapshot,
     Client,
     Company,
@@ -311,8 +312,15 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
     if account_id:
         query = query.where(TransactionRecord.account_id == account_id)
     items = db.scalars(query).all()
-    return [
-        {
+    result = []
+    for item in items:
+        attachment_count = db.scalar(
+            select(func.count(Attachment.id)).where(
+                Attachment.entity_type == "TRANSACTION", Attachment.entity_id == item.id
+            )
+        ) or 0
+        evidence_count = int(attachment_count) + (1 if item.attachment_id is not None else 0)
+        result.append({
             "id": item.id,
             "account_id": item.account_id,
             "account_number": item.account.account_number,
@@ -320,9 +328,10 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
             "transaction_type": item.transaction_type,
             "amount": money_string(item.amount_cents),
             "remark": item.remark,
-        }
-        for item in items
-    ]
+            "evidence_count": evidence_count,
+            "evidence_complete": evidence_count > 0,
+        })
+    return result
 
 
 @router.post("/transactions", status_code=201)
@@ -371,8 +380,15 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
     if account_id:
         query = query.where(BalanceSnapshot.account_id == account_id)
     items = db.scalars(query).all()
-    return [
-        {
+    result = []
+    for item in items:
+        attachment_count = db.scalar(
+            select(func.count(Attachment.id)).where(
+                Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == item.id
+            )
+        ) or 0
+        evidence_count = int(attachment_count) + (1 if item.statement_import_id is not None else 0)
+        result.append({
             "id": item.id,
             "account_id": item.account_id,
             "account_number": item.account.account_number,
@@ -382,9 +398,10 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
             "source_type": item.source_type,
             "eligible_for_closing": item.eligible_for_closing,
             "remark": item.remark,
-        }
-        for item in items
-    ]
+            "evidence_count": evidence_count,
+            "evidence_complete": evidence_count > 0,
+        })
+    return result
 
 
 @router.post("/balance-snapshots", status_code=201)

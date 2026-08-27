@@ -143,13 +143,31 @@ export type Settlement = {
   service_fee: string;
   next_hwm: string;
   fee_rate: number;
+  formula_version: string;
+  calculation_mode: "ACCOUNT_HWM" | "LEGACY_GROUP_HWM";
   status: "DRAFT" | "FINALIZED" | "VOID";
   account_lines: Array<{
+    id: number;
     account_id: number;
     account_number: string;
+    previous_line_id: number | null;
+    beginning_snapshot_id: number | null;
     beginning: string;
+    contribution: string | null;
+    withdrawal: string | null;
+    net_contribution: string | null;
     closing: string;
+    gain_loss: string | null;
+    period_rate: number | null;
+    original_hwm: string | null;
+    adjusted_hwm: string | null;
+    watermark_difference: string | null;
+    chargeable_above_hwm: string | null;
+    service_fee: string | null;
+    next_hwm: string | null;
     closing_snapshot_id: number | null;
+    beginning_evidence_count: number | null;
+    closing_evidence_count: number | null;
   }>;
 };
 export type Invoice = {

@@ -196,6 +196,7 @@ class QuarterlySettlement(TimestampMixin, Base):
     next_hwm_cents: Mapped[int] = mapped_column(Integer)
     fee_rate_bps: Mapped[int] = mapped_column(Integer)
     formula_version: Mapped[str] = mapped_column(String(30), default="HWM-1.0")
+    calculation_mode: Mapped[str] = mapped_column(String(30), default="ACCOUNT_HWM", index=True)
     status: Mapped[str] = mapped_column(String(30), default="DRAFT", index=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     void_reason: Mapped[str | None] = mapped_column(Text)
@@ -222,11 +223,30 @@ class SettlementAccountLine(TimestampMixin, Base):
         ForeignKey("quarterly_settlements.id", ondelete="CASCADE"), index=True
     )
     account_id: Mapped[int] = mapped_column(ForeignKey("sub_accounts.id", ondelete="RESTRICT"), index=True)
+    previous_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("settlement_account_lines.id", ondelete="RESTRICT"), index=True
+    )
+    beginning_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("balance_snapshots.id", ondelete="RESTRICT"), index=True
+    )
     beginning_cents: Mapped[int] = mapped_column(Integer)
     closing_cents: Mapped[int] = mapped_column(Integer)
     closing_snapshot_id: Mapped[int | None] = mapped_column(
-        ForeignKey("balance_snapshots.id", ondelete="SET NULL")
+        ForeignKey("balance_snapshots.id", ondelete="RESTRICT"), index=True
     )
+    contribution_cents: Mapped[int | None] = mapped_column(Integer)
+    withdrawal_cents: Mapped[int | None] = mapped_column(Integer)
+    net_contribution_cents: Mapped[int | None] = mapped_column(Integer)
+    gain_loss_cents: Mapped[int | None] = mapped_column(Integer)
+    period_rate_ppm: Mapped[int | None] = mapped_column(Integer)
+    original_hwm_cents: Mapped[int | None] = mapped_column(Integer)
+    adjusted_hwm_cents: Mapped[int | None] = mapped_column(Integer)
+    watermark_difference_cents: Mapped[int | None] = mapped_column(Integer)
+    chargeable_above_hwm_cents: Mapped[int | None] = mapped_column(Integer)
+    service_fee_cents: Mapped[int | None] = mapped_column(Integer)
+    next_hwm_cents: Mapped[int | None] = mapped_column(Integer)
+    fee_rate_bps: Mapped[int | None] = mapped_column(Integer)
+    formula_version: Mapped[str | None] = mapped_column(String(30))
     remark: Mapped[str | None] = mapped_column(Text)
 
     settlement: Mapped[QuarterlySettlement] = relationship(back_populates="account_lines")

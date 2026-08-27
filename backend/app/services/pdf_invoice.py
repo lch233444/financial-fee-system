@@ -66,6 +66,7 @@ def _labels(language: str) -> dict[str, str]:
             "accounts": "Account(s)",
             "period": "Settlement Period",
             "calculation": "Settlement Calculation",
+            "account_breakdown": "Account-level Service Fee Breakdown",
             "item": "Item",
             "amount": "Amount (HKD)",
             "beginning": "Beginning Balance",
@@ -82,6 +83,8 @@ def _labels(language: str) -> dict[str, str]:
             "fee_rate": "Service Fee Rate",
             "service_fee": "Service Fee Due",
             "next_hwm": "High Water Mark in Next Period",
+            "net_short": "Net Contribution",
+            "above_short": "Above HWM",
             "payment": "Payment Information",
             "bank": "Bank Transfer",
             "cheque": "Cheque",
@@ -100,6 +103,7 @@ def _labels(language: str) -> dict[str, str]:
         "accounts": "账户 A/C",
         "period": "结算期间 Settlement Period",
         "calculation": "结算计算 Settlement Calculation",
+        "account_breakdown": "账户级收费明细 Account-level Breakdown",
         "item": "项目 Item",
         "amount": "金额 Amount (HKD)",
         "beginning": "期初余额 Beginning",
@@ -116,6 +120,8 @@ def _labels(language: str) -> dict[str, str]:
         "fee_rate": "服务费率 Fee Rate",
         "service_fee": "应付服务费 Service Fee",
         "next_hwm": "下期高水位 Next HWM",
+        "net_short": "净资金 Net Contribution",
+        "above_short": "超出HWM Above HWM",
         "payment": "付款信息 Payment Information",
         "bank": "银行转账 Bank Transfer",
         "cheque": "支票 Cheque",
@@ -246,8 +252,40 @@ def generate_settlement_pdf(
             ]
         )
     )
-    story.extend([meta, Paragraph(labels["calculation"], heading_style)])
+    story.append(meta)
 
+    if settlement.calculation_mode == "ACCOUNT_HWM":
+        account_rows = [[labels["accounts"], labels["closing"], labels["net_short"], labels["above_short"], labels["service_fee"]]]
+        for line in settlement.account_lines:
+            account_rows.append(
+                [
+                    line.account.account_number,
+                    _money(line.closing_cents),
+                    _money(line.net_contribution_cents or 0),
+                    _money(line.chargeable_above_hwm_cents or 0),
+                    _money(line.service_fee_cents or 0),
+                ]
+            )
+        account_table = Table(account_rows, colWidths=[42 * mm, 33 * mm, 33 * mm, 33 * mm, 33 * mm], repeatRows=1)
+        account_table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (-1, -1), font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PALE]),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCD8E0")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E2E8ED")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4.5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+                ]
+            )
+        )
+        story.extend([Paragraph(labels["account_breakdown"], heading_style), account_table])
+
+    story.append(Paragraph(labels["calculation"], heading_style))
     rate = "N/A" if settlement.period_rate_ppm is None else f"{settlement.period_rate_ppm / 10_000:.2f}%"
     fee_rate = f"{settlement.fee_rate_bps / 100:.2f}%"
     calculation_rows = [

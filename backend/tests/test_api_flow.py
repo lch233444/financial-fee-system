@@ -8,6 +8,31 @@ from app.main import app
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 
 
+def _attach(client: TestClient, entity_type: str, entity_id: int) -> None:
+    response = client.post(
+        "/api/attachments",
+        data={"entity_type": entity_type, "entity_id": str(entity_id)},
+        files={"file": (f"{entity_type.lower()}-{entity_id}.pdf", b"%PDF-1.4\nflow\n%%EOF", "application/pdf")},
+    )
+    assert response.status_code == 201, response.text
+
+
+def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
+    response = client.post(
+        "/api/balance-snapshots",
+        json={
+            "account_id": account_id,
+            "as_of_date": as_of_date,
+            "total_balance": balance,
+            "eligible_for_closing": closing,
+        },
+    )
+    assert response.status_code == 201, response.text
+    item = response.json()
+    _attach(client, "SNAPSHOT", item["id"])
+    return item
+
+
 def create_master_data(client: TestClient) -> dict:
     company = client.post(
         "/api/companies",
@@ -72,7 +97,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
                 "remark": "开始日资金应计入Beginning，因此结算不会纳入本期Contribution",
             },
         )
-        client.post(
+        contribution = client.post(
             "/api/transactions",
             json={
                 "account_id": account_id,
@@ -81,6 +106,10 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
                 "amount": "1000.00",
             },
         )
+        assert contribution.status_code == 201, contribution.text
+        _attach(client, "TRANSACTION", contribution.json()["id"])
+        beginning_snapshot = _snapshot(client, account_id, "2026-08-01", "5000.00", closing=False)
+        closing_snapshot = _snapshot(client, account_id, "2026-09-30", "6500.00", closing=True)
         response = client.post(
             "/api/settlements/calculate",
             json={
@@ -91,8 +120,12 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
                 "quarter": 3,
                 "start_date": "2026-08-01",
                 "closing_date": "2026-09-30",
-                "original_hwm": "5000.00",
-                "account_lines": [{"account_id": account_id, "beginning": "5000.00", "closing": "6500.00"}],
+                "account_lines": [{
+                    "account_id": account_id,
+                    "beginning_snapshot_id": beginning_snapshot["id"],
+                    "closing_snapshot_id": closing_snapshot["id"],
+                    "original_hwm": "5000.00",
+                }],
             },
         )
         assert response.status_code == 200, response.text
@@ -158,6 +191,8 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
                 "status": "ACTIVE",
             },
         ).json()
+        beginning_snapshot = _snapshot(client, account["id"], "2026-01-01", "1000.00", closing=False)
+        closing_snapshot = _snapshot(client, account["id"], "2026-03-31", "800.00", closing=True)
         settlement = client.post(
             "/api/settlements/calculate",
             json={
@@ -166,8 +201,12 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
                 "fee_plan_id": plan["id"],
                 "year": 2026,
                 "quarter": 1,
-                "original_hwm": "1000.00",
-                "account_lines": [{"account_id": account["id"], "beginning": "1000.00", "closing": "800.00"}],
+                "account_lines": [{
+                    "account_id": account["id"],
+                    "beginning_snapshot_id": beginning_snapshot["id"],
+                    "closing_snapshot_id": closing_snapshot["id"],
+                    "original_hwm": "1000.00",
+                }],
             },
         ).json()
         client.post(f"/api/settlements/{settlement['id']}/finalize")

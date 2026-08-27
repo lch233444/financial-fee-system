@@ -46,11 +46,31 @@ def export_settlements_to_template(
         if row >= 3 and col <= 25 and cell.value is not None:
             cell.value = None
 
-    for index, settlement in enumerate(settlements, start=1):
+    export_lines = [
+        (settlement, line)
+        for settlement in settlements
+        for line in (
+            settlement.account_lines
+            if settlement.calculation_mode == "ACCOUNT_HWM"
+            and all(item.service_fee_cents is not None for item in settlement.account_lines)
+            else [None]
+        )
+    ]
+    for index, (settlement, account_line) in enumerate(export_lines, start=1):
         row = index + 2
         _copy_row_style(sheet, 3, row)
         invoice = invoices_by_settlement.get(settlement.id)
-        account_numbers = "\n".join(line.account.account_number for line in settlement.account_lines)
+        account_numbers = (
+            account_line.account.account_number
+            if account_line is not None
+            else "\n".join(line.account.account_number for line in settlement.account_lines)
+        )
+        beginning_cents = account_line.beginning_cents if account_line is not None else settlement.beginning_cents
+        contribution_cents = account_line.contribution_cents if account_line is not None else settlement.contribution_cents
+        withdrawal_cents = account_line.withdrawal_cents if account_line is not None else settlement.withdrawal_cents
+        closing_cents = account_line.closing_cents if account_line is not None else settlement.closing_cents
+        original_hwm_cents = account_line.original_hwm_cents if account_line is not None else settlement.original_hwm_cents
+        service_fee_cents = account_line.service_fee_cents if account_line is not None else settlement.service_fee_cents
         sheet.cell(row, 1, index)
         company = settlement.company or settlement.client.company
         fc = settlement.fc or settlement.client.fc
@@ -64,19 +84,19 @@ def export_settlements_to_template(
         sheet.cell(row, 9, settlement.start_date)
         sheet.cell(row, 10, settlement.closing_date)
         sheet.cell(row, 11, f"=J{row}-I{row}+1")
-        sheet.cell(row, 12, settlement.beginning_cents / 100)
-        sheet.cell(row, 13, settlement.contribution_cents / 100)
-        sheet.cell(row, 14, settlement.withdrawal_cents / 100)
+        sheet.cell(row, 12, int(beginning_cents) / 100)
+        sheet.cell(row, 13, int(contribution_cents or 0) / 100)
+        sheet.cell(row, 14, int(withdrawal_cents or 0) / 100)
         sheet.cell(row, 15, f"=M{row}-N{row}")
-        sheet.cell(row, 16, settlement.closing_cents / 100)
+        sheet.cell(row, 16, int(closing_cents) / 100)
         sheet.cell(row, 17, f"=P{row}-L{row}-O{row}")
         sheet.cell(row, 18, f'=IFERROR(Q{row}/(L{row}+O{row}),"")')
-        sheet.cell(row, 19, settlement.original_hwm_cents / 100)
+        sheet.cell(row, 19, int(original_hwm_cents or 0) / 100)
         sheet.cell(row, 20, f"=S{row}+O{row}")
         sheet.cell(row, 21, f"=P{row}-T{row}")
         # Export the exact locked integer-cent result. Recalculating from an
         # unrounded Excel formula can differ from the finalized ledger by one cent.
-        sheet.cell(row, 22, settlement.service_fee_cents / 100)
+        sheet.cell(row, 22, int(service_fee_cents or 0) / 100)
         sheet.cell(row, 23, f"=MAX(T{row},P{row})")
         sheet.cell(row, 24, invoice.issue_date if invoice else None)
         sheet.cell(row, 25, invoice.due_date if invoice else None)

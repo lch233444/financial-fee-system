@@ -1,13 +1,81 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
 import app.config as config_module
 import app.database as database_module
 from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
+
+
+def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, monkeypatch) -> None:
+    settings = Settings(data_root=tmp_path / "e91-data")
+    settings.ensure_directories()
+    database_path = settings.database_path
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_config, "e91f7c6a2b40")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            INSERT INTO companies
+                (id, name, code, payment_terms_days, active, created_at, updated_at)
+            VALUES (1, 'Legacy Company', 'LEG', 14, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO fcs
+                (id, company_id, name, code, active, created_at, updated_at)
+            VALUES (1, 1, 'Legacy FC', 'LFC', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO platforms
+                (id, name, code, active, created_at, updated_at)
+            VALUES (1, 'Legacy Platform', 'LP', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO fee_plans
+                (id, company_id, name, code, fee_rate_bps, calculation_method, active, created_at, updated_at)
+            VALUES (1, 1, 'Legacy Plan', 'L20', 2000, 'HWM', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO clients
+                (id, company_id, fc_id, name, status, created_at, updated_at)
+            VALUES (1, 1, 1, 'Legacy Client', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO sub_accounts
+                (id, client_id, platform_id, fee_plan_id, account_number, currency, status, created_at, updated_at)
+            VALUES (1, 1, 1, 1, 'LEG-001', 'HKD', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO quarterly_settlements
+                (id, client_id, platform_id, fee_plan_id, company_id, fc_id, year, quarter,
+                 start_date, closing_date, days, beginning_cents, contribution_cents,
+                 withdrawal_cents, net_contribution_cents, closing_cents, gain_loss_cents,
+                 period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
+                 watermark_difference_cents, chargeable_above_hwm_cents, service_fee_cents,
+                 next_hwm_cents, fee_rate_bps, formula_version, status, created_at, updated_at)
+            VALUES
+                (1, 1, 1, 1, 1, 1, 2025, 4, '2025-10-01', '2025-12-31', 92,
+                 100000, 0, 0, 0, 110000, 10000, 100000, 100000, 100000,
+                 10000, 10000, 2000, 110000, 2000, 'HWM-1.0', 'FINALIZED',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO settlement_account_lines
+                (id, settlement_id, account_id, beginning_cents, closing_cents, created_at, updated_at)
+            VALUES (1, 1, 1, 100000, 110000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """
+        )
+        connection.commit()
+
+    command.upgrade(alembic_config, "head")
+    with sqlite3.connect(database_path) as connection:
+        settlement = connection.execute(
+            "SELECT calculation_mode, service_fee_cents, next_hwm_cents FROM quarterly_settlements WHERE id = 1"
+        ).fetchone()
+        line = connection.execute(
+            "SELECT beginning_cents, closing_cents, beginning_snapshot_id, service_fee_cents FROM settlement_account_lines WHERE id = 1"
+        ).fetchone()
+        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+    assert settlement == ("LEGACY_GROUP_HWM", 2000, 110000)
+    assert line == (100000, 110000, None, None)
+    assert revision == "f2a8c7d41e90"
 
 
 def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
@@ -86,12 +154,19 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "e91f7c6a2b40"
+        assert revision == "f2a8c7d41e90"
 
     settlement_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
     }
     assert {"company_id", "fc_id", "previous_settlement_id"}.issubset(settlement_columns)
+    assert "calculation_mode" in settlement_columns
+    line_columns = {
+        column["name"] for column in inspect(legacy_engine).get_columns("settlement_account_lines")
+    }
+    assert {"previous_line_id", "beginning_snapshot_id", "service_fee_cents", "next_hwm_cents"}.issubset(
+        line_columns
+    )
     with legacy_engine.connect() as connection:
         triggers = {
             row[0]
@@ -101,6 +176,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         }
     assert "trg_transactions_block_finalized_period" in triggers
     assert "trg_settlement_validate_finalize" in triggers
+    assert "trg_settlement_account_line_order" in triggers
     legacy_engine.dispose()
 
 
@@ -128,11 +204,12 @@ def test_unstamped_current_shape_database_gains_missing_financial_triggers(
                 text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             )
         }
-    assert revision == "e91f7c6a2b40"
+        assert revision == "f2a8c7d41e90"
     assert {
         "trg_transactions_block_finalized_period",
         "trg_settlement_block_out_of_order_insert",
         "trg_settlement_validate_finalize",
         "trg_settlement_validate_void",
+        "trg_settlement_account_line_order",
     }.issubset(triggers)
     legacy_engine.dispose()

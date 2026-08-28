@@ -744,7 +744,7 @@ def _images_for_codex(source: Path) -> Iterator[tuple[Path, ...]]:
         raise CodexRecognitionError(message) from exc
     finally:
         for target in targets:
-            target.unlink(missing_ok=True)
+            target.unlink()
 
 
 @contextmanager
@@ -1149,12 +1149,6 @@ class CodexAppServerClient:
             return {**base, "status": "ready", "message": "隔离的Luna辅助识别环境已就绪"}
         except CodexIntegrationError as exc:
             return {**base, "status": "unavailable", "message": str(exc)}
-        except Exception:
-            return {
-                **base,
-                "status": "error",
-                "message": "读取Codex状态时发生未预期错误",
-            }
 
     def login(self) -> dict[str, Any]:
         self._ensure_started()

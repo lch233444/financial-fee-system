@@ -1,17 +1,17 @@
 [CmdletBinding()]
 param(
-    [string]$PnpmExecutable = "",
-    [string]$ReleaseRootName = "release"
+    [string]$PnpmExecutable = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-if ($ReleaseRootName -notmatch '^release(?:[-_][A-Za-z0-9]+)*$') {
-    throw "ReleaseRootName只能使用release或release-xxx格式。"
-}
-$ReleaseRoot = Join-Path $ProjectRoot $ReleaseRootName
+$ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
+
+if (Test-Path -LiteralPath $ReleaseRoot) {
+    Remove-Item -LiteralPath $ReleaseRoot -Recurse -Force
+}
 
 if (-not (Test-Path -LiteralPath $VenvPython)) {
     throw "开发环境尚未安装，请先运行scripts/setup-dev.ps1。"
@@ -103,5 +103,21 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\启动金融计划收�
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\发布说明.txt") -Destination $ReleaseApp -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\构建清单.txt") -Destination $ReleaseApp -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $ReleaseApp -Force
+
+$ReleaseFiles = @(Get-ChildItem -LiteralPath $ReleaseApp -Recurse -File)
+$ReleaseBytes = [long](($ReleaseFiles | Measure-Object -Property Length -Sum).Sum)
+$ExecutableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $ReleaseApp "FinancialFeeSystem.exe")).Hash
+$BuildResult = @"
+金融计划收费计算系统 Windows构建结果
+构建时间：$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz'))
+输出目录：$ReleaseApp
+主EXE SHA-256：$ExecutableHash
+发布文件数（不含本结果文件）：$($ReleaseFiles.Count)
+发布总字节数（不含本结果文件）：$ReleaseBytes
+Windows ProductVersion：0.2.5
+Windows FileVersion：0.2.5.0
+后端完整测试和前端生产构建已由本脚本先行通过。
+"@
+Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8
 
 Write-Host "Windows一键版已生成：$ReleaseApp"

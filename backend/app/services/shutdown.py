@@ -62,13 +62,8 @@ class ShutdownCoordinator:
             get_codex_app_server().close()
         finally:
             if stop_hook is not None:
-                try:
-                    stop_hook()
-                    return
-                except Exception:
-                    # Fall back to Uvicorn's signal handler if the direct hook
-                    # becomes unavailable during teardown.
-                    pass
+                stop_hook()
+                return
             _signal_running_server()
 
 

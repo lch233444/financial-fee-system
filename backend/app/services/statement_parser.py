@@ -141,8 +141,8 @@ def _ocr(image: Image.Image, psm: int = 11) -> tuple[str, float]:
         requested = [name for name in ("eng", "chi_tra", "chi_sim") if name in available]
         if requested:
             language = "+".join(requested)
-    except Exception:
-        pass
+    except (OSError, pytesseract.TesseractError):
+        language = "eng"
     config = f"--oem 3 --psm {psm}"
     data = pytesseract.image_to_data(image, lang=language, config=config, output_type=Output.DICT)
     words: list[str] = []

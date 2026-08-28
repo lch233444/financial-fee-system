@@ -3,11 +3,10 @@ from __future__ import annotations
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,6 +55,13 @@ def _statement_dict(item: StatementImport) -> dict:
         "confirmed_snapshot_id": item.confirmed_snapshot_id,
         "created_at": item.created_at.isoformat(),
     }
+
+
+def _require_statement(db: Session, import_id: int) -> StatementImport:
+    item = db.get(StatementImport, import_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="导入记录不存在")
+    return item
 
 
 @router.get("")
@@ -131,10 +137,7 @@ async def upload_statement(file: UploadFile = File(...), db: Session = Depends(g
 
 @router.get("/{import_id}")
 def get_statement_import(import_id: int, db: Session = Depends(get_db)) -> dict:
-    item = db.get(StatementImport, import_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="导入记录不存在")
-    return _statement_dict(item)
+    return _statement_dict(_require_statement(db, import_id))
 
 
 @router.delete("/{import_id}")
@@ -146,20 +149,11 @@ def delete_statement_import(import_id: int, db: Session = Depends(get_db)) -> di
     """
 
     with _STATEMENT_RECOGNITION_LOCK:
-        db.rollback()
-        db.expire_all()
-        item = db.get(StatementImport, import_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="导入记录不存在")
+        item = _require_statement(db, import_id)
         linked_snapshot_id = db.scalar(
             select(BalanceSnapshot.id).where(BalanceSnapshot.statement_import_id == item.id).limit(1)
         )
-        if (
-            item.status == "CONFIRMED"
-            or item.confirmed_account_id is not None
-            or item.confirmed_snapshot_id is not None
-            or linked_snapshot_id is not None
-        ):
+        if item.status == "CONFIRMED" or linked_snapshot_id is not None:
             raise HTTPException(status_code=409, detail="已确认入账或已关联余额快照的导入记录不能删除")
 
         settings = get_settings()
@@ -170,12 +164,9 @@ def delete_statement_import(import_id: int, db: Session = Depends(get_db)) -> di
         if source_path.exists() and not source_path.is_file():
             raise HTTPException(status_code=409, detail="导入原件路径不是文件，已停止删除")
 
-        quarantine_path: Path | None = None
-        if source_path.exists():
-            quarantine_root = settings.data_root / "tmp" / "statement-delete"
-            quarantine_root.mkdir(parents=True, exist_ok=True)
-            quarantine_path = quarantine_root / f"{uuid4().hex}{source_path.suffix.casefold()}"
-            source_path.replace(quarantine_path)
+        source_file_deleted = source_path.exists()
+        if source_file_deleted:
+            source_path.unlink()
 
         db.add(
             AuditEvent(
@@ -186,35 +177,23 @@ def delete_statement_import(import_id: int, db: Session = Depends(get_db)) -> di
                     "sha256": item.sha256,
                     "previous_status": item.status,
                     "had_ai_recognition": item.ai_recognition_json is not None,
-                    "source_file_found": quarantine_path is not None,
+                    "source_file_found": source_file_deleted,
                 },
             )
         )
+        db.execute(
+            update(StatementImport)
+            .where(StatementImport.duplicate_of_id == item.id)
+            .values(duplicate_of_id=None)
+        )
         db.delete(item)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            if quarantine_path and quarantine_path.exists() and not source_path.exists():
-                quarantine_path.replace(source_path)
-            raise
-
-        if quarantine_path and quarantine_path.exists():
-            try:
-                quarantine_path.unlink()
-            except OSError as exc:
-                raise HTTPException(
-                    status_code=500,
-                    detail="导入记录已删除，但隔离区原件清理失败；请联系维护人员检查数据目录tmp/statement-delete",
-                ) from exc
-        return {"deleted": True, "import_id": import_id, "source_file_deleted": quarantine_path is not None}
+        db.commit()
+        return {"deleted": True, "import_id": import_id, "source_file_deleted": source_file_deleted}
 
 
 @router.get("/{import_id}/file")
 def get_statement_file(import_id: int, db: Session = Depends(get_db)) -> FileResponse:
-    item = db.get(StatementImport, import_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="导入记录不存在")
+    item = _require_statement(db, import_id)
     path = Path(item.stored_path)
     settings = get_settings()
     if not path.exists() or not is_within(path, settings.data_root / "statement_imports"):
@@ -239,11 +218,7 @@ def get_statement_file(import_id: int, db: Session = Depends(get_db)) -> FileRes
 @router.post("/{import_id}/reparse")
 def reparse_statement(import_id: int, db: Session = Depends(get_db)) -> dict:
     with _STATEMENT_RECOGNITION_LOCK:
-        db.rollback()
-        db.expire_all()
-        item = db.get(StatementImport, import_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="导入记录不存在")
+        item = _require_statement(db, import_id)
         if item.status == "CONFIRMED":
             raise HTTPException(status_code=409, detail="已确认入账的文件不能重新识别")
         if item.ai_recognition_json is not None:
@@ -278,11 +253,7 @@ def recognize_statement_with_ai(
     # also makes the idempotency check atomic, so concurrent clicks cannot
     # consume the user's subscription twice for the same statement.
     with _STATEMENT_RECOGNITION_LOCK:
-        db.rollback()
-        db.expire_all()
-        item = db.get(StatementImport, import_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="导入记录不存在")
+        item = _require_statement(db, import_id)
         if item.status == "CONFIRMED":
             raise HTTPException(status_code=409, detail="已确认入账的文件不能再进行AI识别")
         if item.ai_recognition_json is not None:
@@ -293,27 +264,10 @@ def recognize_statement_with_ai(
             raise HTTPException(status_code=404, detail="原始文件不存在或路径不安全")
         ocr_values = dict(item.extracted_json or {})
 
-        # End the read transaction before the potentially long external call.
-        db.rollback()
         try:
             ai_values = get_codex_app_server().recognize_statement(path)
         except CodexIntegrationError as exc:
             raise_ai_http_error(exc)
-
-        # A finance confirmation can happen while Luna is running. Reload and
-        # discard the candidate if that protected state changed.
-        db.rollback()
-        db.expire_all()
-        item = db.get(StatementImport, import_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="导入记录不存在")
-        if item.status == "CONFIRMED":
-            raise HTTPException(
-                status_code=409,
-                detail="识别期间该账单已由财务确认；AI结果已丢弃，未修改任何财务数据",
-            )
-        if item.ai_recognition_json is not None:
-            return {**_statement_dict(item), "idempotent": True}
 
         review = build_ai_review_result(ocr_values, ai_values)
         recognized_at = datetime.now(timezone.utc)
@@ -384,8 +338,6 @@ def confirm_statement(
     # section. A snapshot can therefore never be posted from a baseline that
     # changes while an independent recognition is still in flight.
     with _STATEMENT_RECOGNITION_LOCK:
-        db.rollback()
-        db.expire_all()
         return _confirm_statement_locked(import_id, payload, db)
 
 
@@ -394,13 +346,12 @@ def _confirm_statement_locked(
     payload: StatementConfirmRequest,
     db: Session,
 ) -> dict:
-    item = db.get(StatementImport, import_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="导入记录不存在")
+    item = _require_statement(db, import_id)
     if item.status == "CONFIRMED":
         raise HTTPException(status_code=409, detail="该文件已经确认入账")
 
-    document_type = (item.extracted_json or {}).get("document_type")
+    extracted = item.extracted_json or {}
+    document_type = extracted.get("document_type")
     ai_review = item.ai_recognition_json or {}
     ai_values = ai_review.get("values") or ai_review.get("extracted") or {}
     luna_document_type = ai_values.get("document_type") if isinstance(ai_values, dict) else None
@@ -494,7 +445,7 @@ def _confirm_statement_locked(
     ):
         raise HTTPException(status_code=409, detail="账单Scheme与选定Sub Account不一致")
 
-    recognized_holdings = _normalized_holdings((item.extracted_json or {}).get("holdings"))
+    recognized_holdings = _normalized_holdings(extracted.get("holdings"))
     ai_holdings = _normalized_holdings(
         ai_values.get("holdings") if isinstance(ai_values, dict) else None
     )
@@ -533,7 +484,7 @@ def _confirm_statement_locked(
         raise HTTPException(status_code=409, detail="该账户在同一天已经有余额快照") from exc
 
     reviewed_values = {
-        **(item.extracted_json or {}),
+        **extracted,
         **payload.model_dump(
             mode="json",
             exclude={
@@ -547,9 +498,9 @@ def _confirm_statement_locked(
         "holdings": confirmed_holdings,
     }
     changes = {
-        key: {"recognized": (item.extracted_json or {}).get(key), "confirmed": value}
+        key: {"recognized": extracted.get(key), "confirmed": value}
         for key, value in reviewed_values.items()
-        if (item.extracted_json or {}).get(key) != value and key != "holdings"
+        if extracted.get(key) != value and key != "holdings"
     }
     changes["holdings"] = {
         "source": holdings_source,
@@ -559,10 +510,11 @@ def _confirm_statement_locked(
         "changed": recognized_holdings != confirmed_holdings,
     }
     item.reviewed_json = reviewed_values
+    confirmed_at = datetime.now(timezone.utc)
     item.revision_log_json = [
         *((item.revision_log_json or [])),
         {
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at": confirmed_at.isoformat(),
             "changes": changes,
             "ai_review_acknowledged": bool(payload.ai_conflicts_reviewed),
             "luna_document_type_reviewed": bool(payload.luna_document_type_reviewed),
@@ -571,7 +523,7 @@ def _confirm_statement_locked(
     item.status = "CONFIRMED"
     item.confirmed_account_id = account.id
     item.confirmed_snapshot_id = snapshot.id
-    item.confirmed_at = datetime.now(timezone.utc)
+    item.confirmed_at = confirmed_at
     db.add(
         AuditEvent(
             action="STATEMENT_CONFIRMED",

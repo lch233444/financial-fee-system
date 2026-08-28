@@ -1,6 +1,14 @@
 import type { AiAssistantStatus, StatementImport } from "./types";
 
 const SAFE_REQUEST_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+type ApiErrorPayload = { detail?: string | { message?: string } };
+
+async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
+  const payload = await response.json() as ApiErrorPayload;
+  if (typeof payload.detail === "string") return payload.detail;
+  if (payload.detail && typeof payload.detail.message === "string") return payload.detail.message;
+  return fallback;
+}
 
 export function withFinancialSystemRequestHeader(options: RequestInit = {}): RequestInit {
   const headers = new Headers(options.headers);
@@ -19,15 +27,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
   const response = await fetch(path, { ...requestOptions, headers });
   if (!response.ok) {
-    let detail = `请求失败 (${response.status})`;
-    try {
-      const payload = await response.json();
-      if (typeof payload.detail === "string") detail = payload.detail;
-      else if (payload.detail && typeof payload.detail.message === "string") detail = payload.detail.message;
-    } catch {
-      // Keep fallback message.
-    }
-    throw new Error(detail);
+    throw new Error(await apiErrorMessage(response, `请求失败 (${response.status})`));
   }
   return response.json() as Promise<T>;
 }
@@ -73,14 +73,7 @@ export function shutdownFinancialSystem(): Promise<ShutdownResult> {
 export async function download(path: string, suggestedName: string, options: RequestInit = {}): Promise<void> {
   const response = await fetch(path, withFinancialSystemRequestHeader(options));
   if (!response.ok) {
-    let message = `下载失败 (${response.status})`;
-    try {
-      const payload = await response.json();
-      message = payload.detail || message;
-    } catch {
-      // Keep fallback message.
-    }
-    throw new Error(message);
+    throw new Error(await apiErrorMessage(response, `下载失败 (${response.status})`));
   }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);

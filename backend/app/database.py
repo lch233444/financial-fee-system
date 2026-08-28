@@ -52,10 +52,8 @@ def init_db() -> None:
         ini_path = root / "backend" / "alembic.ini"
         script_path = root / "backend" / "alembic"
 
-    if not ini_path.exists() or not script_path.exists():
-        # Development fallback for a source tree copied without migrations.
-        Base.metadata.create_all(bind=engine)
-        return
+    if not ini_path.is_file() or not script_path.is_dir():
+        raise RuntimeError("数据库迁移文件缺失，系统已停止启动")
 
     alembic_config = Config(str(ini_path))
     alembic_config.set_main_option("script_location", str(script_path).replace("%", "%%"))

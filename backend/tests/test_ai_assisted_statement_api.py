@@ -559,7 +559,21 @@ def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None
             source_path = Path(item.stored_path)
             item.ai_recognition_json = {"status": "CONFLICT", "values": _ai_values()}
             item.ai_status = "CONFLICT"
+            dependent_token = uuid4().hex
+            dependent = StatementImport(
+                original_name=f"semantic-{dependent_token}.jpg",
+                stored_path=str(source_path.parent / f"semantic-{dependent_token}.jpg"),
+                sha256=dependent_token * 2,
+                mime_type="image/jpeg",
+                status="NEEDS_REVIEW",
+                parser_version="1.1",
+                extracted_json=_ocr_values(),
+                duplicate_of_id=item.id,
+            )
+            db.add(dependent)
             db.commit()
+            db.refresh(dependent)
+            dependent_id = dependent.id
         assert source_path.exists()
 
         response = client.delete(f"/api/statement-imports/{import_id}")
@@ -573,6 +587,7 @@ def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None
         assert not source_path.exists()
         with SessionLocal() as db:
             assert db.get(StatementImport, import_id) is None
+            assert db.get(StatementImport, dependent_id).duplicate_of_id is None
             audit = db.scalar(
                 select(AuditEvent)
                 .where(

@@ -71,14 +71,25 @@ def validate_backup(backup_path: Path, extract_root: Path) -> dict:
             except ValueError as exc:
                 raise ValueError("备份文件包含不安全路径") from exc
         archive.extractall(extract_root)
-    manifest_path = extract_root / "manifest.json"
+    return validate_backup_archive_root(extract_root)
+
+
+def validate_backup_archive_root(root: Path) -> dict:
+    """Validate one extracted backup tree and return its manifest."""
+
+    root = root.resolve()
+    manifest_path = root / "manifest.json"
     if not manifest_path.exists():
         raise ValueError("备份缺少manifest.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("format") != "financial-fee-system-backup" or manifest.get("version") != 1:
         raise ValueError("不支持的备份格式")
     for record in manifest.get("files", []):
-        file_path = extract_root / record["path"]
+        file_path = (root / record["path"]).resolve()
+        try:
+            file_path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("备份清单包含不安全路径") from exc
         if not file_path.exists() or sha256_file(file_path) != record["sha256"]:
             raise ValueError(f"备份校验失败：{record['path']}")
     return manifest
@@ -119,17 +130,6 @@ def apply_pending_restore() -> bool:
             shutil.copytree(source, destination)
         else:
             destination.mkdir(parents=True, exist_ok=True)
-    marker.unlink(missing_ok=True)
-    shutil.rmtree(pending_root, ignore_errors=True)
+    marker.unlink()
+    shutil.rmtree(pending_root)
     return True
-
-
-def validate_backup_archive_root(root: Path) -> None:
-    manifest_path = root / "manifest.json"
-    if not manifest_path.exists():
-        raise ValueError("待恢复目录缺少manifest.json")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for record in manifest.get("files", []):
-        file_path = root / record["path"]
-        if not file_path.exists() or sha256_file(file_path) != record["sha256"]:
-            raise ValueError(f"待恢复文件校验失败：{record['path']}")

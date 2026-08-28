@@ -9,7 +9,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.platypus import (
     KeepTogether,
     Paragraph,
@@ -43,7 +43,7 @@ def _register_chinese_font() -> str:
                 if name not in pdfmetrics.getRegisteredFontNames():
                     pdfmetrics.registerFont(TTFont(name, str(path)))
                 return name
-            except Exception:
+            except (OSError, TTFError):
                 continue
     return "Helvetica"
 

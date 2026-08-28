@@ -12,14 +12,45 @@ from app.main import app
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 
 
-def test_company_excel_template_has_no_personal_notes_or_example_data() -> None:
+def test_company_excel_template_preserves_formulas_and_removes_notes_below_row_five() -> None:
     template_path = Path(__file__).resolve().parents[2] / "新收费计划计算.xlsx"
-    sheet = load_workbook(template_path, data_only=False)["利润20%"]
+    workbook = load_workbook(template_path, data_only=False)
+    sheet = workbook["利润20%"]
+    expected_main_formulas = {
+        "K3": "=J3-I3+1",
+        "O3": "=M3-N3",
+        "P3": "=373455.51+94978.23",
+        "Q3": "=P3-L3-O3",
+        "R3": "=Q3/(L3+O3)",
+        "T3": "=S3+O3",
+        "U3": "=P3-T3",
+        "V3": "=IF(U3>0,U3*0.2,0)",
+        "W3": "=MAX(T3,P3)",
+        "K4": "=J4-I4+1",
+        "O4": "=M4-N4",
+        "Q4": "=P4-L4-O4",
+        "R4": "=Q4/(L4+O4)",
+        "T4": "=S4+O4",
+        "U4": "=P4-T4",
+        "V4": "=IF(U4>0,U4*0.2,0)",
+        "W4": "=MAX(T4,P4)",
+    }
+    assert sheet["C3"].value == "例子"
+    assert sheet["C4"].value == "例子"
+    assert {cell: sheet[cell].value for cell in expected_main_formulas} == expected_main_formulas
     assert all(
         value is None
-        for row in sheet.iter_rows(min_row=3, max_col=25, values_only=True)
+        for row in sheet.iter_rows(min_row=5, max_col=41, values_only=True)
         for value in row
     )
+    defer = workbook["Defer 延付利息（待确认）"]
+    defer_formulas = [
+        cell.value
+        for row in defer.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str) and cell.value.startswith("=")
+    ]
+    assert len(defer_formulas) == 36
 
 
 def _master(client: TestClient, suffix: str, *, accounts: int = 1) -> dict:
@@ -177,6 +208,13 @@ def test_internal_finance_excel_batches_selected_finalized_settlements() -> None
         assert [sheet["E3"].value, sheet["E4"].value] == ["Client BATCHA", "Client BATCHB"]
         assert [sheet["H3"].value, sheet["H4"].value] == ["BATCHA-1", "BATCHB-1"]
         assert [sheet["V3"].value, sheet["V4"].value] == [20, 40]
+        assert sheet["K3"].value == "=J3-I3+1"
+        assert sheet["O3"].value == "=M3-N3"
+        assert sheet["Q3"].value == "=P3-L3-O3"
+        assert sheet["R3"].value == '=IFERROR(Q3/(L3+O3),"")'
+        assert sheet["T3"].value == "=S3+O3"
+        assert sheet["U3"].value == "=P3-T3"
+        assert sheet["W3"].value == "=MAX(T3,P3)"
         assert all(sheet.cell(3, column).alignment.wrap_text for column in range(2, 9))
         assert workbook["Defer 延付利息（待确认）"]["X3"].value is not None
 

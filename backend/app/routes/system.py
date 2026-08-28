@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, distinct, func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import LOOPBACK_HOSTS, get_settings
@@ -17,7 +17,7 @@ from ..models import (
     ExportRecord,
     FC,
     Invoice,
-    Payment,
+    InvoiceSource,
     QuarterlySettlement,
     SettlementAccountLine,
     SubAccount,
@@ -134,14 +134,13 @@ def dashboard(
     invoice_query = (
         select(Invoice)
         .options(selectinload(Invoice.payments))
-        .join(QuarterlySettlement, QuarterlySettlement.id == Invoice.settlement_id)
         .where(
             Invoice.lifecycle_status == "ISSUED",
-            QuarterlySettlement.year == year,
+            Invoice.year == year,
         )
     )
     if quarter:
-        invoice_query = invoice_query.where(QuarterlySettlement.quarter == quarter)
+        invoice_query = invoice_query.where(Invoice.quarter == quarter)
     invoices = db.scalars(invoice_query).all()
     generated_fee = sum(item.service_fee_cents for item in settlements)
     paid = sum(sum(payment.amount_cents for payment in invoice.payments) for invoice in invoices)
@@ -175,29 +174,19 @@ def fc_report(
         client_count = db.scalar(
             select(func.count(distinct(Client.id))).where(Client.fc_id == fc.id, Client.status == "ACTIVE")
         ) or 0
-        settlement_query = (
-            select(QuarterlySettlement)
-            .where(QuarterlySettlement.fc_id == fc.id, QuarterlySettlement.status == "FINALIZED")
+        charged_query = select(
+            func.count(distinct(QuarterlySettlement.client_id)),
+            func.coalesce(func.sum(QuarterlySettlement.service_fee_cents), 0),
+        ).where(
+            QuarterlySettlement.fc_id == fc.id,
+            QuarterlySettlement.status == "FINALIZED",
+            QuarterlySettlement.service_fee_cents > 0,
         )
-        if year:
-            settlement_query = settlement_query.where(QuarterlySettlement.year == year)
-        if quarter:
-            settlement_query = settlement_query.where(QuarterlySettlement.quarter == quarter)
-        settlements = db.scalars(settlement_query).all()
-        fee_generated = sum(item.service_fee_cents for item in settlements)
-        invoice_query = (
-            select(Invoice)
-            .options(selectinload(Invoice.payments))
-            .join(QuarterlySettlement, QuarterlySettlement.id == Invoice.settlement_id)
-            .where(Invoice.fc_id == fc.id, Invoice.lifecycle_status == "ISSUED")
-        )
-        if year:
-            invoice_query = invoice_query.where(QuarterlySettlement.year == year)
-        if quarter:
-            invoice_query = invoice_query.where(QuarterlySettlement.quarter == quarter)
-        invoices = db.scalars(invoice_query).all()
-        paid = sum(payment.amount_cents for invoice in invoices for payment in invoice.payments)
-        invoiced = sum(invoice.amount_cents for invoice in invoices)
+        if year is not None:
+            charged_query = charged_query.where(QuarterlySettlement.year == year)
+        if quarter is not None:
+            charged_query = charged_query.where(QuarterlySettlement.quarter == quarter)
+        charged_client_count, fee_generated = db.execute(charged_query).one()
         result.append(
             {
                 "fc_id": fc.id,
@@ -205,9 +194,8 @@ def fc_report(
                 "fc_code": fc.code,
                 "company_name": fc.company.name,
                 "active_client_count": client_count,
-                "service_fee_generated": money_string(fee_generated),
-                "paid_amount": money_string(paid),
-                "outstanding_amount": money_string(max(invoiced - paid, 0)),
+                "charged_client_count": int(charged_client_count),
+                "service_fee_generated": money_string(int(fee_generated)),
             }
         )
     return result
@@ -231,10 +219,16 @@ def export_excel(
     ).unique().all()
     if len(settlements) != len(ids):
         raise HTTPException(status_code=400, detail="只能导出存在且Finalized的Settlement")
-    invoices = db.scalars(
-        select(Invoice).where(Invoice.settlement_id.in_(ids), Invoice.lifecycle_status == "ISSUED")
+    invoice_sources = db.execute(
+        select(InvoiceSource.settlement_id, Invoice)
+        .join(Invoice, Invoice.id == InvoiceSource.invoice_id)
+        .where(
+            InvoiceSource.settlement_id.in_(ids),
+            InvoiceSource.active.is_(True),
+            Invoice.lifecycle_status == "ISSUED",
+        )
     ).all()
-    invoice_map = {invoice.settlement_id: invoice for invoice in invoices}
+    invoice_map = {settlement_id: invoice for settlement_id, invoice in invoice_sources}
     settings = get_settings()
     filename = f"financial_settlements_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
     output_path = settings.data_root / "output" / "excel" / filename

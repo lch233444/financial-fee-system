@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -20,7 +21,7 @@ from reportlab.platypus import (
 )
 
 from ..models import Invoice, QuarterlySettlement
-from ..money import money_string
+from ..money import from_cents
 
 
 BRAND = colors.HexColor("#173B57")
@@ -49,7 +50,7 @@ def _register_chinese_font() -> str:
 
 
 def _money(cents: int) -> str:
-    return f"HKD {int(cents) / 100:,.2f}"
+    return f"HKD {from_cents(int(cents)):,.2f}"
 
 
 def _labels(language: str) -> dict[str, str]:
@@ -65,6 +66,7 @@ def _labels(language: str) -> dict[str, str]:
             "fee_plan": "Fee Plan",
             "accounts": "Account(s)",
             "period": "Settlement Period",
+            "quarter": "Billing Quarter",
             "calculation": "Settlement Calculation",
             "account_breakdown": "Account-level Service Fee Breakdown",
             "account_period": "Period",
@@ -88,10 +90,12 @@ def _labels(language: str) -> dict[str, str]:
             "net_short": "Net Contribution",
             "above_short": "Above HWM",
             "service_fee_short": "Service Fee",
+            "total": "Total Service Fee Due",
             "payment": "Payment Information",
             "bank": "Bank Transfer",
             "cheque": "Cheque",
             "note": "This document is generated from the finalized quarterly settlement record.",
+            "invoice_note": "This invoice is generated from frozen finalized settlement lines.",
             "page": "Page",
         }
     return {
@@ -105,6 +109,7 @@ def _labels(language: str) -> dict[str, str]:
         "fee_plan": "收费计划 Fee Plan",
         "accounts": "账户 A/C",
         "period": "结算期间 Settlement Period",
+        "quarter": "账单季度 Billing Quarter",
         "calculation": "结算计算 Settlement Calculation",
         "account_breakdown": "账户级收费明细 Account-level Breakdown",
         "account_period": "期间 Period",
@@ -128,12 +133,197 @@ def _labels(language: str) -> dict[str, str]:
         "net_short": "净资金 Net",
         "above_short": "超额 Above HWM",
         "service_fee_short": "服务费 Service Fee",
+        "total": "应付服务费合计 Total",
         "payment": "付款信息 Payment Information",
         "bank": "银行转账 Bank Transfer",
         "cheque": "支票 Cheque",
         "note": "本文件根据已最终确认的季度结算记录自动生成。",
+        "invoice_note": "本账单根据已冻结的Finalized Settlement账户明细生成。",
         "page": "页 Page",
     }
+
+
+def generate_invoice_pdf(
+    *,
+    invoice: Invoice,
+    output_path: Path,
+    language: str = "zh",
+) -> Path:
+    """Render an Invoice only from its frozen ownership and InvoiceLine rows."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    labels = _labels(language)
+    font = "Helvetica" if language == "en" else _register_chinese_font()
+    bold_font = "Helvetica-Bold" if font == "Helvetica" else font
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "invoice-title",
+        parent=styles["Title"],
+        fontName=bold_font,
+        fontSize=18,
+        leading=24,
+        textColor=BRAND,
+        alignment=TA_LEFT,
+        spaceAfter=5 * mm,
+    )
+    heading_style = ParagraphStyle(
+        "invoice-heading",
+        parent=styles["Heading2"],
+        fontName=bold_font,
+        fontSize=11,
+        leading=15,
+        textColor=BRAND,
+        spaceBefore=4 * mm,
+        spaceAfter=2 * mm,
+    )
+    normal_style = ParagraphStyle(
+        "invoice-normal",
+        parent=styles["BodyText"],
+        fontName=font,
+        fontSize=9,
+        leading=13,
+        textColor=TEXT,
+    )
+    small_style = ParagraphStyle(
+        "invoice-small",
+        parent=normal_style,
+        fontSize=7.5,
+        leading=10,
+        textColor=MUTED,
+    )
+    company = invoice.company
+    client = invoice.client
+    fee_plan = invoice.fee_plan
+
+    def footer(canvas, doc) -> None:
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#D8E1E8"))
+        canvas.line(18 * mm, 14 * mm, 192 * mm, 14 * mm)
+        canvas.setFont(font, 7)
+        canvas.setFillColor(MUTED)
+        canvas.drawString(18 * mm, 9 * mm, labels["invoice_note"])
+        canvas.drawRightString(192 * mm, 9 * mm, f"{labels['page']} {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=20 * mm,
+        title=labels["title_invoice"],
+        author=company.name,
+    )
+    story: list = []
+    header = Table(
+        [[Paragraph(escape(company.name), title_style), Paragraph(labels["title_invoice"], title_style)]],
+        colWidths=[75 * mm, 99 * mm],
+    )
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
+    story.extend([header, Spacer(1, 1.5 * mm)])
+    if company.address or company.contact:
+        story.append(
+            Paragraph(escape(" | ".join(filter(None, [company.address, company.contact]))), small_style)
+        )
+    story.append(Spacer(1, 4 * mm))
+
+    issue_date = f"{invoice.issue_date:%d/%m/%Y}" if invoice.issue_date else "-"
+    due_date = f"{invoice.due_date:%d/%m/%Y}" if invoice.due_date else "-"
+    meta_rows = [
+        [labels["client"], client.name, labels["invoice_no"], invoice.invoice_number or "-"],
+        [labels["fee_plan"], fee_plan.name, labels["quarter"], f"{invoice.year} Q{invoice.quarter}"],
+        [labels["issue_date"], issue_date, labels["due_date"], due_date],
+    ]
+    meta = Table(meta_rows, colWidths=[39 * mm, 48 * mm, 39 * mm, 48 * mm])
+    meta.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("BACKGROUND", (0, 0), (0, -1), PALE),
+                ("BACKGROUND", (2, 0), (2, -1), PALE),
+                ("TEXTCOLOR", (0, 0), (0, -1), MUTED),
+                ("TEXTCOLOR", (2, 0), (2, -1), MUTED),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D8E1E8")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.extend([meta, Paragraph(labels["account_breakdown"], heading_style)])
+
+    invoice_rows = [[labels["platform"], labels["accounts"], labels["account_period"], labels["service_fee_short"]]]
+    for line in sorted(invoice.lines, key=lambda value: (value.display_order, value.id)):
+        if line.start_date and line.closing_date:
+            period = f"{line.start_date:%d/%m/%Y} - {line.closing_date:%d/%m/%Y}"
+        else:
+            period = "-"
+        invoice_rows.append(
+            [
+                line.platform_name_snapshot,
+                line.account_number_snapshot,
+                period,
+                _money(line.service_fee_cents),
+            ]
+        )
+    invoice_rows.append(["", "", labels["total"], _money(invoice.amount_cents)])
+    invoice_table = Table(invoice_rows, colWidths=[42 * mm, 43 * mm, 55 * mm, 34 * mm], repeatRows=1)
+    invoice_table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+                ("ALIGN", (2, -1), (2, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, PALE]),
+                ("LINEABOVE", (0, -1), (-1, -1), 0.8, ACCENT),
+                ("FONTNAME", (0, -1), (-1, -1), bold_font),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCD8E0")),
+                ("INNERGRID", (0, 0), (-1, -2), 0.25, colors.HexColor("#E2E8ED")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.append(invoice_table)
+
+    payment_rows = []
+    if company.bank_information:
+        payment_rows.append(
+            [labels["bank"], Paragraph(escape(company.bank_information).replace("\n", "<br/>"), normal_style)]
+        )
+    if company.cheque_information:
+        payment_rows.append(
+            [labels["cheque"], Paragraph(escape(company.cheque_information).replace("\n", "<br/>"), normal_style)]
+        )
+    if not payment_rows:
+        payment_rows.append([labels["payment"], Paragraph("-", normal_style)])
+    payment_table = Table(payment_rows, colWidths=[43 * mm, 131 * mm])
+    payment_table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font),
+                ("BACKGROUND", (0, 0), (0, -1), PALE),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D8E1E8")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    story.append(KeepTogether([Paragraph(labels["payment"], heading_style), payment_table]))
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    return output_path
 
 
 def generate_settlement_pdf(
@@ -143,6 +333,8 @@ def generate_settlement_pdf(
     language: str = "zh",
     invoice: Invoice | None = None,
 ) -> Path:
+    if invoice is not None:
+        return generate_invoice_pdf(invoice=invoice, output_path=output_path, language=language)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     labels = _labels(language)
     font = "Helvetica" if language == "en" else _register_chinese_font()
@@ -184,7 +376,7 @@ def generate_settlement_pdf(
         textColor=MUTED,
     )
 
-    company = settlement.client.company
+    company = settlement.company
     account_numbers = ", ".join(line.account.account_number for line in settlement.account_lines)
     is_invoice = invoice is not None and settlement.service_fee_cents > 0
 
@@ -213,7 +405,7 @@ def generate_settlement_pdf(
     header = Table(
         [
             [
-                Paragraph(company.name if company else "Company", title_style),
+                Paragraph(escape(company.name) if company else "Company", title_style),
                 Paragraph(labels["title_invoice"] if is_invoice else labels["title_statement"], title_style),
             ]
         ],
@@ -222,7 +414,9 @@ def generate_settlement_pdf(
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
     story.extend([header, Spacer(1, 1.5 * mm)])
     if company and (company.address or company.contact):
-        story.append(Paragraph(" | ".join(filter(None, [company.address, company.contact])), small_style))
+        story.append(
+            Paragraph(escape(" | ".join(filter(None, [company.address, company.contact]))), small_style)
+        )
     story.append(Spacer(1, 4 * mm))
 
     meta_rows = [
@@ -345,9 +539,13 @@ def generate_settlement_pdf(
         payment_blocks = [Paragraph(labels["payment"], heading_style)]
         payment_rows = []
         if company.bank_information:
-            payment_rows.append([labels["bank"], Paragraph(company.bank_information.replace("\n", "<br/>"), normal_style)])
+            payment_rows.append(
+                [labels["bank"], Paragraph(escape(company.bank_information).replace("\n", "<br/>"), normal_style)]
+            )
         if company.cheque_information:
-            payment_rows.append([labels["cheque"], Paragraph(company.cheque_information.replace("\n", "<br/>"), normal_style)])
+            payment_rows.append(
+                [labels["cheque"], Paragraph(escape(company.cheque_information).replace("\n", "<br/>"), normal_style)]
+            )
         if not payment_rows:
             payment_rows.append([labels["payment"], Paragraph("-", normal_style)])
         payment_table = Table(payment_rows, colWidths=[43 * mm, 131 * mm])

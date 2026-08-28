@@ -2,7 +2,7 @@
 
 Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-luna` 进行一次辅助识别。
 
-当前源码版本为 **0.2.8**；Windows单机运行版切换状态见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
+当前源码版本为 **0.2.9**；Windows单机运行版切换状态见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
 
 ## 工程接手入口
 
@@ -20,7 +20,7 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 
 用户在对话中确认的业务背景或规则必须在同一次任务中写回GitHub交接资料，不能依赖对话历史或Agent记忆继续传递。
 
-当前0.2.8延续账户级HWM、Snapshot凭证、Luna隔离和导入复核边界，并在“季度结算”提供公司内部财务Excel批量筛选、选择及模板导出。公司模板直接以用户重新提供的原始工作簿为母版，完整保留文档属性、计算链、主题、主表第3、4行示例及17个原公式，只删除主表第5行及以下18个个人备注单元格；Defer页原始数据和36个公式不变。跨Platform客户Invoice、二态Payment/差额退款和精简FC统计仍在后续批次。
+当前0.2.9延续账户级HWM、Snapshot凭证、Luna隔离、导入复核及原始Excel母版边界，并把同一Client、年度、季度和20% Fee Plan下的多个Finalized Settlement在客户Invoice阶段跨Platform汇总；Invoice冻结每份Settlement来源及逐Sub Account收费行，Issue前会阻止遗漏后来Finalize的同组Settlement。出单使用Settlement冻结的Company/FC，保留连续不复用编号，并提供`ISSUING`中断恢复。FC统计已精简为当前管理客户、期间收费客户和Service Fee。Payment目前仍保留多笔/部分付款旧流程；二态Payment、凭证硬前置、差额、错单更正和退款留痕属于下一批。
 
 ## 开发环境
 

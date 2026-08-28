@@ -150,7 +150,16 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
         data = _master(client, "A3")
         first = _settlement(client, data, 1, "1000.00", "1100.00")
         assert client.post(f"/api/settlements/{first['id']}/finalize").status_code == 200
-        first_draft = client.post("/api/invoices", json={"settlement_id": first["id"], "language": "zh"}).json()
+        first_draft = client.post(
+            "/api/invoices",
+            json={
+                "client_id": data["client"]["id"],
+                "year": 2026,
+                "quarter": 1,
+                "fee_plan_id": data["plan"]["id"],
+                "language": "zh",
+            },
+        ).json()
         first_issued = client.post(
             f"/api/invoices/{first_draft['id']}/issue",
             json={"issue_date": "2026-04-05", "language": "zh"},
@@ -167,7 +176,16 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
         assert second["account_lines"][0]["beginning_snapshot_id"] == first["account_lines"][0]["closing_snapshot_id"]
         assert second["account_lines"][0]["original_hwm"] == first["account_lines"][0]["next_hwm"]
         assert client.post(f"/api/settlements/{second['id']}/finalize").status_code == 200
-        second_draft = client.post("/api/invoices", json={"settlement_id": second["id"], "language": "en"}).json()
+        second_draft = client.post(
+            "/api/invoices",
+            json={
+                "client_id": data["client"]["id"],
+                "year": 2026,
+                "quarter": 2,
+                "fee_plan_id": data["plan"]["id"],
+                "language": "en",
+            },
+        ).json()
         second_issued = client.post(
             f"/api/invoices/{second_draft['id']}/issue",
             json={"issue_date": "2026-07-05", "language": "en"},

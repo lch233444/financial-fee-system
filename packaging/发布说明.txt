@@ -1,24 +1,20 @@
-金融计划收费计算系统 MVP 0.2.8
+金融计划收费计算系统 MVP 0.2.9
 构建日期：2026-08-28
 
 本版主要更新：
-- 以用户重新提供的原始Excel为唯一母版重新修正公司模板：完整保留原工作簿的文档属性、计算链、主题、工作表、格式、示例、数值和公式，只清空主表第5行及以下18个个人备注单元格。
-- 主表第3、4行两条示例及17个原公式完整保留；第二个Defer工作表的原始数据和36个公式保持不变。
-- 系统导出仍会以Finalized Settlement数据替换主表示例区，并逐Sub Account写入账户期间、金额、HWM、锁定Service Fee及对应Excel公式；双Settlement样例已完成字段、公式和视觉核对。
-- “季度结算”新增公司内部财务Excel批量导出：可按年度、季度和客户筛选Finalized Settlement，逐项或全选后按公司模板导出，并在导出前显示所选Service Fee合计。
-- 代码改为明确的单一路径：未确认导入直接删除原件和记录，不再生成删除隔离副本或执行恢复分支；相关语义重复引用同步解除。
-- 删除请求开头的重复数据库回滚/刷新；Luna识别、人工确认和删除仍共享同一锁，防止同一导入并发变更。
-- 备份恢复统一使用一套格式、路径和哈希校验；迁移文件缺失时明确停止启动，不再静默创建不完整数据库。
-- Codex状态、OCR语言检测、PDF字体和安全退出只处理已知异常；未知程序错误不再被静默吞掉。
-- Windows构建固定只使用一个release目录，并自动生成当次构建结果；本机只保留最新正式运行版，候选包和构建临时文件在验收后清理。
-- 修复“本地OCR显示未知、Luna判断为余额页但仍无法复核”的矛盾：仅在本地类型为未知且Luna明确判断为余额页时，财务可查看原件并勾选文档类型确认后进入复核。
-- Luna文档类型不会自动胜出；字段差异仍需逐项选择并确认，本地已明确分类为供款凭证时禁止被Luna覆盖为余额页。
-- 导入记录增加删除按钮；只允许删除尚未确认入账的记录，并同时清理原始文件及OCR/Luna结果，已确认或已关联余额快照的记录禁止删除。
-- 修复Luna继承源码或发布目录项目指令、点击识别后直接转人工的问题；进程、Thread和Turn统一使用隔离工作目录，残留指令来源仍会安全停止。
-- PDF辅助识别由仅发送第一页改为最多20页逐页发送；超过20页明确提示拆分，不静默漏页。
-- 每个Sub Account使用自己的Starting Date、Closing Date、Days、流水区间和HWM独立计算；Excel/PDF同步展示账户期间。
-- Beginning/Closing必须来自账户级Snapshot，账户HWM按自身前序Finalized结算继承；缺少Snapshot或本期资金流水凭证时不得Finalize。
-- 保留本地OCR、Luna单模型、人工最终确认、loopback监听和不可自动升级模型等安全边界。
+- Invoice Draft改为按Client、Year、Quarter和Fee Plan由服务端自动纳入全部Finalized Settlement；多个Platform只在客户Invoice阶段汇总。
+- Invoice逐行冻结Platform、Sub Account、账户期间和锁定Service Fee，并显示客户季度应付合计；账户HWM仍各自独立计算，不会跨账户抵销。
+- 同一客户季度收费计划最多一张活动Invoice，同一Settlement最多属于一张活动Invoice。Draft后若出现迟到Settlement，Issue会拒绝漏项签发，必须作废Draft并重建。
+- 出单PDF使用Settlement冻结的Company/FC及Invoice冻结账户行，不再从Client当前Company重新读取抬头或收款资料。
+- 已登记的Issued/VOID正式Invoice PDF每次下载都会按Invoice、语言和归档路径核对审计记录及SHA-256；文件缺失、不可读、审计记录缺失或哈希不符时拒绝返回并提示从已验证备份恢复，不会重生成覆盖。
+- 新增ISSUING中断恢复：双语归档完整时可完成签发，否则退回Draft并清理部分文件；预留编号永久保留且不复用。
+- FC服务统计精简为当前管理客户数、期间收费客户数和Finalized Service Fee，不再把Company已收/未收列作FC指标；Dashboard可选择Year和Quarter。
+- Payment仍保留现有多笔/部分付款界面，但新增提交防双击及数据库兜底：只能向Issued Invoice登记正数付款，累计不得超额，有Payment时不得Void。
+- 财务日期默认值改用Windows本地日历日期，避免北京时间凌晨被UTC换算成前一天。
+- 数据迁移保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。金额不一致、重复活动组/来源或残缺新结构会安全停止并要求人工检查。
+- Windows构建同时校验后端、前端、字符串版号和数值FileVersion，并固定验证Excel母版及Tesseract版本/SHA-256，防止发布信息漂移。
+- 公司Excel母版未修改，继续使用用户确认的原始工作簿修正版，SHA-256为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
+- 本版本仍不包含二态Payment、付款凭证硬前置、公司承担差额、错误Invoice更正/退款、Defer延付利息、自动邮件、用户权限及服务器部署。
 
 启动方式：
 1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。
@@ -38,4 +34,3 @@
 - 页面内“退出ChatGPT Pro”只退出本系统专用Luna环境，不影响桌面Codex；“安全退出系统”会先停止本程序启动的识别进程，再正常停止本地服务，不会删除财务数据。
 - 前端入口页禁止缓存，升级后不会继续显示上一版界面。
 - 需要迁移电脑时，请先在系统内建立备份。
-- 本版本不包含Defer延付利息、自动邮件、用户权限及服务器部署。

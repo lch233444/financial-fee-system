@@ -5,8 +5,10 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .money import money_string
 from .models import Attachment, BalanceSnapshot, Invoice, QuarterlySettlement
+from .services.storage import is_within
 
 
 def _optional_money(value: int | None) -> str | None:
@@ -110,9 +112,52 @@ def invoice_payment_status(item: Invoice, today: date | None = None) -> str:
 
 def invoice_dict(item: Invoice) -> dict:
     paid_cents = sum(payment.amount_cents for payment in item.payments)
+    sources = sorted(item.sources, key=lambda source: (source.settlement_id, source.id))
+    lines = sorted(item.lines, key=lambda line: (line.display_order, line.id))
+    latest_attempt = max(item.issue_attempts, key=lambda attempt: attempt.id, default=None)
+    issue_recovery = None
+    if item.lifecycle_status == "ISSUING":
+        settings = get_settings()
+        pdf_root = settings.data_root / "output" / "pdf"
+        expected_paths = (
+            [pdf_root / f"{item.invoice_number}_{language}.pdf" for language in ("zh", "en")]
+            if item.invoice_number
+            else []
+        )
+        files_complete = len(expected_paths) == 2 and all(
+            path.is_file() and is_within(path, pdf_root) for path in expected_paths
+        )
+        issue_recovery = {
+            "files_complete": files_complete,
+            "can_complete": files_complete,
+            "can_return_to_draft": True,
+            "invoice_number": item.invoice_number,
+            "attempt_id": latest_attempt.id if latest_attempt else None,
+            "attempt_status": latest_attempt.status if latest_attempt else None,
+        }
     return {
         "id": item.id,
         "settlement_id": item.settlement_id,
+        "settlement_ids": [source.settlement_id for source in sources],
+        "client_id": item.client_id,
+        "client_name": item.client.name if item.client else None,
+        "year": item.year,
+        "quarter": item.quarter,
+        "fee_plan_id": item.fee_plan_id,
+        "fee_plan_name": item.fee_plan.name if item.fee_plan else None,
+        "source_count": len(sources),
+        "account_lines": [
+            {
+                "id": line.id,
+                "settlement_id": line.source_settlement_id,
+                "platform_name": line.platform_name_snapshot,
+                "account_number": line.account_number_snapshot,
+                "start_date": line.start_date.isoformat() if line.start_date else None,
+                "closing_date": line.closing_date.isoformat() if line.closing_date else None,
+                "service_fee": money_string(line.service_fee_cents),
+            }
+            for line in lines
+        ],
         "invoice_number": item.invoice_number,
         "lifecycle_status": item.lifecycle_status,
         "payment_status": invoice_payment_status(item),
@@ -124,7 +169,7 @@ def invoice_dict(item: Invoice) -> dict:
         "language": item.language,
         "company_name": item.company.name if item.company else None,
         "fc_name": item.fc.name if item.fc else None,
-        "client_name": item.settlement.client.name if item.settlement and item.settlement.client else None,
+        "issue_recovery": issue_recovery,
         "void_reason": item.void_reason,
         "payments": [
             {

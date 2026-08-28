@@ -25,8 +25,11 @@ export function useApiList<T>(path: string, refreshKey = 0) {
   return { data, loading, error, reload, setData };
 }
 
-export function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+export function todayIso(value = new Date()) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export function quarterDates(year: number, quarter: number): [string, string] {
@@ -38,4 +41,3 @@ export function quarterDates(year: number, quarter: number): [string, string] {
   };
   return values[quarter];
 }
-

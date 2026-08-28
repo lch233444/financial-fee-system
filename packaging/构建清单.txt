@@ -1,4 +1,4 @@
-金融计划收费计算系统 MVP 0.2.8 Windows运行版构建清单
+金融计划收费计算系统 MVP 0.2.9 Windows运行版构建清单
 基线日期：2026-08-28
 
 构建环境：
@@ -21,7 +21,8 @@
 构建输出规则：
 - 每次只生成`release/FinancialFeeSystem`，构建开始时删除上一份`release`，不累计候选版本目录。
 - 源码回归：后端完整测试、前端TypeScript及生产构建均须通过后才生成运行包。
-- 两个Codex可执行文件必须同时通过固定版本、SHA-256及OpenAI Authenticode签名校验；任一不符立即停止构建。
+- 两个Codex可执行文件必须同时通过固定版本、SHA-256及OpenAI Authenticode签名校验；Tesseract必须通过固定版本和SHA-256；Excel母版必须保持已确认SHA-256；任一不符立即停止构建。
+- 后端、前端、Windows字符串版本和FixedFileInfo数值版本必须一致；构建后再次读取EXE验证，禁止用硬编码构建结果掩盖版号漂移。
 - `构建结果.txt`由构建脚本在发布目录内自动生成，记录当次时间、EXE哈希、文件数、字节数和Windows版本，不再手工复制上一版结果。
 - 候选包只用于隔离验收；正式提升完成后删除候选目录、`backend/build`、`backend/*.spec`和`frontend/dist`。
 - 本机只保留最新正式运行版；业务数据和完整备份继续独立保存，不随运行版清理。

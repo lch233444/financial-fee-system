@@ -2,6 +2,35 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.9 - 2026-08-28（Windows运行版）
+
+### 新增
+
+- Invoice Draft改为按Client、年度、季度和Fee Plan由服务端自动纳入全部Finalized Settlement；不同Platform只在客户Invoice阶段汇总，逐Sub Account冻结Platform、账户号码、账户期间和Service Fee。
+- 新增`InvoiceSource`、`InvoiceLine`和`InvoiceIssueAttempt`。同一Settlement最多属于一张活动Invoice，同一客户季度Fee Plan最多一张Draft/Issuing/Issued Invoice；历史`LEGACY_GROUP_HWM`只迁移为单一汇总行，不臆造账户拆分。
+- Issue前应用与SQLite Trigger均复核同组Finalized来源全集、来源金额、冻结行和Invoice总额；Draft后出现迟到Settlement会拒绝签发，需先作废Draft并重建。
+- 新增ISSUING恢复接口和界面：完整双语归档可完成签发，缺失时退回Draft并清理部分文件；已预留编号永不复用，恢复动作写入IssueAttempt和AuditEvent。
+- Dashboard增加Year/Quarter筛选；FC服务统计只显示当前管理客户数、期间收费客户数和Finalized Service Fee，不再把Company已收/未收列为FC指标。
+
+### 修正与保护
+
+- Invoice PDF改用Invoice冻结的Company/FC及冻结账户行，不再从Client当前Company关系取抬头和收款资料；跨Platform账单显示逐账户明细与合计。
+- 已登记的Issued/VOID Invoice PDF下载前会匹配ExportRecord并重算SHA-256；缺记录、不可读或哈希变化时拒绝返回且不重生成，避免损坏或被覆盖的文件冒充正式归档。
+- Draft提供作废重建入口；Payment提交增加界面防双击。默认Issue/Payment/流水/Snapshot日期改用本地日历日期，避免北京时间凌晨被UTC换算成前一天；PDF下载错误会显示服务端原因。
+- SQLite新增Payment最小一致性保护：仅Issued Invoice可新增正数Payment，数据库层累计不得超出Invoice金额，存在Payment时不得把Invoice转Void。二态Payment、凭证、差额、更正和退款仍留待下一批。
+- Windows版本源统一到0.2.9，并同时校验后端、前端、VersionInfo字符串和FixedFileInfo数值版本；构建后再次读取EXE，修复0.2.8字符串为0.2.8但数值仍为0.2.7的问题。
+- 构建脚本固定校验Excel母版SHA-256、Tesseract版本及SHA-256；母版文件本身未修改，仍保持`16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145`。
+
+### 迁移与验证
+
+- 新增Alembic revision `c4b7f1d92e60`。旧Invoice保留ID、编号、金额、PDF字段和Payment；VOID来源回填inactive，其余状态active；ISSUING/ISSUED/有编号VOID回填签发尝试。
+- 空库、无版本旧库、四态旧Invoice、Payment保留、ACCOUNT_HWM/LEGACY_GROUP_HWM、重复upgrade、部分新结构拒绝、唯一索引及Trigger行为均有迁移回归。金额不对平、重复活动组/来源或残缺辅助表会安全停止，不自动猜测修复。
+- 后端完整测试136/136、迁移专项8/8、前端TypeScript/Vite生产构建和Windows构建通过。候选包生成`构建结果.txt`前397个文件、613,163,027字节，主EXE SHA-256为`934838A9C432304FADEA47D3FB1BE6AF88F851AF7C0FD5A8A520EB76EA512E02`；ProductVersion为0.2.9，FileVersion和FixedFileInfo数值版本均为0.2.9.0。
+- 候选EXE在8001端口和F盘隔离合成数据根完成空库迁移、跨Platform两Settlement/两账户冻结行、双语PDF、FC三项统计、OpenAPI、前端页面及安全退出验收。数据库head为`c4b7f1d92e60`，Invoice合计HKD 20.00并保留20.00/0.00两行；页面无横向溢出，控制台无告警或错误。
+- 正式切换前由0.2.8创建并校验`financial_system_backup_20260828_145358.zip`，共396,943字节，SHA-256为`3E7D0F4D385DBF81BF109E562260C43CEB14146A582453BAE566CEE824AD466C`；ZIP CRC、Manifest及逐文件哈希通过，F盘副本迁移到`c4b7f1d92e60`后完整性、外键和关键结构检查通过。
+- 0.2.9已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.9_20260828\FinancialFeeSystem`接管8000端口及原数据根。正式数据库head、完整性、外键、OpenAPI、最新前端资源和禁缓存通过；旧0.2.8运行目录已永久删除，本机只保留0.2.9正式运行版，独立业务数据与完整备份保留。
+- 本批未读取真实客户资料、未调用Luna处理真实文件，也未修改Excel母版。
+
 ## 0.2.8 - 2026-08-28（Windows运行版）
 
 ### 修正

@@ -93,6 +93,26 @@ def _master(client: TestClient, suffix: str, *, start_date: str = "2025-01-01") 
     }
 
 
+def _invoice_draft(
+    client: TestClient,
+    data: dict,
+    *,
+    year: int,
+    quarter: int,
+    language: str = "zh",
+):
+    return client.post(
+        "/api/invoices",
+        json={
+            "client_id": data["client"]["id"],
+            "year": year,
+            "quarter": quarter,
+            "fee_plan_id": data["plan"]["id"],
+            "language": language,
+        },
+    )
+
+
 def _settlement(
     client: TestClient,
     data: dict,
@@ -290,7 +310,7 @@ def test_draft_invoice_blocks_settlement_void() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "DRAFTINV")
         settlement = _finalize(client, _settlement(client, data, year=2026, quarter=1))
-        invoice = client.post("/api/invoices", json={"settlement_id": settlement["id"], "language": "zh"})
+        invoice = _invoice_draft(client, data, year=2026, quarter=1)
         assert invoice.status_code == 201, invoice.text
         assert client.post(
             f"/api/settlements/{settlement['id']}/void", json={"reason": "仍有Draft Invoice"}
@@ -367,20 +387,18 @@ def test_finalized_settlement_freezes_fc_ownership() -> None:
         replacement_row = next(row for row in report if row["fc_id"] == replacement["id"])
         assert original_row["service_fee_generated"] == settlement["service_fee"]
         assert replacement_row["service_fee_generated"] == "0.00"
-        invoice = client.post("/api/invoices", json={"settlement_id": settlement["id"], "language": "zh"})
+        invoice = _invoice_draft(client, data, year=2026, quarter=1)
         assert invoice.status_code == 201, invoice.text
         assert invoice.json()["fc_name"] == data["fc"]["name"]
 
 
 def test_dashboard_and_fc_report_share_requested_year(monkeypatch) -> None:
-    monkeypatch.setattr(invoices_module, "generate_settlement_pdf", _fake_pdf)
+    monkeypatch.setattr(invoices_module, "generate_invoice_pdf", _fake_pdf)
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "PERIOD")
         before = client.get("/api/dashboard?year=2026").json()
         old_settlement = _finalize(client, _settlement(client, data, year=2025, quarter=4))
-        old_draft = client.post(
-            "/api/invoices", json={"settlement_id": old_settlement["id"], "language": "zh"}
-        ).json()
+        old_draft = _invoice_draft(client, data, year=2025, quarter=4).json()
         old_invoice = client.post(
             f"/api/invoices/{old_draft['id']}/issue", json={"issue_date": "2026-01-05", "language": "zh"}
         )
@@ -427,7 +445,7 @@ def test_generated_exports_require_post_and_excel_uses_locked_fee() -> None:
 
 
 def test_invoice_issue_reserves_unique_numbers_without_render_write_transaction(monkeypatch) -> None:
-    monkeypatch.setattr(invoices_module, "generate_settlement_pdf", _fake_pdf)
+    monkeypatch.setattr(invoices_module, "generate_invoice_pdf", _fake_pdf)
     with TestClient(app, headers=WRITE_HEADERS) as client:
         first_data = _master(client, "CONCUR")
         second_client = client.post(
@@ -457,8 +475,8 @@ def test_invoice_issue_reserves_unique_numbers_without_render_write_transaction(
             for data in (first_data, second_data)
         ]
         drafts = [
-            client.post("/api/invoices", json={"settlement_id": item["id"], "language": "zh"}).json()
-            for item in settlements
+            _invoice_draft(client, data, year=2026, quarter=1).json()
+            for data in (first_data, second_data)
         ]
 
         def issue(invoice_id: int) -> dict:

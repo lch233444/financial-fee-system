@@ -176,6 +176,27 @@ export type Settlement = {
 export type Invoice = {
   id: number;
   settlement_id: number;
+  settlement_ids: number[];
+  client_id: number;
+  year: number;
+  quarter: number;
+  fee_plan_id: number;
+  fee_plan_name?: string;
+  source_count: number;
+  account_lines: Array<{
+    id: number;
+    settlement_id: number;
+    platform_name: string;
+    account_number: string;
+    start_date: string | null;
+    closing_date: string | null;
+    service_fee: string;
+  }>;
+  issue_recovery: {
+    files_complete: boolean;
+    can_complete: boolean;
+    can_return_to_draft: boolean;
+  } | null;
   invoice_number: string | null;
   lifecycle_status: "DRAFT" | "ISSUING" | "ISSUED" | "VOID";
   payment_status: "UNPAID" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";

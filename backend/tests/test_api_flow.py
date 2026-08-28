@@ -136,7 +136,16 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
         finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
         assert finalized.status_code == 200, finalized.text
 
-        draft = client.post("/api/invoices", json={"settlement_id": settlement["id"], "language": "zh"})
+        draft = client.post(
+            "/api/invoices",
+            json={
+                "client_id": data["client"]["id"],
+                "year": 2026,
+                "quarter": 3,
+                "fee_plan_id": data["plan"]["id"],
+                "language": "zh",
+            },
+        )
         assert draft.status_code == 201, draft.text
         invoice_id = draft.json()["id"]
         issued = client.post(
@@ -210,5 +219,14 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
             },
         ).json()
         client.post(f"/api/settlements/{settlement['id']}/finalize")
-        response = client.post("/api/invoices", json={"settlement_id": settlement["id"], "language": "zh"})
+        response = client.post(
+            "/api/invoices",
+            json={
+                "client_id": customer["id"],
+                "year": 2026,
+                "quarter": 1,
+                "fee_plan_id": plan["id"],
+                "language": "zh",
+            },
+        )
         assert response.status_code == 400

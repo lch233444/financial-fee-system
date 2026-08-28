@@ -4,14 +4,17 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -268,10 +271,27 @@ class InvoiceSequence(Base):
 
 class Invoice(TimestampMixin, Base):
     __tablename__ = "invoices"
+    __table_args__ = (
+        Index(
+            "uq_invoices_active_client_period_plan",
+            "client_id",
+            "year",
+            "quarter",
+            "fee_plan_id",
+            unique=True,
+            sqlite_where=text("lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     settlement_id: Mapped[int] = mapped_column(
         ForeignKey("quarterly_settlements.id", ondelete="RESTRICT"), index=True
+    )
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True)
+    year: Mapped[int] = mapped_column(Integer, index=True)
+    quarter: Mapped[int] = mapped_column(Integer, index=True)
+    fee_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True
     )
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
     fc_id: Mapped[int] = mapped_column(ForeignKey("fcs.id", ondelete="RESTRICT"), index=True)
@@ -287,9 +307,113 @@ class Invoice(TimestampMixin, Base):
     pdf_paths_json: Mapped[dict | None] = mapped_column(JSON)
 
     settlement: Mapped[QuarterlySettlement] = relationship()
+    client: Mapped[Client] = relationship()
+    fee_plan: Mapped[FeePlan] = relationship()
     company: Mapped[Company] = relationship()
     fc: Mapped[FC] = relationship()
+    sources: Mapped[list[InvoiceSource]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
+    lines: Mapped[list[InvoiceLine]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
+    issue_attempts: Mapped[list[InvoiceIssueAttempt]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
     payments: Mapped[list[Payment]] = relationship(back_populates="invoice", cascade="all, delete-orphan")
+
+
+class InvoiceSource(TimestampMixin, Base):
+    __tablename__ = "invoice_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "invoice_id", "settlement_id", name="uq_invoice_source_invoice_settlement"
+        ),
+        Index(
+            "uq_invoice_sources_active_settlement",
+            "settlement_id",
+            unique=True,
+            sqlite_where=text("active = 1"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+    )
+    settlement_id: Mapped[int] = mapped_column(
+        ForeignKey("quarterly_settlements.id", ondelete="RESTRICT"), index=True
+    )
+    locked_amount_cents: Mapped[int] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="sources")
+    settlement: Mapped[QuarterlySettlement] = relationship()
+    lines: Mapped[list[InvoiceLine]] = relationship(back_populates="source")
+
+
+class InvoiceLine(TimestampMixin, Base):
+    __tablename__ = "invoice_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id", "source_account_line_id", name="uq_invoice_line_source_account"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+    )
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice_sources.id", ondelete="CASCADE"), index=True
+    )
+    source_settlement_id: Mapped[int] = mapped_column(
+        ForeignKey("quarterly_settlements.id", ondelete="RESTRICT"), index=True
+    )
+    source_account_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("settlement_account_lines.id", ondelete="RESTRICT"), index=True
+    )
+    platform_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platforms.id", ondelete="RESTRICT"), index=True
+    )
+    platform_name_snapshot: Mapped[str] = mapped_column(String(200))
+    account_number_snapshot: Mapped[str] = mapped_column(String(100))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    closing_date: Mapped[date | None] = mapped_column(Date)
+    service_fee_cents: Mapped[int] = mapped_column(Integer)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="lines")
+    source: Mapped[InvoiceSource] = relationship(back_populates="lines")
+    source_settlement: Mapped[QuarterlySettlement] = relationship(
+        foreign_keys=[source_settlement_id]
+    )
+    source_account_line: Mapped[SettlementAccountLine | None] = relationship(
+        foreign_keys=[source_account_line_id]
+    )
+    platform: Mapped[Platform | None] = relationship(foreign_keys=[platform_id])
+
+
+class InvoiceIssueAttempt(Base):
+    __tablename__ = "invoice_issue_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('RESERVED', 'COMPLETED', 'FAILED', 'RECOVERED_TO_DRAFT')",
+            name="ck_invoice_issue_attempt_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+    )
+    invoice_number: Mapped[str] = mapped_column(String(100), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    details: Mapped[str | None] = mapped_column(Text)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="issue_attempts")
 
 
 class Payment(TimestampMixin, Base):

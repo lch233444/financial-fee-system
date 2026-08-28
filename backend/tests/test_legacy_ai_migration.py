@@ -76,7 +76,7 @@ def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, mon
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert settlement == ("LEGACY_GROUP_HWM", 2000, 110000)
     assert line == (100000, 110000, None, None, "2025-10-01", "2025-12-31", 92)
-    assert revision == "a6d1f4c28b73"
+    assert revision == "c4b7f1d92e60"
 
 
 def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
@@ -155,7 +155,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "a6d1f4c28b73"
+        assert revision == "c4b7f1d92e60"
 
     settlement_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
@@ -168,6 +168,15 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
     assert {"previous_line_id", "beginning_snapshot_id", "service_fee_cents", "next_hwm_cents", "start_date", "closing_date", "days"}.issubset(
         line_columns
     )
+    invoice_columns = {
+        column["name"] for column in inspect(legacy_engine).get_columns("invoices")
+    }
+    assert {"client_id", "year", "quarter", "fee_plan_id"}.issubset(invoice_columns)
+    assert {
+        "invoice_sources",
+        "invoice_lines",
+        "invoice_issue_attempts",
+    }.issubset(inspect(legacy_engine).get_table_names())
     with legacy_engine.connect() as connection:
         triggers = {
             row[0]
@@ -205,12 +214,22 @@ def test_unstamped_current_shape_database_gains_missing_financial_triggers(
                 text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             )
         }
-        assert revision == "a6d1f4c28b73"
+        assert revision == "c4b7f1d92e60"
     assert {
         "trg_transactions_block_finalized_period",
         "trg_settlement_block_out_of_order_insert",
         "trg_settlement_validate_finalize",
         "trg_settlement_validate_void",
         "trg_settlement_account_line_order",
+        "trg_invoice_validate_issue",
+        "trg_invoice_source_update_draft_only",
+        "trg_invoice_line_update_draft_only",
+        "trg_invoice_sources_deactivate_on_void",
+        "trg_invoice_financial_header_update_lock",
+        "trg_invoice_insert_draft_only",
+        "trg_invoice_lifecycle_transition",
+        "trg_invoice_issue_metadata_guard",
+        "trg_payment_validate_insert",
+        "trg_invoice_block_void_with_payment",
     }.issubset(triggers)
     legacy_engine.dispose()

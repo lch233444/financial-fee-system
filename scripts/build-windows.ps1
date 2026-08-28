@@ -9,6 +9,36 @@ $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
 $TestTempRoot = Join-Path $ProjectRoot "backend\test-tmp"
+$ConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "backend\app\config.py")
+$VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"')
+if (-not $VersionMatch.Success) {
+    throw "无法从backend/app/config.py读取APP_VERSION。"
+}
+$AppVersion = $VersionMatch.Groups["version"].Value
+$VersionParts = @($AppVersion.Split(".") | ForEach-Object { [int]$_ })
+$ExpectedFileVersion = "$AppVersion.0"
+$FrontendPackage = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "frontend\package.json") | ConvertFrom-Json
+if ($FrontendPackage.version -ne $AppVersion) {
+    throw "前后端版本不一致：backend=$AppVersion，frontend=$($FrontendPackage.version)。"
+}
+$VersionInfoText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "packaging\version_info.txt")
+$FixedVersionPattern = "filevers=\(\s*$($VersionParts[0])\s*,\s*$($VersionParts[1])\s*,\s*$($VersionParts[2])\s*,\s*0\s*\)"
+$FixedProductPattern = "prodvers=\(\s*$($VersionParts[0])\s*,\s*$($VersionParts[1])\s*,\s*$($VersionParts[2])\s*,\s*0\s*\)"
+if (
+    $VersionInfoText -notmatch $FixedVersionPattern -or
+    $VersionInfoText -notmatch $FixedProductPattern -or
+    $VersionInfoText -notmatch "StringStruct\('FileVersion',\s*'$([regex]::Escape($ExpectedFileVersion))'\)" -or
+    $VersionInfoText -notmatch "StringStruct\('ProductVersion',\s*'$([regex]::Escape($AppVersion))'\)"
+) {
+    throw "packaging/version_info.txt的数值或字符串版本与APP_VERSION不一致。"
+}
+
+$ExpectedTemplateHash = "16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145"
+$TemplatePath = Join-Path $ProjectRoot "新收费计划计算.xlsx"
+$ActualTemplateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $TemplatePath).Hash
+if ($ActualTemplateHash -ne $ExpectedTemplateHash) {
+    throw "公司Excel母版SHA-256与0.2.8确认基线不一致，构建已停止。"
+}
 
 if (Test-Path -LiteralPath $ReleaseRoot) {
     Remove-Item -LiteralPath $ReleaseRoot -Recurse -Force
@@ -67,8 +97,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $BundledOcr = Join-Path $ProjectRoot "tools\Tesseract-OCR"
-if (-not (Test-Path -LiteralPath (Join-Path $BundledOcr "tesseract.exe"))) {
+$TesseractPath = Join-Path $BundledOcr "tesseract.exe"
+if (-not (Test-Path -LiteralPath $TesseractPath)) {
     throw "缺少tools/Tesseract-OCR，不能生成含OCR环境的一键版。"
+}
+$ExpectedTesseractHash = "C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420"
+$ActualTesseractHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $TesseractPath).Hash
+if ($ActualTesseractHash -ne $ExpectedTesseractHash) {
+    throw "tools/Tesseract-OCR/tesseract.exe与已审计的SHA-256不一致，构建已停止。"
+}
+$TesseractVersionOutput = (& $TesseractPath --version 2>&1 | Select-Object -First 1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $TesseractVersionOutput -notmatch '^tesseract v5\.5\.3\.20260724$') {
+    throw "Tesseract版本与已审计的5.5.3.20260724不一致。实际输出：$TesseractVersionOutput"
 }
 Copy-Item -LiteralPath $BundledOcr -Destination (Join-Path $ReleaseApp "Tesseract-OCR") -Recurse -Force
 
@@ -115,7 +155,23 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $Releas
 
 $ReleaseFiles = @(Get-ChildItem -LiteralPath $ReleaseApp -Recurse -File)
 $ReleaseBytes = [long](($ReleaseFiles | Measure-Object -Property Length -Sum).Sum)
-$ExecutableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $ReleaseApp "FinancialFeeSystem.exe")).Hash
+$ExecutablePath = Join-Path $ReleaseApp "FinancialFeeSystem.exe"
+$ExecutableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ExecutablePath).Hash
+$ExecutableVersion = (Get-Item -LiteralPath $ExecutablePath).VersionInfo
+if (
+    $ExecutableVersion.ProductVersion -ne $AppVersion -or
+    $ExecutableVersion.FileVersion -ne $ExpectedFileVersion -or
+    $ExecutableVersion.FileMajorPart -ne $VersionParts[0] -or
+    $ExecutableVersion.FileMinorPart -ne $VersionParts[1] -or
+    $ExecutableVersion.FileBuildPart -ne $VersionParts[2] -or
+    $ExecutableVersion.FilePrivatePart -ne 0 -or
+    $ExecutableVersion.ProductMajorPart -ne $VersionParts[0] -or
+    $ExecutableVersion.ProductMinorPart -ne $VersionParts[1] -or
+    $ExecutableVersion.ProductBuildPart -ne $VersionParts[2] -or
+    $ExecutableVersion.ProductPrivatePart -ne 0
+) {
+    throw "构建后的EXE数值或字符串版本与APP_VERSION不一致。"
+}
 $BuildResult = @"
 金融计划收费计算系统 Windows构建结果
 构建时间：$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz'))
@@ -123,8 +179,10 @@ $BuildResult = @"
 主EXE SHA-256：$ExecutableHash
 发布文件数（不含本结果文件）：$($ReleaseFiles.Count)
 发布总字节数（不含本结果文件）：$ReleaseBytes
-Windows ProductVersion：0.2.8
-Windows FileVersion：0.2.8.0
+Windows ProductVersion：$AppVersion
+Windows FileVersion：$ExpectedFileVersion
+Excel母版 SHA-256：$ActualTemplateHash
+Tesseract SHA-256：$ActualTesseractHash
 后端完整测试和前端生产构建已由本脚本先行通过。
 "@
 Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8

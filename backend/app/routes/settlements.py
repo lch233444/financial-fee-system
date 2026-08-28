@@ -14,7 +14,7 @@ from ..models import (
     BalanceSnapshot,
     Client,
     FeePlan,
-    Invoice,
+    InvoiceSource,
     Platform,
     QuarterlySettlement,
     SettlementAccountLine,
@@ -444,6 +444,10 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
     client = item.client
     if not client or not client.company_id or not client.fc_id:
         raise HTTPException(status_code=400, detail="Client必须补全Company和FC后才能Finalized")
+    if not item.fee_plan or item.fee_plan.company_id != client.company_id:
+        raise HTTPException(status_code=409, detail="Client Company已变化且与Fee Plan不一致，请重新Calculate")
+    if not client.fc or client.fc.company_id != client.company_id:
+        raise HTTPException(status_code=409, detail="Client FC不属于当前Company，请修正归属后重新Calculate")
 
     if item.calculation_mode == ACCOUNT_HWM_MODE:
         for line in item.account_lines:
@@ -504,9 +508,9 @@ def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depe
     if item.status == "VOID":
         raise HTTPException(status_code=409, detail="Settlement已经作废")
     active_invoice = db.scalar(
-        select(Invoice.id).where(
-            Invoice.settlement_id == item.id,
-            Invoice.lifecycle_status.in_(["DRAFT", "ISSUING", "ISSUED"]),
+        select(InvoiceSource.invoice_id).where(
+            InvoiceSource.settlement_id == item.id,
+            InvoiceSource.active.is_(True),
         )
     )
     if active_invoice is not None:

@@ -187,7 +187,10 @@ class SettlementCalculateRequest(BaseModel):
 
 
 class InvoiceDraftCreate(BaseModel):
-    settlement_id: int
+    client_id: int
+    year: int = Field(ge=2000, le=2200)
+    quarter: int = Field(ge=1, le=4)
+    fee_plan_id: int
     language: Literal["zh", "en"] = "zh"
 
 
@@ -195,6 +198,10 @@ class InvoiceIssueRequest(BaseModel):
     issue_date: date | None = None
     due_date: date | None = None
     language: Literal["zh", "en"] = "zh"
+
+
+class InvoiceIssueRecoveryRequest(BaseModel):
+    action: Literal["COMPLETE", "RETURN_TO_DRAFT"]
 
 
 class VoidRequest(BaseModel):

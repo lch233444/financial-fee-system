@@ -89,13 +89,66 @@ def init_db() -> None:
             "formula_version",
         }
         account_period_columns = {"start_date", "closing_date", "days"}
+        refreshed_tables = set(refreshed_inspector.get_table_names())
+        invoice_columns = {
+            column["name"] for column in refreshed_inspector.get_columns("invoices")
+        }
+        invoice_parent_columns = {"client_id", "year", "quarter", "fee_plan_id"}
+        invoice_ledger_columns = {
+            "invoice_sources": {
+                "invoice_id",
+                "settlement_id",
+                "locked_amount_cents",
+                "active",
+                "created_at",
+                "updated_at",
+            },
+            "invoice_lines": {
+                "invoice_id",
+                "source_id",
+                "source_settlement_id",
+                "source_account_line_id",
+                "platform_id",
+                "platform_name_snapshot",
+                "account_number_snapshot",
+                "start_date",
+                "closing_date",
+                "service_fee_cents",
+                "display_order",
+            },
+            "invoice_issue_attempts": {
+                "invoice_id",
+                "invoice_number",
+                "status",
+                "started_at",
+                "completed_at",
+                "details",
+            },
+        }
+        invoice_ledger_tables_complete = all(
+            table_name in refreshed_tables
+            and required_columns.issubset(
+                {
+                    column["name"]
+                    for column in refreshed_inspector.get_columns(table_name)
+                }
+            )
+            for table_name, required_columns in invoice_ledger_columns.items()
+        )
         with engine.connect() as connection:
-            settlement_triggers = {
-                row[0]
+            trigger_sql = {
+                row[0]: row[1] or ""
                 for row in connection.exec_driver_sql(
-                    "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
                 )
             }
+            index_names = {
+                row[0]
+                for row in connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                )
+            }
+        settlement_triggers = set(trigger_sql)
         required_settlement_triggers = {
             "trg_transactions_block_finalized_period",
             "trg_settlement_block_out_of_order_insert",
@@ -103,6 +156,50 @@ def init_db() -> None:
             "trg_settlement_validate_void",
             "trg_settlement_account_line_order",
         }
+        required_invoice_triggers = {
+            "trg_invoice_validate_issue",
+            "trg_invoice_source_insert_draft_only",
+            "trg_invoice_source_update_draft_only",
+            "trg_invoice_source_delete_draft_only",
+            "trg_invoice_line_insert_draft_only",
+            "trg_invoice_line_update_draft_only",
+            "trg_invoice_line_delete_draft_only",
+            "trg_invoice_sources_deactivate_on_void",
+            "trg_invoice_financial_header_update_lock",
+            "trg_invoice_insert_draft_only",
+            "trg_invoice_lifecycle_transition",
+            "trg_invoice_issue_metadata_guard",
+            "trg_payment_validate_insert",
+            "trg_invoice_block_void_with_payment",
+        }
+        invoice_trigger_sql_is_current = (
+            "invoice_sources" in trigger_sql.get("trg_settlement_validate_void", "").lower()
+            and "source.active = 1"
+            in trigger_sql.get("trg_settlement_validate_void", "").lower()
+            and "invoice_lines" in trigger_sql.get("trg_invoice_validate_issue", "").lower()
+            and "locked_amount_cents"
+            in trigger_sql.get("trg_invoice_validate_issue", "").lower()
+            and "invoice_source_set_incomplete"
+            in trigger_sql.get("trg_invoice_validate_issue", "").lower()
+            and "company_id is not new.company_id"
+            in trigger_sql.get("trg_invoice_validate_issue", "").lower()
+            and "new.invoice_id = old.invoice_id"
+            in trigger_sql.get("trg_invoice_source_update_draft_only", "").lower()
+            and "source.invoice_id = new.invoice_id"
+            in trigger_sql.get("trg_invoice_line_update_draft_only", "").lower()
+            and "payment_amount_exceeds_invoice"
+            in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            and "invoice_has_payments"
+            in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+            and "invoice_lifecycle_transition_invalid"
+            in trigger_sql.get("trg_invoice_lifecycle_transition", "").lower()
+            and "invoice_issue_metadata_invalid"
+            in trigger_sql.get("trg_invoice_issue_metadata_guard", "").lower()
+        )
+        invoice_indexes_complete = {
+            "uq_invoice_sources_active_settlement",
+            "uq_invoices_active_client_period_plan",
+        }.issubset(index_names)
         if not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
             # directly at head would falsely mark missing columns as applied.
@@ -122,6 +219,19 @@ def init_db() -> None:
             command.upgrade(alembic_config, "head")
         elif not account_period_columns.issubset(account_line_columns):
             command.stamp(alembic_config, "f2a8c7d41e90")
+            command.upgrade(alembic_config, "head")
+        elif (
+            not invoice_parent_columns.issubset(invoice_columns)
+            or not invoice_ledger_tables_complete
+            or not required_invoice_triggers.issubset(settlement_triggers)
+            or not invoice_trigger_sql_is_current
+            or not invoice_indexes_complete
+        ):
+            # A pre-versioned database can contain none, part, or all of the
+            # invoice aggregation tables because create_all only fills absent
+            # tables.  Always run the real revision unless every column,
+            # critical index, and trigger body proves the 0.2.9 shape.
+            command.stamp(alembic_config, "a6d1f4c28b73")
             command.upgrade(alembic_config, "head")
         else:
             command.stamp(alembic_config, "head")

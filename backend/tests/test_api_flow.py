@@ -153,7 +153,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
             json={"issue_date": "2026-10-05", "language": "zh"},
         )
         assert issued.status_code == 200, issued.text
-        assert issued.json()["invoice_number"] == "AAA-TW-202608-001"
+        assert issued.json()["invoice_number"] == "AAA-TW-20261005-1"
         assert issued.json()["due_date"] == "2026-10-19"
 
         partial = client.post(

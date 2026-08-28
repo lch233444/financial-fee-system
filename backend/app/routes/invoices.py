@@ -262,7 +262,7 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
     return invoice_dict(_reload_invoice(db, item.id))
 
 
-def _next_number(db: Session, invoice: Invoice) -> str:
+def _next_number(db: Session, invoice: Invoice, issue_date: date) -> str:
     sequence = db.scalar(
         select(InvoiceSequence).where(
             InvoiceSequence.company_id == invoice.company_id,
@@ -274,10 +274,8 @@ def _next_number(db: Session, invoice: Invoice) -> str:
         db.add(sequence)
         db.flush()
     sequence.last_number += 1
-    if not invoice.client or not invoice.client.management_start_date:
-        raise HTTPException(status_code=400, detail="Client缺少Management Start Date")
-    yyyymm = invoice.client.management_start_date.strftime("%Y%m")
-    return f"{invoice.company.code}-{invoice.fc.code}-{yyyymm}-{sequence.last_number:03d}"
+    yyyymmdd = issue_date.strftime("%Y%m%d")
+    return f"{invoice.company.code}-{invoice.fc.code}-{yyyymmdd}-{sequence.last_number}"
 
 
 def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
@@ -385,7 +383,7 @@ def issue_invoice(
         due_date = payload.due_date or (issue_date + timedelta(days=item.company.payment_terms_days))
         if due_date < issue_date:
             raise HTTPException(status_code=400, detail="Payment Due Date不能早于Issue Date")
-        item.invoice_number = _next_number(db, item)
+        item.invoice_number = _next_number(db, item, issue_date)
         item.issue_date = issue_date
         item.due_date = due_date
         item.language = payload.language

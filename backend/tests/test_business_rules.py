@@ -165,7 +165,7 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
             json={"issue_date": "2026-04-05", "language": "zh"},
         )
         assert first_issued.status_code == 200, first_issued.text
-        assert first_issued.json()["invoice_number"].endswith("-001")
+        assert first_issued.json()["invoice_number"].endswith("-20260405-1")
         assert client.post(
             f"/api/invoices/{first_draft['id']}/void", json={"reason": "测试作废后编号不复用"}
         ).status_code == 200
@@ -191,4 +191,4 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
             json={"issue_date": "2026-07-05", "language": "en"},
         )
         assert second_issued.status_code == 200, second_issued.text
-        assert second_issued.json()["invoice_number"].endswith("-002")
+        assert second_issued.json()["invoice_number"].endswith("-20260705-2")

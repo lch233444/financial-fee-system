@@ -19,7 +19,7 @@ PROJECT_FILES = {
     "frontend/package.json",
     "frontend/pnpm-lock.yaml",
     "frontend/vite.config.ts",
-    "新收费计划计算.xlsx",
+    "新收费计划计算纯净版模板.xlsx",
 }
 PROJECT_MANUAL = "docs/项目说明书.md"
 CHANGELOG = "docs/CHANGELOG.md"

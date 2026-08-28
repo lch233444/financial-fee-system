@@ -15,7 +15,7 @@ WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 
 
 def test_company_excel_template_preserves_formulas_and_removes_notes_below_row_five() -> None:
-    template_path = Path(__file__).resolve().parents[2] / "新收费计划计算.xlsx"
+    template_path = Path(__file__).resolve().parents[2] / "新收费计划计算纯净版模板.xlsx"
     workbook = load_workbook(template_path, data_only=False)
     sheet = workbook["利润20%"]
     expected_main_formulas = {

@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "0.2.10"
+APP_VERSION = "0.2.11"
 
 
 def application_root() -> Path:
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     port: int = 8000
     data_root: Path = Path(os.getenv("FINANCIAL_DATA_ROOT", application_root() / "data"))
     template_path: Path = Path(
-        os.getenv("FINANCIAL_EXCEL_TEMPLATE", application_root() / "新收费计划计算.xlsx")
+        os.getenv("FINANCIAL_EXCEL_TEMPLATE", application_root() / "新收费计划计算纯净版模板.xlsx")
     )
     frontend_dist: Path = application_root() / "frontend" / "dist"
     tesseract_cmd: str | None = os.getenv("TESSERACT_CMD")

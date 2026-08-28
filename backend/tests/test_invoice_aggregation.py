@@ -587,7 +587,7 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
                 select(InvoiceIssueAttempt).where(InvoiceIssueAttempt.invoice_id == draft["id"])
             )
             assert failed_attempt.status == "FAILED"
-            assert failed_attempt.invoice_number.endswith("-001")
+            assert failed_attempt.invoice_number.endswith("-20260405-1")
             assert failed_attempt.completed_at is not None
             failed_number = failed_attempt.invoice_number
         pdf_root = get_settings().data_root / "output" / "pdf"
@@ -605,7 +605,7 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
             json={"issue_date": "2026-04-06", "language": "en"},
         )
         assert retried.status_code == 200, retried.text
-        assert retried.json()["invoice_number"].endswith("-002")
+        assert retried.json()["invoice_number"].endswith("-20260406-2")
 
 
 def test_legacy_missing_pdf_uses_atomic_single_writer_fallback(monkeypatch) -> None:

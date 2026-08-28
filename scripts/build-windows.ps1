@@ -34,7 +34,7 @@ if (
 }
 
 $ExpectedTemplateHash = "16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145"
-$TemplatePath = Join-Path $ProjectRoot "新收费计划计算.xlsx"
+$TemplatePath = Join-Path $ProjectRoot "新收费计划计算纯净版模板.xlsx"
 $ActualTemplateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $TemplatePath).Hash
 if ($ActualTemplateHash -ne $ExpectedTemplateHash) {
     throw "公司Excel母版SHA-256与0.2.8确认基线不一致，构建已停止。"
@@ -85,7 +85,7 @@ if ($TestExitCode -ne 0) {
     --specpath (Join-Path $ProjectRoot "backend") `
     --paths (Join-Path $ProjectRoot "backend") `
     --add-data "$(Join-Path $ProjectRoot 'frontend\dist');frontend\dist" `
-    --add-data "$(Join-Path $ProjectRoot '新收费计划计算.xlsx');." `
+    --add-data "$(Join-Path $ProjectRoot '新收费计划计算纯净版模板.xlsx');." `
     --add-data "$(Join-Path $ProjectRoot 'backend\alembic.ini');." `
     --add-data "$(Join-Path $ProjectRoot 'backend\alembic');alembic" `
     --collect-submodules uvicorn `

@@ -54,6 +54,6 @@ def test_release_version_metadata_matches_application_version() -> None:
     )
 
     template_digest = hashlib.sha256(
-        (PROJECT_ROOT / "新收费计划计算.xlsx").read_bytes()
+        (PROJECT_ROOT / "新收费计划计算纯净版模板.xlsx").read_bytes()
     ).hexdigest().upper()
     assert template_digest == EXPECTED_TEMPLATE_SHA256

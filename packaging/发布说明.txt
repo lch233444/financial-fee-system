@@ -1,7 +1,10 @@
-金融计划收费计算系统 MVP 0.2.10
+金融计划收费计算系统 MVP 0.2.11
 构建日期：2026-08-28
 
 本版主要更新：
+- Invoice编号改为`Company缩写-中介人名字缩写-Issue Date(YYYYMMDD)-连续号`；连续号按同一Company+FC持续递增，不按日期重置，作废或失败号码继续不复用，历史编号不改写。
+- 基础设置将FC的`Initial Code`更正为“中介人名字缩写”，删除灰色`TW`示例；底层字段保持兼容，不增加迁移。
+- 公司Excel母版按用户确认改名为“新收费计划计算纯净版模板.xlsx”，工作簿内容及SHA-256保持不变。
 - 基础设置为Company、FC、Platform和Fee Plan增加受保护删除；只允许删除从未被其他基础资料、客户、账户、Settlement、Invoice、编号序列或审计/附件/导出历史引用的误建资料，存在引用时明确拒绝且不级联删除历史财务数据。
 - Invoice Draft改为按Client、Year、Quarter和Fee Plan由服务端自动纳入全部Finalized Settlement；多个Platform只在客户Invoice阶段汇总。
 - Invoice逐行冻结Platform、Sub Account、账户期间和锁定Service Fee，并显示客户季度应付合计；账户HWM仍各自独立计算，不会跨账户抵销。
@@ -12,9 +15,9 @@
 - FC服务统计精简为当前管理客户数、期间收费客户数和Finalized Service Fee，不再把Company已收/未收列作FC指标；Dashboard可选择Year和Quarter。
 - Payment仍保留现有多笔/部分付款界面，但新增提交防双击及数据库兜底：只能向Issued Invoice登记正数付款，累计不得超额，有Payment时不得Void。
 - 财务日期默认值改用Windows本地日历日期，避免北京时间凌晨被UTC换算成前一天。
-- 继续沿用0.2.9的数据迁移：保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。金额不一致、重复活动组/来源或残缺新结构会安全停止并要求人工检查；0.2.10没有新增数据库迁移。
+- 继续沿用0.2.9的数据迁移：保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。金额不一致、重复活动组/来源或残缺新结构会安全停止并要求人工检查；0.2.11没有新增数据库迁移。
 - Windows构建同时校验后端、前端、字符串版号和数值FileVersion，并固定验证Excel母版及Tesseract版本/SHA-256，防止发布信息漂移。
-- 公司Excel母版未修改，继续使用用户确认的原始工作簿修正版，SHA-256为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
+- 公司Excel母版内容未修改，按用户确认改名为“新收费计划计算纯净版模板.xlsx”，SHA-256仍为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
 - 本版本仍不包含二态Payment、付款凭证硬前置、公司承担差额、错误Invoice更正/退款、Defer延付利息、自动邮件、用户权限及服务器部署。
 
 启动方式：

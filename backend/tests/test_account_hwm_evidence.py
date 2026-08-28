@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -9,6 +10,16 @@ from app.main import app
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
+
+
+def test_company_excel_template_has_no_personal_notes_or_example_data() -> None:
+    template_path = Path(__file__).resolve().parents[2] / "新收费计划计算.xlsx"
+    sheet = load_workbook(template_path, data_only=False)["利润20%"]
+    assert all(
+        value is None
+        for row in sheet.iter_rows(min_row=3, max_col=25, values_only=True)
+        for value in row
+    )
 
 
 def _master(client: TestClient, suffix: str, *, accounts: int = 1) -> dict:
@@ -128,6 +139,46 @@ def test_each_account_fee_is_calculated_before_group_total() -> None:
         assert [sheet["V3"].value, sheet["V4"].value] == [20, 0]
         pdf = client.post(f"/api/exports/pdf?settlement_id={settlement['id']}&language=zh")
         assert pdf.status_code == 200, pdf.text
+
+
+def test_internal_finance_excel_batches_selected_finalized_settlements() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        settlement_ids = []
+        for suffix, closing_balance in [("BATCHA", "1100.00"), ("BATCHB", "1200.00")]:
+            data = _master(client, suffix)
+            account = data["accounts"][0]
+            beginning = _snapshot(
+                client, account["id"], "2026-01-01", "1000.00", closing=False, evidence=True
+            )
+            closing = _snapshot(
+                client, account["id"], "2026-03-31", closing_balance, closing=True, evidence=True
+            )
+            settlement = _calculate(
+                client,
+                data,
+                [{
+                    "account_id": account["id"],
+                    "beginning_snapshot_id": beginning["id"],
+                    "closing_snapshot_id": closing["id"],
+                    "original_hwm": "1000.00",
+                }],
+            )
+            finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+            assert finalized.status_code == 200, finalized.text
+            settlement_ids.append(settlement["id"])
+
+        response = client.post(
+            f"/api/exports/excel?settlement_ids={settlement_ids[1]},{settlement_ids[0]}"
+        )
+        assert response.status_code == 200, response.text
+        workbook = load_workbook(BytesIO(response.content), data_only=False)
+        assert workbook.sheetnames == ["利润20%", "Defer 延付利息（待确认）"]
+        sheet = workbook["利润20%"]
+        assert [sheet["E3"].value, sheet["E4"].value] == ["Client BATCHA", "Client BATCHB"]
+        assert [sheet["H3"].value, sheet["H4"].value] == ["BATCHA-1", "BATCHB-1"]
+        assert [sheet["V3"].value, sheet["V4"].value] == [20, 40]
+        assert all(sheet.cell(3, column).alignment.wrap_text for column in range(2, 9))
+        assert workbook["Defer 延付利息（待确认）"]["X3"].value is not None
 
 
 def test_each_account_uses_its_own_starting_and_closing_dates() -> None:

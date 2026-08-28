@@ -6,6 +6,7 @@
 .coverage
 htmlcov/
 backend/build/
+backend/test-tmp/
 backend/dist/
 backend/*.spec
 
@@ -61,4 +62,3 @@ qa_*.png
 .DS_Store
 Thumbs.db
 desktop.ini
-

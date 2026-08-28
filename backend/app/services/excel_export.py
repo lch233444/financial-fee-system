@@ -100,11 +100,13 @@ def export_settlements_to_template(
         sheet.cell(row, 23, f"=MAX(T{row},P{row})")
         sheet.cell(row, 24, invoice.issue_date if invoice else None)
         sheet.cell(row, 25, invoice.due_date if invoice else None)
-        sheet.cell(row, 8).alignment = Alignment(
-            horizontal=sheet.cell(row, 8).alignment.horizontal,
-            vertical="center",
-            wrap_text=True,
-        )
+        for col in range(2, 9):
+            cell = sheet.cell(row, col)
+            cell.alignment = Alignment(
+                horizontal=cell.alignment.horizontal,
+                vertical="center",
+                wrap_text=True,
+            )
         for col in range(12, 24):
             sheet.cell(row, col).number_format = '$#,##0.00;[Red]($#,##0.00);-'
         sheet.cell(row, 18).number_format = "0.00%"

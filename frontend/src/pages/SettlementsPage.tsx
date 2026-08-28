@@ -39,11 +39,42 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const [result, setResult] = useState<Settlement | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [exportYear, setExportYear] = useState(currentYear);
+  const [exportQuarter, setExportQuarter] = useState("");
+  const [exportClientId, setExportClientId] = useState("");
+  const [selectedExportIds, setSelectedExportIds] = useState<number[]>([]);
+  const [exportBusy, setExportBusy] = useState(false);
 
   const groupAccounts = useMemo(() => accounts.data.filter((account) =>
     (!clientId || account.client_id === Number(clientId)) &&
     (!platformId || account.platform_id === Number(platformId)) &&
     (!planId || account.fee_plan_id === Number(planId))), [accounts.data, clientId, platformId, planId]);
+
+  const exportYears = useMemo(() => Array.from(new Set([
+    currentYear,
+    ...settlements.data.map((item) => item.year),
+  ])).sort((a, b) => b - a), [currentYear, settlements.data]);
+
+  const exportableSettlements = useMemo(() => settlements.data.filter((item) =>
+    item.status === "FINALIZED"
+    && item.year === exportYear
+    && (!exportQuarter || item.quarter === Number(exportQuarter))
+    && (!exportClientId || item.client_id === Number(exportClientId))),
+  [exportClientId, exportQuarter, exportYear, settlements.data]);
+
+  const selectedExportSettlements = useMemo(() => exportableSettlements.filter((item) =>
+    selectedExportIds.includes(item.id)), [exportableSettlements, selectedExportIds]);
+
+  const selectedServiceFee = useMemo(() => selectedExportSettlements.reduce(
+    (total, item) => total + Math.round(Number(item.service_fee) * 100), 0,
+  ) / 100, [selectedExportSettlements]);
+
+  const allExportableSelected = exportableSettlements.length > 0
+    && exportableSettlements.every((item) => selectedExportIds.includes(item.id));
+
+  useEffect(() => {
+    setSelectedExportIds([]);
+  }, [exportClientId, exportQuarter, exportYear]);
 
   useEffect(() => {
     setLines((previous) => {
@@ -124,6 +155,39 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
     }
   }
 
+  function toggleExportSettlement(id: number) {
+    setSelectedExportIds((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [...current, id]);
+  }
+
+  function toggleAllExportable() {
+    setSelectedExportIds(allExportableSelected ? [] : exportableSettlements.map((item) => item.id));
+  }
+
+  async function exportInternalExcel() {
+    if (!selectedExportIds.length) {
+      setError("请先选择至少一份Finalized Settlement");
+      return;
+    }
+    setExportBusy(true);
+    setError("");
+    try {
+      const period = exportQuarter ? `${exportYear}_Q${exportQuarter}` : `${exportYear}_全年`;
+      const ids = [...selectedExportIds].sort((a, b) => a - b).join(",");
+      await download(
+        `/api/exports/excel?settlement_ids=${ids}`,
+        `公司内部财务_${period}.xlsx`,
+        { method: "POST" },
+      );
+      notify(`已按公司模板导出${selectedExportIds.length}份Finalized Settlement`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "内部财务Excel导出失败");
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   return (
     <>
       <PageHeader title="季度结算" subtitle="每个Sub Account独立计算HWM和Service Fee；组合结果仅作相加汇总" />
@@ -164,6 +228,23 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         {result.account_lines.length ? <div className="table-wrap settlement-line-results"><table><thead><tr><th>Sub Account</th><th>账户期间</th><th>Beginning</th><th>Net Contribution</th><th>Closing</th><th>Original HWM</th><th>Above HWM</th><th>Service Fee</th><th>凭证</th></tr></thead><tbody>{result.account_lines.map((line) => <tr key={line.id}><td>{line.account_number}</td><td>{line.start_date} 至 {line.closing_date}<small className="cell-note">{line.days}天</small></td><td><Money value={line.beginning} /></td><td><Money value={line.net_contribution || "0.00"} /></td><td><Money value={line.closing} /></td><td><Money value={line.original_hwm || "0.00"} /></td><td><Money value={line.chargeable_above_hwm || "0.00"} /></td><td><Money value={line.service_fee || "0.00"} /></td><td>{(line.beginning_evidence_count || 0) > 0 && (line.closing_evidence_count || 0) > 0 ? "完整" : "待补"}</td></tr>)}</tbody></table></div> : null}
         <div className="form-actions">{result.status === "DRAFT" ? <button className="primary" onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />Finalized并锁定</button> : <><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=zh`, `settlement_${result.id}_zh.pdf`, { method: "POST" })}><FileText size={17} />中文结算PDF</button><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=en`, `settlement_${result.id}_en.pdf`, { method: "POST" })}><FileText size={17} />English PDF</button><button className="ghost" onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button></>}</div>
       </Panel> : null}
+
+      <Panel title="公司内部财务Excel" subtitle="筛选并选择Finalized Settlement；系统按公司原Excel模板批量导出，逐Sub Account保留独立HWM与Service Fee">
+        <div className="settlement-controls internal-export-filters">
+          <Field label="Year"><select value={exportYear} onChange={(e) => setExportYear(Number(e.target.value))}>{exportYears.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+          <Field label="Quarter"><select value={exportQuarter} onChange={(e) => setExportQuarter(e.target.value)}><option value="">全部季度</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select></Field>
+          <Field label="Client"><select value={exportClientId} onChange={(e) => setExportClientId(e.target.value)}><option value="">全部客户</option>{clients.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        </div>
+        {exportableSettlements.length ? <>
+          <div className="internal-export-toolbar">
+            <label><input type="checkbox" checked={allExportableSelected} onChange={toggleAllExportable} />选择当前筛选结果</label>
+            <span>已选择 <strong>{selectedExportSettlements.length}</strong> 份Settlement</span>
+            <span>Service Fee合计 <Money value={selectedServiceFee.toFixed(2)} emphasis /></span>
+            <button className="primary" type="button" disabled={exportBusy || !selectedExportIds.length} onClick={() => void exportInternalExcel()}><Download size={17} />{exportBusy ? "正在生成..." : "导出所选内部Excel"}</button>
+          </div>
+          <div className="table-wrap"><table><thead><tr><th>选择</th><th>Period</th><th>Client</th><th>Platform / Plan</th><th>口径</th><th>Closing</th><th>Service Fee</th></tr></thead><tbody>{exportableSettlements.map((item) => <tr key={item.id}><td><input type="checkbox" checked={selectedExportIds.includes(item.id)} onChange={() => toggleExportSettlement(item.id)} /></td><td>{item.year} Q{item.quarter}</td><td>{item.client_name}</td><td>{item.platform_name}<small className="cell-note">{item.fee_plan_name}</small></td><td>{item.calculation_mode === "ACCOUNT_HWM" ? "账户级" : "历史组合"}</td><td><Money value={item.closing} /></td><td><Money value={item.service_fee} /></td></tr>)}</tbody></table></div>
+        </> : <EmptyState title="没有可导出的结算" detail="当前筛选条件下没有Finalized Settlement。Draft和Void不会进入内部财务Excel。" />}
+      </Panel>
 
       <Panel title="历史Settlement">{settlements.data.length ? <div className="table-wrap"><table><thead><tr><th>Period</th><th>Client</th><th>Platform / Plan</th><th>口径</th><th>Closing</th><th>Service Fee</th><th>Status</th></tr></thead><tbody>{settlements.data.map((item) => <tr key={item.id} onClick={() => setResult(item)} className="clickable"><td>{item.year} Q{item.quarter}</td><td>{item.client_name}</td><td>{item.platform_name}<small className="cell-note">{item.fee_plan_name}</small></td><td>{item.calculation_mode === "ACCOUNT_HWM" ? "账户级" : "历史组合"}</td><td><Money value={item.closing} /></td><td><Money value={item.service_fee} /></td><td><StatusBadge value={item.status} /></td></tr>)}</tbody></table></div> : <EmptyState title="暂无结算" detail="上方建立第一份季度Settlement。" />}</Panel>
     </>

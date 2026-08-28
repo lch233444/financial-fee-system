@@ -8,6 +8,7 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
+$TestTempRoot = Join-Path $ProjectRoot "backend\test-tmp"
 
 if (Test-Path -LiteralPath $ReleaseRoot) {
     Remove-Item -LiteralPath $ReleaseRoot -Recurse -Force
@@ -29,8 +30,16 @@ if ($LASTEXITCODE -ne 0) {
     throw "前端生产构建失败，Windows发布已停止。"
 }
 
-& $VenvPython -m pytest (Join-Path $ProjectRoot "backend\tests") -q
-if ($LASTEXITCODE -ne 0) {
+if (Test-Path -LiteralPath $TestTempRoot) {
+    Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
+$env:TEMP = $TestTempRoot
+$env:TMP = $TestTempRoot
+& $VenvPython -m pytest (Join-Path $ProjectRoot "backend\tests") -q -p no:cacheprovider --basetemp (Join-Path $TestTempRoot "basetemp")
+$TestExitCode = $LASTEXITCODE
+if ($TestExitCode -ne 0) {
+    Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
     throw "后端测试失败，Windows发布已停止。"
 }
 
@@ -114,10 +123,11 @@ $BuildResult = @"
 主EXE SHA-256：$ExecutableHash
 发布文件数（不含本结果文件）：$($ReleaseFiles.Count)
 发布总字节数（不含本结果文件）：$ReleaseBytes
-Windows ProductVersion：0.2.5
-Windows FileVersion：0.2.5.0
+Windows ProductVersion：0.2.6
+Windows FileVersion：0.2.6.0
 后端完整测试和前端生产构建已由本脚本先行通过。
 "@
 Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8
+Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
 
 Write-Host "Windows一键版已生成：$ReleaseApp"

@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import (
     Attachment,
+    AuditEvent,
     BalanceSnapshot,
     Client,
     Company,
+    ExportRecord,
     FC,
     FeePlan,
+    Invoice,
+    InvoiceLine,
+    InvoiceSequence,
     Platform,
     QuarterlySettlement,
     SettlementAccountLine,
@@ -46,6 +51,79 @@ def _commit(db: Session, message: str = "资料重复或关联不正确") -> Non
         raise HTTPException(status_code=409, detail=message) from exc
 
 
+def _delete_master_data(
+    db: Session,
+    *,
+    item,
+    entity_name: str,
+    entity_type: str,
+    reference_queries: list[tuple[str, object]],
+) -> dict:
+    references = [
+        label for label, query in reference_queries if db.scalar(query) is not None
+    ]
+    history_entity_types = {
+        "COMPANY": ("COMPANY",),
+        "FC": ("FC",),
+        "PLATFORM": ("PLATFORM",),
+        "FEE_PLAN": ("FEE_PLAN", "FEEPLAN"),
+    }[entity_type]
+    for label, model in (
+        ("审计记录", AuditEvent),
+        ("附件记录", Attachment),
+        ("导出记录", ExportRecord),
+    ):
+        normalized_history_type = func.replace(
+            func.replace(func.upper(func.trim(model.entity_type)), "-", "_"),
+            " ",
+            "_",
+        )
+        if db.scalar(
+            select(model.id)
+            .where(
+                normalized_history_type.in_(history_entity_types),
+                model.entity_id == item.id,
+            )
+            .limit(1)
+        ) is not None:
+            references.append(label)
+    if references:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{entity_name}已被以下资料引用，不能删除：{'、'.join(references)}",
+        )
+
+    item_id = item.id
+    item_name = item.name
+    item_code = item.code
+    try:
+        result = db.execute(delete(type(item)).where(type(item).id == item_id))
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=404, detail=f"{entity_name}不存在")
+        db.add(
+            AuditEvent(
+                action="MASTER_DATA_DELETED",
+                entity_type="MASTER_DATA",
+                entity_id=None,
+                details_json={
+                    "deleted_entity_type": entity_type,
+                    "deleted_entity_id": item_id,
+                    "name": item_name,
+                    "code": item_code,
+                },
+            )
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"{entity_name}已被其他资料或历史记录引用，不能删除",
+        ) from exc
+    return {"status": "deleted", "id": item_id}
+
+
 @router.get("/companies")
 def list_companies(db: Session = Depends(get_db)) -> list[dict]:
     items = db.scalars(select(Company).order_by(Company.name)).all()
@@ -72,6 +150,35 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db)) -> dic
     _commit(db, "Company Name或Company Code已经存在")
     db.refresh(item)
     return {"id": item.id, **payload.model_dump()}
+
+
+@router.delete("/companies/{company_id}")
+def delete_company(company_id: int, db: Session = Depends(get_db)) -> dict:
+    item = db.get(Company, company_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Company不存在")
+    return _delete_master_data(
+        db,
+        item=item,
+        entity_name="Company",
+        entity_type="COMPANY",
+        reference_queries=[
+            ("FC", select(FC.id).where(FC.company_id == company_id).limit(1)),
+            ("Fee Plan", select(FeePlan.id).where(FeePlan.company_id == company_id).limit(1)),
+            ("Client", select(Client.id).where(Client.company_id == company_id).limit(1)),
+            (
+                "Settlement",
+                select(QuarterlySettlement.id)
+                .where(QuarterlySettlement.company_id == company_id)
+                .limit(1),
+            ),
+            ("Invoice", select(Invoice.id).where(Invoice.company_id == company_id).limit(1)),
+            (
+                "Invoice编号序列",
+                select(InvoiceSequence.id).where(InvoiceSequence.company_id == company_id).limit(1),
+            ),
+        ],
+    )
 
 
 @router.get("/fcs")
@@ -102,6 +209,33 @@ def create_fc(payload: FCCreate, db: Session = Depends(get_db)) -> dict:
     return {"id": item.id, **payload.model_dump()}
 
 
+@router.delete("/fcs/{fc_id}")
+def delete_fc(fc_id: int, db: Session = Depends(get_db)) -> dict:
+    item = db.get(FC, fc_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="FC不存在")
+    return _delete_master_data(
+        db,
+        item=item,
+        entity_name="FC",
+        entity_type="FC",
+        reference_queries=[
+            ("Client", select(Client.id).where(Client.fc_id == fc_id).limit(1)),
+            (
+                "Settlement",
+                select(QuarterlySettlement.id)
+                .where(QuarterlySettlement.fc_id == fc_id)
+                .limit(1),
+            ),
+            ("Invoice", select(Invoice.id).where(Invoice.fc_id == fc_id).limit(1)),
+            (
+                "Invoice编号序列",
+                select(InvoiceSequence.id).where(InvoiceSequence.fc_id == fc_id).limit(1),
+            ),
+        ],
+    )
+
+
 @router.get("/platforms")
 def list_platforms(db: Session = Depends(get_db)) -> list[dict]:
     items = db.scalars(select(Platform).order_by(Platform.name)).all()
@@ -125,6 +259,35 @@ def create_platform(payload: PlatformCreate, db: Session = Depends(get_db)) -> d
     _commit(db, "Platform Name或Platform Code已经存在")
     db.refresh(item)
     return {"id": item.id, **payload.model_dump()}
+
+
+@router.delete("/platforms/{platform_id}")
+def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict:
+    item = db.get(Platform, platform_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Platform不存在")
+    return _delete_master_data(
+        db,
+        item=item,
+        entity_name="Platform",
+        entity_type="PLATFORM",
+        reference_queries=[
+            (
+                "Sub Account",
+                select(SubAccount.id).where(SubAccount.platform_id == platform_id).limit(1),
+            ),
+            (
+                "Settlement",
+                select(QuarterlySettlement.id)
+                .where(QuarterlySettlement.platform_id == platform_id)
+                .limit(1),
+            ),
+            (
+                "Invoice收费行",
+                select(InvoiceLine.id).where(InvoiceLine.platform_id == platform_id).limit(1),
+            ),
+        ],
+    )
 
 
 @router.get("/fee-plans")
@@ -161,6 +324,32 @@ def create_fee_plan(payload: FeePlanCreate, db: Session = Depends(get_db)) -> di
         **payload.model_dump(exclude={"fee_rate_percent"}),
         "fee_rate_percent": item.fee_rate_bps / 100,
     }
+
+
+@router.delete("/fee-plans/{fee_plan_id}")
+def delete_fee_plan(fee_plan_id: int, db: Session = Depends(get_db)) -> dict:
+    item = db.get(FeePlan, fee_plan_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Fee Plan不存在")
+    return _delete_master_data(
+        db,
+        item=item,
+        entity_name="Fee Plan",
+        entity_type="FEE_PLAN",
+        reference_queries=[
+            (
+                "Sub Account",
+                select(SubAccount.id).where(SubAccount.fee_plan_id == fee_plan_id).limit(1),
+            ),
+            (
+                "Settlement",
+                select(QuarterlySettlement.id)
+                .where(QuarterlySettlement.fee_plan_id == fee_plan_id)
+                .limit(1),
+            ),
+            ("Invoice", select(Invoice.id).where(Invoice.fee_plan_id == fee_plan_id).limit(1)),
+        ],
+    )
 
 
 @router.get("/clients")

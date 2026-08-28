@@ -2,6 +2,24 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.10 - 2026-08-28（Windows运行版）
+
+### 新增与保护
+
+- 基础设置为Company、FC、Platform和Fee Plan增加DELETE接口和删除按钮；删除前必须明确确认，提交期间防重复操作，成功后联动刷新四组基础资料和下拉选项。
+- 只允许删除从未被业务或历史记录引用的误建资料。Company检查FC、Fee Plan、Client、Settlement、Invoice和InvoiceSequence；FC检查Client、Settlement、Invoice和InvoiceSequence；Platform检查Sub Account、Settlement和InvoiceLine；Fee Plan检查Sub Account、Settlement和Invoice。
+- 任一引用存在时返回409并展示具体引用类型，不级联删除、不把可空关系置空；不存在返回404。成功删除写入不含客户内容的AuditEvent，数据库`RESTRICT`外键继续承担并发兜底。
+- 版本提升为0.2.10；本批未增加数据库迁移，不修改Excel母版，不读取真实客户资料，也不调用Luna处理真实文件。
+- 后端完整回归146/146、基础资料删除专项10/10及前端TypeScript/Vite生产构建通过；独立审查发现的旧式历史`entity_type`大小写/空格兼容问题已修复并纳入回归。
+
+### 构建、验收与切换
+
+- Windows候选包共398个文件、613,177,651字节；主EXE SHA-256为`3E94EB05E6252CF49E26DCF1C16922DD6735CAB71DCDA747AA0AF1401791001A`，ProductVersion/FileVersion为0.2.10/0.2.10.0，Excel母版SHA-256保持`16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145`。
+- 候选EXE在8001端口和全新F盘合成数据根完成四类删除200、404、引用409、本地写标记403、6条删除审计、OpenAPI、数据库完整性/外键、四页签删除入口、无横向溢出、无控制台告警错误和安全退出验收。
+- 正式切换前由0.2.9创建并校验`financial_system_backup_20260828_154422.zip`，共399,013字节，SHA-256为`FE317254AEDD4492BE676407C66F602AE32A6DA42EDF69AF905B6D27FEDBB687`；ZIP CRC、Manifest、3个文件项、唯一数据库条目和逐文件SHA-256通过。0.2.10在其F盘副本上启动后，数据库仍为`c4b7f1d92e60`，`integrity_check=ok`且外键违规为0。
+- 0.2.10已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.10_20260828\FinancialFeeSystem`接管8000端口和原数据根；正式健康检查、进程路径、45条OpenAPI路径、4个新增DELETE、最新前端、禁缓存、数据库完整性/外键和母版哈希均通过。
+- 旧0.2.9运行目录已移入回收站，其余候选、预检、构建及测试临时产物均已永久删除；手工回归曾误落C盘的本批11个测试目录也已按精确路径清理。合计23个原位置、2,933个文件、1,322,190,706字节不再占用项目活动路径，F盘正式运行目录只保留0.2.10，完整备份继续保留。全程未读取真实客户字段或文件、未调用Luna处理真实资料，也未修改Excel母版。
+
 ## 0.2.9 - 2026-08-28（Windows运行版）
 
 ### 新增

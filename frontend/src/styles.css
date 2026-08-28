@@ -95,6 +95,8 @@ button.secondary { background: #edf5f8; color: #1b607f; border-color: #c7dfe9; }
 button.ghost { background: white; color: #516772; border-color: #d4dfe4; }.ghost:hover { background: #f6f9fa; }
 button.ghost:disabled { opacity: .52; cursor: not-allowed; }
 button.danger { background: #fff0f0; color: #a34040; border-color: #efcaca; }.danger:hover { background: #fde5e5; }.danger:disabled { opacity: .45; cursor: not-allowed; }
+.master-actions-column { width: 92px; text-align: right; white-space: nowrap; }
+button.master-delete-button { min-height: 32px; padding: 5px 10px; margin-left: auto; font-size: 10.5px; }
 .tabs { display: flex; gap: 7px; margin-bottom: 17px; background: rgba(255,255,255,.6); width: fit-content; padding: 5px; border-radius: 10px; border: 1px solid var(--line); }
 .tabs button { border: 0; background: transparent; color: #647984; border-radius: 7px; padding: 8px 14px; font-size: 11.5px; font-weight: 650; }.tabs button.active { color: white; background: var(--navy); }
 .empty-state { min-height: 120px; display: grid; place-content: center; gap: 6px; text-align: center; color: #83929a; padding: 24px; }.empty-state strong { color: #4e626d; font-size: 13px; }.empty-state span { font-size: 11px; }

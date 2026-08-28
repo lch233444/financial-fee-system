@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -38,11 +40,18 @@ def test_company_excel_template_preserves_formulas_and_removes_notes_below_row_f
     assert sheet["C3"].value == "例子"
     assert sheet["C4"].value == "例子"
     assert {cell: sheet[cell].value for cell in expected_main_formulas} == expected_main_formulas
-    assert all(
-        value is None
-        for row in sheet.iter_rows(min_row=5, max_col=41, values_only=True)
-        for value in row
-    )
+    personal_note_cells = {
+        "D5", "F5", "H5", "M5", "N5", "O5", "P5", "Q5", "S5", "T5", "U5",
+        "D6", "M6", "L7", "D8", "M9", "M10", "H12",
+    }
+    assert all(sheet[address].value is None for address in personal_note_cells)
+    chinese_cells = {
+        cell.coordinate
+        for row in sheet.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str) and re.search(r"[\u4e00-\u9fff]", cell.value)
+    }
+    assert chinese_cells == {"C3", "C4"}
     defer = workbook["Defer 延付利息（待确认）"]
     defer_formulas = [
         cell.value
@@ -51,6 +60,14 @@ def test_company_excel_template_preserves_formulas_and_removes_notes_below_row_f
         if isinstance(cell.value, str) and cell.value.startswith("=")
     ]
     assert len(defer_formulas) == 36
+    with ZipFile(template_path) as package:
+        assert {
+            "docProps/app.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "xl/calcChain.xml",
+            "xl/theme/theme1.xml",
+        }.issubset(package.namelist())
 
 
 def _master(client: TestClient, suffix: str, *, accounts: int = 1) -> dict:

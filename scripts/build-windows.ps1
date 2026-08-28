@@ -123,8 +123,8 @@ $BuildResult = @"
 主EXE SHA-256：$ExecutableHash
 发布文件数（不含本结果文件）：$($ReleaseFiles.Count)
 发布总字节数（不含本结果文件）：$ReleaseBytes
-Windows ProductVersion：0.2.7
-Windows FileVersion：0.2.7.0
+Windows ProductVersion：0.2.8
+Windows FileVersion：0.2.8.0
 后端完整测试和前端生产构建已由本脚本先行通过。
 "@
 Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8

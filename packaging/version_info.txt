@@ -15,11 +15,11 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('FileDescription', 'Financial Fee System'),
-          StringStruct('FileVersion', '0.2.7.0'),
+          StringStruct('FileVersion', '0.2.8.0'),
           StringStruct('InternalName', 'FinancialFeeSystem'),
           StringStruct('OriginalFilename', 'FinancialFeeSystem.exe'),
           StringStruct('ProductName', 'Financial Fee System'),
-          StringStruct('ProductVersion', '0.2.7')
+          StringStruct('ProductVersion', '0.2.8')
         ]
       )
     ]),

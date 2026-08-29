@@ -46,14 +46,46 @@ export type Account = {
   remark: string | null;
   status: MasterStatus;
 };
+export function accountIdentityLabel(account: Account) {
+  return [
+    account.client_name,
+    account.platform_name || "待确认Platform",
+    account.account_number,
+    account.scheme_name?.trim() || null,
+  ].filter(Boolean).join(" · ");
+}
+export type BalanceSnapshot = {
+  id: number;
+  account_id: number;
+  account_number: string;
+  client_id: number;
+  client_name: string;
+  platform_id: number | null;
+  platform_name: string | null;
+  fee_plan_id: number | null;
+  fee_plan_name: string | null;
+  scheme_name: string | null;
+  as_of_date: string;
+  total_balance: string;
+  currency: string;
+  source_type: string;
+  statement_import_id: number | null;
+  holdings: Array<Record<string, unknown>>;
+  eligible_for_closing: boolean;
+  remark: string | null;
+  evidence_complete: boolean;
+  evidence_count?: number;
+};
 export type StatementImport = {
   id: number;
   original_name: string;
   status: string;
   extracted: Record<string, unknown>;
+  reviewed?: Record<string, unknown> | null;
   confidence: Record<string, number>;
   warnings: string[];
-  confirmed_account_id?: number;
+  confirmed_account_id?: number | null;
+  confirmed_snapshot_id?: number | null;
   ai_recognition?: AiStatementRecognition | null;
   ai_status?: string | null;
   ai_model?: string | null;
@@ -150,6 +182,7 @@ export type Settlement = {
     id: number;
     account_id: number;
     account_number: string;
+    scheme_name: string | null;
     previous_line_id: number | null;
     start_date: string;
     closing_date: string;
@@ -188,6 +221,7 @@ export type Invoice = {
     settlement_id: number;
     platform_name: string;
     account_number: string;
+    scheme_name: string | null;
     start_date: string | null;
     closing_date: string | null;
     service_fee: string;

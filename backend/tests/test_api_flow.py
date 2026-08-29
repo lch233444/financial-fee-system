@@ -153,7 +153,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
             json={"issue_date": "2026-10-05", "language": "zh"},
         )
         assert issued.status_code == 200, issued.text
-        assert issued.json()["invoice_number"] == "AAA-TW-20261005-1"
+        assert issued.json()["invoice_number"] == "Alpha Advisory Limited-TW-20261005-1"
         assert issued.json()["due_date"] == "2026-10-19"
 
         partial = client.post(
@@ -197,6 +197,7 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
                 "platform_id": platform["id"],
                 "fee_plan_id": plan["id"],
                 "account_number": "LOSS-001",
+                "start_date": "2026-01-01",
                 "status": "ACTIVE",
             },
         ).json()

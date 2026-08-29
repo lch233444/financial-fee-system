@@ -186,6 +186,8 @@ def calculate_or_update_settlement(
     fee_plan = db.get(FeePlan, payload.fee_plan_id)
     if not client or not platform or not fee_plan:
         raise HTTPException(status_code=404, detail="Client、Platform或Fee Plan不存在")
+    if client.status != "ACTIVE":
+        raise HTTPException(status_code=409, detail="只有Active Client可以建立季度Settlement")
     if client.company_id and fee_plan.company_id != client.company_id:
         raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
 
@@ -222,6 +224,26 @@ def calculate_or_update_settlement(
             or account.fee_plan_id != payload.fee_plan_id
         ):
             raise HTTPException(status_code=400, detail="所有Sub Account必须属于同一Client + Platform + Fee Plan")
+    inactive_accounts = [
+        account.account_number
+        for account in accounts.values()
+        if account.status != "ACTIVE"
+    ]
+    if inactive_accounts:
+        raise HTTPException(
+            status_code=409,
+            detail=f"以下Sub Account不是Active，不能建立季度Settlement：{'、'.join(inactive_accounts)}",
+        )
+    missing_start_dates = [
+        account.account_number
+        for account in accounts.values()
+        if account.start_date is None
+    ]
+    if missing_start_dates:
+        raise HTTPException(
+            status_code=409,
+            detail=f"以下Sub Account缺少开始管理日期，不能建立季度Settlement：{'、'.join(missing_start_dates)}",
+        )
 
     later = _later_for_accounts(
         db,
@@ -442,7 +464,29 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
     elif item.period_rate_ppm is None:
         raise HTTPException(status_code=400, detail="Period Rate分母为0，不能Finalized或出具账单")
     client = item.client
-    if not client or not client.company_id or not client.fc_id:
+    if not client or client.status != "ACTIVE":
+        raise HTTPException(status_code=409, detail="Client不是Active，不能Finalized Settlement")
+    inactive_accounts = [
+        line.account.account_number if line.account else f"#{line.account_id}"
+        for line in item.account_lines
+        if not line.account or line.account.status != "ACTIVE"
+    ]
+    if inactive_accounts:
+        raise HTTPException(
+            status_code=409,
+            detail=f"以下Sub Account不是Active，不能Finalized Settlement：{'、'.join(inactive_accounts)}",
+        )
+    missing_start_dates = [
+        line.account.account_number if line.account else f"#{line.account_id}"
+        for line in item.account_lines
+        if not line.account or line.account.start_date is None
+    ]
+    if missing_start_dates:
+        raise HTTPException(
+            status_code=409,
+            detail=f"以下Sub Account缺少开始管理日期，不能Finalized Settlement：{'、'.join(missing_start_dates)}",
+        )
+    if not client.company_id or not client.fc_id:
         raise HTTPException(status_code=400, detail="Client必须补全Company和FC后才能Finalized")
     if not item.fee_plan or item.fee_plan.company_id != client.company_id:
         raise HTTPException(status_code=409, detail="Client Company已变化且与Fee Plan不一致，请重新Calculate")

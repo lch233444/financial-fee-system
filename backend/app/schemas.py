@@ -285,6 +285,7 @@ class StatementConfirmRequest(BaseModel):
     as_of_date: date
     total_balance: Decimal = Field(ge=0)
     account_id: int | None = None
+    account_platform_id: int | None = None
     # Required only when a stored AI comparison contains a conflict,
     # uncertainty, failed validation, or uncorroborated value.
     ai_conflicts_reviewed: bool | None = None

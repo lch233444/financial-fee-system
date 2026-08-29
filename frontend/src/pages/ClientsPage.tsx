@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
+import { accountIdentityLabel } from "../types";
 import type { Account, Client, Company, FC, FeePlan, Platform } from "../types";
 
 export default function ClientsPage({ notify }: { notify: (message: string) => void }) {
@@ -48,7 +49,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       await postJson("/api/accounts", {
         client_id: Number(data.get("client_id")), platform_id: Number(data.get("platform_id")),
         fee_plan_id: Number(data.get("fee_plan_id")), account_number: data.get("account_number"),
-        scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null, status: "ACTIVE",
+        scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
+        end_date: data.get("end_date") || null, status: "ACTIVE",
       });
       event.currentTarget.reset();
       setAccountClientId("");
@@ -84,7 +86,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       await patchJson(`/api/accounts/${selectedDraftAccount.id}`, {
         platform_id: Number(data.get("platform_id")), fee_plan_id: Number(data.get("fee_plan_id")),
         scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
-        remark: data.get("remark") || null, status: "ACTIVE",
+        end_date: data.get("end_date") || null, remark: data.get("remark") || null, status: "ACTIVE",
       });
       setDraftAccountId("");
       await accounts.reload();
@@ -94,7 +96,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
 
   return (
     <>
-      <PageHeader title="客户与账户" subtitle="Client可对应多个Platform；同Platform、同Fee Plan的账户会合并结算" />
+      <PageHeader title="客户与账户" subtitle="一个Client可有多个Sub Account；每个账户独立计算HWM，组合层只汇总结果" />
       {error ? <ErrorBanner message={error} /> : null}
       <div className="split-layout">
         <Panel title="新增Client" subtitle="正式启用前必须关联Company、FC和管理开始日期">
@@ -115,7 +117,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <Field label="Fee Plan"><select name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.filter((x) => !selectedAccountClient?.company_id || x.company_id === selectedAccountClient.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Account Number"><input name="account_number" required /></Field>
             <Field label="Scheme Name"><input name="scheme_name" /></Field>
-            <Field label="开始管理日期"><input name="start_date" type="date" /></Field>
+            <Field label="开始管理日期"><input name="start_date" type="date" required /></Field>
+            <Field label="实际结束日期（如适用）"><input name="end_date" type="date" /></Field>
             <button className="primary" type="submit">保存Sub Account</button>
           </form>
         </Panel>
@@ -150,14 +153,15 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
         </Panel>
 
         <Panel title="补全待确认Sub Account" subtitle="所属Client必须先激活，再补齐Platform和Fee Plan">
-          <Field label="选择Draft Sub Account"><select value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{item.client_name} · {item.account_number}</option>)}</select></Field>
+          <Field label="选择Draft Sub Account"><select value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
           {selectedDraftAccount ? (
             <form className="form-grid" key={selectedDraftAccount.id} onSubmit={(event) => void completeDraftAccount(event)}>
               <Field label="Client"><input value={`${selectedDraftAccount.client_name} (${selectedDraftAccountClient?.status ?? "UNKNOWN"})`} disabled /></Field>
               <Field label="Platform"><select name="platform_id" defaultValue={selectedDraftAccount.platform_id ?? ""} required><option value="" disabled>请选择</option>{platforms.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
               <Field label="Fee Plan"><select name="fee_plan_id" defaultValue={selectedDraftAccount.fee_plan_id ?? ""} required><option value="" disabled>请选择</option>{plans.data.filter((item) => !selectedDraftAccountClient?.company_id || item.company_id === selectedDraftAccountClient.company_id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
               <Field label="Scheme Name"><input name="scheme_name" defaultValue={selectedDraftAccount.scheme_name ?? ""} /></Field>
-              <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} /></Field>
+              <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} required /></Field>
+              <Field label="实际结束日期（如适用）" hint="若账单日期等于退出日，保存后系统会重核该Snapshot的Closing资格"><input name="end_date" type="date" defaultValue={selectedDraftAccount.end_date ?? ""} /></Field>
               <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftAccount.remark ?? ""} /></Field>
               <button className="primary" type="submit" disabled={selectedDraftAccountClient?.status !== "ACTIVE"}>补全并激活Sub Account</button>
             </form>
@@ -170,7 +174,10 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
           <div className="client-list">
             {clients.data.map((client) => {
               const rows = accounts.data.filter((account) => account.client_id === client.id);
-              return <article className="client-card" key={client.id}><header><div><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"}</span></div><StatusBadge value={client.status} /></header><div className="account-chips">{rows.length ? rows.map((account) => <span key={account.id}><b>{account.account_number}</b>{account.platform_name || "待确认平台"} / {account.fee_plan_name || "待确认计划"}<StatusBadge value={account.status} /></span>) : <small>尚无账户</small>}</div></article>;
+              return <article className="client-card" key={client.id}>
+                <header><div><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><StatusBadge value={client.status} /></header>
+                {rows.length ? <div className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
+              </article>;
             })}
           </div>
         ) : <EmptyState title="暂无客户" detail="可手工建立，也可由eMPF账单识别创建待确认档案。" />}

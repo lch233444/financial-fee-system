@@ -36,6 +36,11 @@ from ..schemas import (
 )
 from ..serializers import invoice_dict
 from ..services.excel_export import file_sha256
+from ..services.invoice_archive import (
+    invoice_archive_paths,
+    invoice_download_filename,
+    invoice_recovery_path_sets,
+)
 from ..services.pdf_invoice import generate_invoice_pdf
 from ..services.storage import is_within
 
@@ -54,7 +59,9 @@ def _invoice_query():
         selectinload(Invoice.fee_plan),
         selectinload(Invoice.payments),
         selectinload(Invoice.sources).selectinload(InvoiceSource.settlement),
-        selectinload(Invoice.lines),
+        selectinload(Invoice.lines)
+        .selectinload(InvoiceLine.source_account_line)
+        .selectinload(SettlementAccountLine.account),
         selectinload(Invoice.issue_attempts),
         selectinload(Invoice.settlement)
         .selectinload(QuarterlySettlement.account_lines)
@@ -273,9 +280,31 @@ def _next_number(db: Session, invoice: Invoice, issue_date: date) -> str:
         sequence = InvoiceSequence(company_id=invoice.company_id, fc_id=invoice.fc_id, last_number=0)
         db.add(sequence)
         db.flush()
-    sequence.last_number += 1
     yyyymmdd = issue_date.strftime("%Y%m%d")
-    return f"{invoice.company.code}-{invoice.fc.code}-{yyyymmdd}-{sequence.last_number}"
+    company_name = invoice.company.name.strip()
+    if not company_name:
+        raise HTTPException(status_code=409, detail="Company全名为空，不能生成Invoice编号")
+    while True:
+        sequence.last_number += 1
+        candidate = f"{company_name}-{invoice.fc.code}-{yyyymmdd}-{sequence.last_number}"
+        used_by_invoice = db.scalar(
+            select(Invoice.id).where(Invoice.invoice_number == candidate).limit(1)
+        )
+        used_by_attempt = db.scalar(
+            select(InvoiceIssueAttempt.id)
+            .where(InvoiceIssueAttempt.invoice_number == candidate)
+            .limit(1)
+        )
+        if used_by_invoice is None and used_by_attempt is None:
+            return candidate
+        db.add(
+            AuditEvent(
+                action="INVOICE_NUMBER_COLLISION_SKIPPED",
+                entity_type="INVOICE",
+                entity_id=invoice.id,
+                details_json={"invoice_number": candidate, "sequence": sequence.last_number},
+            )
+        )
 
 
 def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
@@ -334,7 +363,7 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
 
 def _invoice_final_paths(invoice_number: str) -> dict[str, Path]:
     pdf_root = get_settings().data_root / "output" / "pdf"
-    return {language: pdf_root / f"{invoice_number}_{language}.pdf" for language in ("zh", "en")}
+    return invoice_archive_paths(invoice_number, pdf_root)
 
 
 def _reserved_attempt(invoice: Invoice) -> InvoiceIssueAttempt | None:
@@ -581,10 +610,27 @@ def recover_issuing_invoice(
         if payload.action == "COMPLETE":
             if not item.invoice_number:
                 raise HTTPException(status_code=409, detail="ISSUING Invoice缺少已预留编号，不能完成签发")
-            final_paths = _invoice_final_paths(item.invoice_number)
             pdf_root = get_settings().data_root / "output" / "pdf"
-            if not all(path.is_file() and is_within(path, pdf_root) for path in final_paths.values()):
+            recovery_path_sets = invoice_recovery_path_sets(item.invoice_number, pdf_root)
+            if any(
+                not is_within(path, pdf_root)
+                for path_set in recovery_path_sets
+                for path in path_set.values()
+            ):
+                raise HTTPException(status_code=409, detail="Invoice归档路径不安全，不能自动完成签发")
+            complete_path_sets = [
+                path_set
+                for path_set in recovery_path_sets
+                if all(path.is_file() for path in path_set.values())
+            ]
+            if not complete_path_sets:
                 raise HTTPException(status_code=409, detail="中文和英文Invoice PDF必须都完整存在于安全归档目录")
+            if len(complete_path_sets) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="同时发现哈希归档和旧版原名双语归档，不能自动完成签发；请人工核对后仅保留一组",
+                )
+            final_paths = complete_path_sets[0]
             _validate_issue_sources(db, item)
             hashes = {language: file_sha256(path) for language, path in final_paths.items()}
             attempt = _ensure_recovery_attempt(db, item)
@@ -608,12 +654,17 @@ def recover_issuing_invoice(
             audit_action = "INVOICE_ISSUING_RECOVERED_COMPLETE"
         else:
             if item.invoice_number:
-                final_paths = _invoice_final_paths(item.invoice_number)
                 pdf_root = get_settings().data_root / "output" / "pdf"
-                cleanup_paths = list(final_paths.values())
+                recovery_path_sets = invoice_recovery_path_sets(item.invoice_number, pdf_root)
+                cleanup_paths = [
+                    path
+                    for path_set in recovery_path_sets
+                    for path in path_set.values()
+                ]
                 if pdf_root.is_dir():
-                    for language in ("zh", "en"):
-                        cleanup_paths.extend(pdf_root.glob(f".{item.invoice_number}_{language}.pdf.*.tmp"))
+                    for path_set in recovery_path_sets:
+                        for final_path in path_set.values():
+                            cleanup_paths.extend(pdf_root.glob(f".{final_path.name}.*.tmp"))
                 for path in cleanup_paths:
                     if not is_within(path, pdf_root):
                         raise HTTPException(status_code=409, detail="Invoice部分文件路径不安全，不能自动清理")
@@ -735,7 +786,7 @@ def download_invoice_pdf(
     if item.lifecycle_status not in {"ISSUED", "VOID"}:
         raise HTTPException(status_code=409, detail="只有曾经Issued的Invoice才有正式PDF")
     settings = get_settings()
-    filename = f"{item.invoice_number}_{language}.pdf"
+    filename = invoice_download_filename(item.invoice_number, item.id, language)
     paths = dict(item.pdf_paths_json or {})
     recorded_path = paths.get(language)
     if recorded_path:
@@ -781,7 +832,7 @@ def download_invoice_pdf(
                     raise HTTPException(status_code=404, detail="原始Invoice PDF缺失，请从备份恢复")
             else:
                 pdf_root = settings.data_root / "output" / "pdf"
-                output_path = pdf_root / filename
+                output_path = _invoice_final_paths(item.invoice_number)[language]
                 if not is_within(output_path, pdf_root):
                     raise HTTPException(status_code=409, detail="Invoice归档路径不安全")
                 if output_path.exists():

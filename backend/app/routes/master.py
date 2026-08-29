@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -452,8 +452,13 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
         raise HTTPException(status_code=404, detail="Fee Plan不存在")
     if plan and client.company_id and plan.company_id != client.company_id:
         raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
-    if payload.status == "ACTIVE" and (not payload.platform_id or not payload.fee_plan_id):
-        raise HTTPException(status_code=400, detail="Active Sub Account必须补全Platform和Fee Plan")
+    if payload.status == "ACTIVE" and (
+        not payload.platform_id or not payload.fee_plan_id or not payload.start_date
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Active Sub Account必须补全Platform、Fee Plan和开始管理日期",
+        )
     if payload.status == "ACTIVE" and client.status != "ACTIVE":
         raise HTTPException(status_code=400, detail="Client必须先补全并设为Active")
     if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
@@ -483,12 +488,118 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
         raise HTTPException(status_code=404, detail="Fee Plan不存在")
     if plan and item.client.company_id and plan.company_id != item.client.company_id:
         raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
-    if status == "ACTIVE" and (not platform_id or not fee_plan_id):
-        raise HTTPException(status_code=400, detail="Active Sub Account必须补全Platform和Fee Plan")
+    if status == "ACTIVE" and (not platform_id or not fee_plan_id or not start_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Active Sub Account必须补全Platform、Fee Plan和开始管理日期",
+        )
     if status == "ACTIVE" and item.client.status != "ACTIVE":
         raise HTTPException(status_code=400, detail="Client必须先补全并设为Active")
     if start_date and end_date and end_date < start_date:
         raise HTTPException(status_code=400, detail="账户结束日期不能早于开始日期")
+
+    end_date_changed = "end_date" in changes and end_date != item.end_date
+    snapshot_changes: list[tuple[BalanceSnapshot, bool, bool]] = []
+    if end_date_changed:
+        if end_date is not None:
+            conflicting_lines = db.scalars(
+                select(SettlementAccountLine)
+                .join(
+                    QuarterlySettlement,
+                    QuarterlySettlement.id == SettlementAccountLine.settlement_id,
+                )
+                .where(
+                    SettlementAccountLine.account_id == item.id,
+                    QuarterlySettlement.status != "VOID",
+                    SettlementAccountLine.closing_date > end_date,
+                )
+                .order_by(SettlementAccountLine.closing_date, SettlementAccountLine.id)
+            ).all()
+            if conflicting_lines:
+                joined_periods = "、".join(
+                    f"Settlement #{line.settlement_id}（Closing {line.closing_date.isoformat()}）"
+                    for line in conflicting_lines
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"结束日期早于未作废Settlement的账户Closing Date：{joined_periods}",
+                )
+        snapshots = db.scalars(
+            select(BalanceSnapshot).where(BalanceSnapshot.account_id == item.id)
+        ).all()
+        for snapshot in snapshots:
+            date_is_eligible = (
+                is_quarter_end(snapshot.as_of_date) or snapshot.as_of_date == end_date
+            )
+            if snapshot.source_type == "STATEMENT_IMPORT":
+                updated_eligibility = date_is_eligible
+            else:
+                # A false manual flag may be an explicit finance opt-out. Never
+                # promote it automatically; only revoke a true flag that is no
+                # longer a quarter-end or the account's actual end date.
+                updated_eligibility = snapshot.eligible_for_closing and date_is_eligible
+            if updated_eligibility != snapshot.eligible_for_closing:
+                snapshot_changes.append(
+                    (snapshot, snapshot.eligible_for_closing, updated_eligibility)
+                )
+
+        changed_snapshot_ids = {
+            snapshot.id for snapshot, _old, _updated in snapshot_changes
+        }
+        if changed_snapshot_ids:
+            referenced_lines = db.scalars(
+                select(SettlementAccountLine).where(
+                    or_(
+                        SettlementAccountLine.beginning_snapshot_id.in_(changed_snapshot_ids),
+                        SettlementAccountLine.closing_snapshot_id.in_(changed_snapshot_ids),
+                    )
+                )
+            ).all()
+            referenced_snapshot_ids = sorted(
+                {
+                    snapshot_id
+                    for line in referenced_lines
+                    for snapshot_id in (line.beginning_snapshot_id, line.closing_snapshot_id)
+                    if snapshot_id in changed_snapshot_ids
+                }
+            )
+            if referenced_snapshot_ids:
+                joined_ids = "、".join(
+                    f"#{snapshot_id}" for snapshot_id in referenced_snapshot_ids
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"结束日期会改变已被Settlement引用的Snapshot Closing资格：{joined_ids}",
+                )
+
+        for snapshot, _old_eligibility, updated_eligibility in snapshot_changes:
+            snapshot.eligible_for_closing = updated_eligibility
+            if snapshot.source_type == "STATEMENT_IMPORT":
+                snapshot.remark = (
+                    "季末/退出日Closing候选"
+                    if updated_eligibility
+                    else "非季末余额快照，不可直接作为Closing"
+                )
+
+        db.add(
+            AuditEvent(
+                action="ACCOUNT_END_DATE_UPDATED",
+                entity_type="ACCOUNT",
+                entity_id=item.id,
+                details_json={
+                    "old_end_date": item.end_date.isoformat() if item.end_date else None,
+                    "new_end_date": end_date.isoformat() if end_date else None,
+                    "snapshot_eligibility_changes": [
+                        {
+                            "snapshot_id": snapshot.id,
+                            "old_eligible_for_closing": old_eligibility,
+                            "new_eligible_for_closing": updated_eligibility,
+                        }
+                        for snapshot, old_eligibility, updated_eligibility in snapshot_changes
+                    ],
+                },
+            )
+        )
     for key, value in changes.items():
         setattr(item, key, value)
     _commit(db)
@@ -503,6 +614,7 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
     items = db.scalars(query).all()
     result = []
     for item in items:
+        account = item.account
         attachment_count = db.scalar(
             select(func.count(Attachment.id)).where(
                 Attachment.entity_type == "TRANSACTION", Attachment.entity_id == item.id
@@ -512,7 +624,14 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
         result.append({
             "id": item.id,
             "account_id": item.account_id,
-            "account_number": item.account.account_number,
+            "account_number": account.account_number,
+            "client_id": account.client_id,
+            "client_name": account.client.name,
+            "platform_id": account.platform_id,
+            "platform_name": account.platform.name if account.platform else None,
+            "fee_plan_id": account.fee_plan_id,
+            "fee_plan_name": account.fee_plan.name if account.fee_plan else None,
+            "scheme_name": account.scheme_name,
             "transaction_date": item.transaction_date.isoformat(),
             "transaction_type": item.transaction_type,
             "amount": money_string(item.amount_cents),
@@ -571,6 +690,7 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
     items = db.scalars(query).all()
     result = []
     for item in items:
+        account = item.account
         attachment_count = db.scalar(
             select(func.count(Attachment.id)).where(
                 Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == item.id
@@ -580,11 +700,20 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
         result.append({
             "id": item.id,
             "account_id": item.account_id,
-            "account_number": item.account.account_number,
+            "account_number": account.account_number,
+            "client_id": account.client_id,
+            "client_name": account.client.name,
+            "platform_id": account.platform_id,
+            "platform_name": account.platform.name if account.platform else None,
+            "fee_plan_id": account.fee_plan_id,
+            "fee_plan_name": account.fee_plan.name if account.fee_plan else None,
+            "scheme_name": account.scheme_name,
             "as_of_date": item.as_of_date.isoformat(),
             "total_balance": money_string(item.total_balance_cents),
             "currency": item.currency,
             "source_type": item.source_type,
+            "statement_import_id": item.statement_import_id,
+            "holdings": item.holdings_json or [],
             "eligible_for_closing": item.eligible_for_closing,
             "remark": item.remark,
             "evidence_count": evidence_count,

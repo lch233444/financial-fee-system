@@ -17,8 +17,8 @@ import {
 } from "../api";
 import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
-import type { Account, AiAssistantStatus, StatementImport } from "../types";
-import { LUNA_MODEL_ID } from "../types";
+import type { Account, AiAssistantStatus, BalanceSnapshot, StatementImport } from "../types";
+import { accountIdentityLabel, LUNA_MODEL_ID } from "../types";
 
 type Holding = {
   fund_name?: string;
@@ -71,6 +71,11 @@ const documentTypeLabels: Record<string, string> = {
 
 function value(record: StatementImport | null, key: string) {
   const current = record?.extracted?.[key];
+  return current == null ? "" : String(current);
+}
+
+function confirmedValue(record: StatementImport | null, key: string) {
+  const current = record?.reviewed?.[key] ?? record?.extracted?.[key];
   return current == null ? "" : String(current);
 }
 
@@ -261,6 +266,7 @@ function DocumentRoutingNotice({ record }: { record: StatementImport }) {
 export default function ImportsPage({ notify }: { notify: (message: string) => void }) {
   const imports = useApiList<StatementImport>("/api/statement-imports");
   const accounts = useApiList<Account>("/api/accounts");
+  const snapshots = useApiList<BalanceSnapshot>("/api/balance-snapshots");
   const [selected, setSelected] = useState<StatementImport | null>(null);
   const [uploading, setUploading] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
@@ -271,6 +277,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [lunaDocumentTypeReviewed, setLunaDocumentTypeReviewed] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
+  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
   const holdings = (selected?.extracted?.holdings as Holding[] | undefined) || [];
   const aiHoldings = ((selected?.ai_recognition?.values?.holdings ?? selected?.ai_recognition?.extracted?.holdings) as Holding[] | undefined) || [];
@@ -284,6 +291,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const lunaDocumentType = aiValue(selected, "document_type");
   const usesLunaBalanceClassification = localDocumentType === "unknown" && lunaDocumentType === "empf_account_page";
   const canReviewAsBalancePage = localDocumentType === "empf_account_page" || usesLunaBalanceClassification;
+  const confirmedAccount = accounts.data.find((item) => item.id === selected?.confirmed_account_id);
+  const confirmedSnapshot = snapshots.data.find((item) => item.id === selected?.confirmed_snapshot_id);
+  const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId));
+  const confirmedHoldings = (confirmedSnapshot?.holdings as Holding[] | undefined) || [];
 
   useEffect(() => {
     getAiAssistantStatus()
@@ -310,6 +321,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setConflictsAcknowledged(false);
     setLunaDocumentTypeReviewed(false);
     setHoldingsSource("ocr");
+    setSelectedAccountId("");
   }, [selected?.id]);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
@@ -403,20 +415,26 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     }
     setLocalError("");
     try {
-      const data = new FormData(event.currentTarget);
-      const result = await postJson<{ created_draft: boolean }>(`/api/statement-imports/${selected.id}/confirm`, {
+      const result = await postJson<{
+        statement_import: StatementImport;
+        account_id: number;
+        created_draft: boolean;
+        snapshot: { id: number; as_of_date: string; total_balance: string; eligible_for_closing: boolean };
+      }>(`/api/statement-imports/${selected.id}/confirm`, {
         client_name: reviewValues.client_name,
         account_number: reviewValues.account_number,
         scheme_name: reviewValues.scheme_name || null,
         trustee: reviewValues.trustee || null,
         as_of_date: reviewValues.as_of_date,
         total_balance: reviewValues.total_balance,
-        account_id: data.get("account_id") ? Number(data.get("account_id")) : null,
+        account_id: selectedExistingAccount?.id ?? null,
+        account_platform_id: selectedExistingAccount?.platform_id ?? null,
         holdings: holdingsSource === "luna" ? aiHoldings : holdings,
         ai_conflicts_reviewed: reviewIssueCount > 0 && conflictsAcknowledged,
         luna_document_type_reviewed: usesLunaBalanceClassification && lunaDocumentTypeReviewed,
       });
-      await Promise.all([imports.reload(), accounts.reload()]);
+      setSelected(result.statement_import);
+      await Promise.all([imports.reload(), accounts.reload(), snapshots.reload()]);
       notify(result.created_draft ? "已入账并创建待确认客户/账户档案" : "余额快照已正式入账");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "确认入账失败");
@@ -429,7 +447,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         title="eMPF账单导入"
         subtitle="本地OCR + Luna独立识别 · 冲突直接交由财务确认"
       />
-      {(localError || imports.error) ? <ErrorBanner message={localError || imports.error} /> : null}
+      {(localError || imports.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || accounts.error || snapshots.error} /> : null}
 
       <Panel title="上传eMPF文件" subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
@@ -472,7 +490,29 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         </Panel>
 
         <Panel title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接写入余额或流水">
-          {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-box"><CheckCircle2 /><strong>该账单已经复核入账</strong><span>Account #{selected.confirmed_account_id}</span></div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
+          {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-receipt">
+            <header><CheckCircle2 /><div><strong>该账单已经复核并生成余额快照</strong><span>原始账单、人工确认值、账户和Snapshot均已关联保留</span></div>{confirmedAccount ? <StatusBadge value={confirmedAccount.status} /> : null}</header>
+            <div className="confirmed-trace-grid">
+              <span><small>Client</small><b>{confirmedAccount?.client_name || confirmedValue(selected, "client_name") || "账户资料加载中"}</b></span>
+              <span><small>Platform</small><b>{confirmedAccount?.platform_name || "待确认Platform"}</b></span>
+              <span><small>Account Number</small><b>{confirmedAccount?.account_number || confirmedValue(selected, "account_number") || "账户资料加载中"}</b></span>
+              <span><small>Scheme</small><b>{confirmedAccount?.scheme_name || confirmedValue(selected, "scheme_name") || "-"}</b></span>
+              <span><small>Trustee（MPF计划受托机构）</small><b>{confirmedValue(selected, "trustee") || "-"}</b></span>
+              <span><small>Fee Plan</small><b>{confirmedAccount?.fee_plan_name || "待补全Fee Plan"}</b></span>
+              <span><small>Snapshot日期</small><b>{confirmedSnapshot?.as_of_date || confirmedValue(selected, "as_of_date") || "加载中"}</b></span>
+              <span><small>Snapshot金额</small><b>HKD {confirmedSnapshot?.total_balance || confirmedValue(selected, "total_balance") || "-"}</b></span>
+              <span><small>Closing资格</small><b>{confirmedSnapshot ? (confirmedSnapshot.eligible_for_closing ? "可作为季末/退出日Closing" : "普通快照，不可作为Closing") : "加载中"}</b></span>
+            </div>
+            {confirmedHoldings.length ? <div className="holdings-source-review confirmed-holdings"><HoldingsSourceTable title="已确认入账持仓（凭证记录）" holdings={confirmedHoldings} selected /></div> : <small className="confirmed-audit-reference">该Snapshot没有保存持仓明细；季度收费只使用余额及资金流水，不使用持仓项目计算。</small>}
+            <p className="confirmed-next-step">{!confirmedAccount || !confirmedSnapshot
+              ? "正在加载已关联的账户与Snapshot资料。"
+              : confirmedAccount.status === "DRAFT"
+              ? "下一步：到“客户与账户”补全Client的Company/FC及Sub Account的Fee Plan、管理日期并激活；完成前不会进入正式季度结算。"
+              : confirmedSnapshot.eligible_for_closing
+                ? "下一步：该Snapshot已在“资金与余额”可查；到“季度结算”选择同一Client、Platform、Fee Plan及账户期间，人工计算并Finalize。系统不会自动结算。"
+                : "该Snapshot已在“资金与余额”可查；因不是季末或实际退出日，只作余额记录，不会出现在Closing选项。"}</p>
+            {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：Snapshot #{selected.confirmed_snapshot_id}</small> : null}
+          </div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
             {usesLunaBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={lunaDocumentTypeReviewed} onChange={(event) => setLunaDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Luna的文档类型进入人工复核，Luna不会自动生成余额快照。</small></span></label> : null}
             <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition)} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : "重新执行本地OCR"}</button></div>
             {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
@@ -515,11 +555,11 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div> : null}
             </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Luna。本地OCR结果仍可由财务人工复核；运行Luna前请确认可以将此账单发送至OpenAI。</span></div>}
 
-            <Field label="匹配已有Sub Account" hint="留空时会按Account Number查找；找不到则创建待确认档案"><select name="account_id" defaultValue=""><option value="">自动匹配 / 创建草稿</option>{accounts.data.map((item) => <option key={item.id} value={item.id}>{item.client_name} · {item.account_number}</option>)}</select></Field>
+            <Field label="匹配已有Sub Account" hint="每次切换导入记录都会清空选择；请按Client、Platform、Account Number及Scheme核对"><select name="account_id" value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}><option value="">自动匹配 / 创建草稿</option>{accounts.data.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
             <Field label="Client Name" hint={confidence(selected, "client_name")}><input name="client_name" required value={reviewValues.client_name} onChange={(event) => setReviewValues((current) => ({ ...current, client_name: event.target.value }))} /></Field>
             <Field label="Account Number" hint={confidence(selected, "account_number")}><input name="account_number" required value={reviewValues.account_number} onChange={(event) => setReviewValues((current) => ({ ...current, account_number: event.target.value }))} /></Field>
             <Field label="Scheme Name"><input name="scheme_name" value={reviewValues.scheme_name} onChange={(event) => setReviewValues((current) => ({ ...current, scheme_name: event.target.value }))} /></Field>
-            <Field label="Trustee"><input name="trustee" value={reviewValues.trustee} onChange={(event) => setReviewValues((current) => ({ ...current, trustee: event.target.value }))} /></Field>
+            <Field label="Trustee（MPF计划受托机构）" hint="不是FC/中介人，不参与Invoice编号"><input name="trustee" value={reviewValues.trustee} onChange={(event) => setReviewValues((current) => ({ ...current, trustee: event.target.value }))} /></Field>
             <Field label="As-of Date" hint={confidence(selected, "as_of_date")}><input name="as_of_date" type="date" required value={reviewValues.as_of_date} onChange={(event) => setReviewValues((current) => ({ ...current, as_of_date: event.target.value }))} /></Field>
             <Field label="Total Balance (HKD)" hint={confidence(selected, "total_balance")}><input name="total_balance" type="number" min="0" step="0.01" required value={reviewValues.total_balance} onChange={(event) => setReviewValues((current) => ({ ...current, total_balance: event.target.value }))} /></Field>
             <div className="readonly-grid"><span><small>累计净供款（仅参考）</small><b>{value(selected, "lifetime_net_contributions") || "未识别"}</b></span><span><small>累计投资盈亏（仅参考）</small><b>{value(selected, "lifetime_gain_loss") || "未识别"}</b></span></div>

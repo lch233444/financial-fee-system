@@ -5,6 +5,14 @@ import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, Stat
 import { todayIso, useApiList } from "../hooks";
 import type { Invoice, Settlement } from "../types";
 
+function invoicePdfDownloadName(invoice: Invoice, language: "zh" | "en") {
+  const safeNumber = (invoice.invoice_number || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/g, "");
+  const readablePrefix = safeNumber.slice(0, 130).replace(/[. ]+$/g, "");
+  return `${readablePrefix || "Invoice"}-record-${invoice.id}_${language}.pdf`;
+}
+
 const ACTIVE_INVOICE_STATUSES = new Set<Invoice["lifecycle_status"]>(["DRAFT", "ISSUING", "ISSUED"]);
 
 type InvoiceCandidateLine = {
@@ -12,6 +20,7 @@ type InvoiceCandidateLine = {
   settlement_id: number;
   platform_name: string;
   account_number: string;
+  scheme_name: string | null;
   start_date: string | null;
   closing_date: string | null;
   service_fee: string;
@@ -58,11 +67,11 @@ function AccountLineTable({ lines }: { lines: InvoiceCandidateLine[] }) {
   return lines.length ? (
     <div className="table-wrap invoice-account-lines">
       <table>
-        <thead><tr><th>Platform</th><th>Sub Account</th><th>账户期间</th><th>锁定Service Fee</th></tr></thead>
+        <thead><tr><th>Platform</th><th>Sub Account / Scheme</th><th>账户期间</th><th>锁定Service Fee</th></tr></thead>
         <tbody>{lines.map((line) => (
           <tr key={`${line.settlement_id}:${line.id}`}>
             <td>{line.platform_name}</td>
-            <td><strong>{line.account_number}</strong><small className="cell-note">Settlement #{line.settlement_id}</small></td>
+            <td><strong>{line.account_number}</strong><small className="cell-note">Scheme（当前资料）· {line.scheme_name?.trim() || "未填写"}</small><small className="cell-note">Settlement #{line.settlement_id}</small></td>
             <td>{line.start_date || "-"}<small className="cell-note">至 {line.closing_date || "-"}</small></td>
             <td><Money value={line.service_fee} /></td>
           </tr>
@@ -123,6 +132,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
             settlement_id: settlement.id,
             platform_name: settlement.platform_name,
             account_number: line.account_number,
+            scheme_name: line.scheme_name,
             start_date: line.start_date,
             closing_date: line.closing_date,
             service_fee: line.service_fee ?? "0.00",
@@ -132,6 +142,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
             settlement_id: settlement.id,
             platform_name: settlement.platform_name,
             account_number: "历史组合",
+            scheme_name: null,
             start_date: settlement.start_date,
             closing_date: settlement.closing_date,
             service_fee: settlement.service_fee,
@@ -244,7 +255,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
       setError("");
       await download(
         `/api/invoices/${selected.id}/pdf?language=${language}`,
-        `${selected.invoice_number}_${language}.pdf`,
+        invoicePdfDownloadName(selected, language),
         { method: "POST" },
       );
     } catch (err) {
@@ -259,7 +270,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
       <div className="split-layout invoices-top">
         <Panel title="建立Invoice Draft" subtitle="系统自动纳入该客户季度全部未占用的Finalized Settlement；不由前端传入金额或来源清单">
           <form className="form-grid" onSubmit={(e) => void createDraft(e)}>
-            <Field label="客户季度Invoice组合"><select name="candidate_key" required disabled={invoices.loading || settlements.loading || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={(event) => setCandidateKey(event.target.value)}><option value="" disabled>请选择</option>{candidateState.candidates.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.clientName} · {candidate.year} Q{candidate.quarter} · {candidate.sourceCount}份Settlement · HKD {moneyFromCents(candidate.totalCents)}</option>)}</select></Field>
+            <Field label="客户季度Invoice组合"><select name="candidate_key" required disabled={invoices.loading || settlements.loading || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={(event) => setCandidateKey(event.target.value)}><option value="" disabled>请选择</option>{candidateState.candidates.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.clientName} · {candidate.year} Q{candidate.quarter} · {candidate.feePlanName} · {candidate.sourceCount}份Settlement · HKD {moneyFromCents(candidate.totalCents)}</option>)}</select></Field>
             <Field label="默认PDF语言"><select name="language" defaultValue="zh"><option value="zh">中文</option><option value="en">English</option></select></Field>
             {candidateState.lateSettlementGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.lateSettlementGroupCount} 个客户季度已有有效Invoice，但后来又出现未纳入的Settlement。迟到Settlement需先更正或作废原Invoice后重开，系统不会建立第二张有效季度Invoice。</div> : null}
             {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结Company/FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
@@ -271,11 +282,11 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
           </form>
         </Panel>
         <Panel title="选中Invoice">
-          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name} · {selected.company_name} · {selected.year} Q{selected.quarter}</span></div><InvoiceLifecycleBadge value={selected.lifecycle_status} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>已收 <Money value={selected.paid_amount} /></span><span>未收 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} /></div><AccountLineTable lines={selected.account_lines} /></div> : <EmptyState title="尚未选择Invoice" detail="从下方列表选择一条记录。" />}
+          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name} · {selected.company_name} · {selected.year} Q{selected.quarter} · {selected.fee_plan_name || "未识别Fee Plan"}</span></div><InvoiceLifecycleBadge value={selected.lifecycle_status} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>已收 <Money value={selected.paid_amount} /></span><span>未收 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} /></div><AccountLineTable lines={selected.account_lines} /></div> : <EmptyState title="尚未选择Invoice" detail="从下方列表选择一条记录。" />}
         </Panel>
       </div>
 
-      {selected?.lifecycle_status === "DRAFT" ? <Panel title="正式出具" subtitle="若Draft建立后又有同组Settlement Finalize，服务端会拒绝漏项签发；请作废本Draft并按最新来源重建。"><form className="inline-form" onSubmit={(e) => void issue(e)}><Field label="Issue Date"><input name="issue_date" type="date" defaultValue={todayIso()} required /></Field><Field label="Due Date" hint="留空则采用Company默认天数"><input name="due_date" type="date" /></Field><Field label="Language"><select name="language" defaultValue={selected.language}><option value="zh">中文</option><option value="en">English</option></select></Field><button className="primary" type="submit">Issued并分配编号</button><button className="danger" type="button" onClick={() => void voidInvoice()}><Ban size={17} />作废Draft</button></form></Panel> : null}
+      {selected?.lifecycle_status === "DRAFT" ? <Panel title="正式出具" subtitle="Invoice编号在出具时生成：Company全名-中介人名字缩写-Issue Date-该Company与中介人的下一连续号；编号一经预留不会复用。"><form className="inline-form" onSubmit={(e) => void issue(e)}><Field label="Issue Date"><input name="issue_date" type="date" defaultValue={todayIso()} required /></Field><Field label="Due Date" hint="留空则采用Company默认天数"><input name="due_date" type="date" /></Field><Field label="Language"><select name="language" defaultValue={selected.language}><option value="zh">中文</option><option value="en">English</option></select></Field><button className="primary" type="submit">Issued并分配编号</button><button className="danger" type="button" onClick={() => void voidInvoice()}><Ban size={17} />作废Draft</button></form><small className="cell-note">请先核对：Company全名为“{selected.company_name}”，中介人为“{selected.fc_name}”，Fee Plan为“{selected.fee_plan_name || "未识别"}”，并逐行核对Platform、Sub Account及当前Scheme。若Draft建立后同组Settlement发生变化，服务端会拒绝漏项签发。</small></Panel> : null}
       {selected?.lifecycle_status === "ISSUING" ? <Panel title="恢复出具中的Invoice" subtitle="系统在预留编号后曾中断。请依据归档文件完整性完成签发，或退回Draft重新出具；已预留编号永久保留且不会复用。"><div className="invoice-recovery"><div><strong>{!selected.issue_recovery ? "恢复状态尚未就绪" : selected.issue_recovery.files_complete ? "中英文归档文件完整" : "归档文件不完整"}</strong><span>{!selected.issue_recovery ? "请刷新Invoice清单；恢复状态可用前不会开放任何操作。" : selected.issue_recovery.files_complete ? "可以完成签发，也可以退回Draft重新核对。" : "不能直接完成签发，请退回Draft后重新生成两份归档PDF。"}</span></div><div className="invoice-actions"><button className="primary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_complete} onClick={() => void recoverIssuing("COMPLETE")}><CheckCircle2 size={17} />{recoveryBusy === "COMPLETE" ? "正在核验..." : "完成签发"}</button><button className="secondary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_return_to_draft} onClick={() => void recoverIssuing("RETURN_TO_DRAFT")}><RotateCcw size={17} />{recoveryBusy === "RETURN_TO_DRAFT" ? "正在退回..." : "退回Draft"}</button></div></div></Panel> : null}
       {selected?.lifecycle_status === "ISSUED" ? <Panel title="PDF与收款"><div className="invoice-actions"><button className="secondary" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />中文PDF</button><button className="secondary" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />English PDF</button><button className="danger" onClick={() => void voidInvoice()} disabled={Number(selected.paid_amount) > 0}><Ban size={17} />作废Invoice</button></div><form className="inline-form payment-form" onSubmit={(e) => void addPayment(e)}><Field label="Payment Date"><input name="payment_date" type="date" defaultValue={todayIso()} required disabled={paymentBusy} /></Field><Field label="Amount (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={paymentBusy} /></Field><Field label="Method"><select name="method" defaultValue="BANK_TRANSFER" disabled={paymentBusy}><option value="BANK_TRANSFER">Bank Transfer</option><option value="CHEQUE">Cheque</option><option value="OTHER">Other</option></select></Field><Field label="Remark"><input name="remark" disabled={paymentBusy} /></Field><button className="primary" type="submit" disabled={paymentBusy || selected.payment_status === "PAID"}>{paymentBusy ? "正在登记..." : "登记Payment"}</button></form></Panel> : null}
       {selected?.lifecycle_status === "VOID" ? <Panel title="作废Invoice档案" subtitle={`作废原因：${selected.void_reason || "未记录"}`}>{selected.invoice_number ? <div className="invoice-actions"><button className="secondary" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />原中文PDF</button><button className="secondary" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />Original English PDF</button></div> : <EmptyState title="Draft在签发前已作废" detail="该记录未分配Invoice编号，因此没有正式归档PDF。" />}</Panel> : null}

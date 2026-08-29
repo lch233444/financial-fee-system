@@ -393,8 +393,14 @@ def _confirm_statement_locked(
         account = db.get(SubAccount, payload.account_id)
         if not account:
             raise HTTPException(status_code=404, detail="指定的Sub Account不存在")
+        if payload.account_platform_id is None:
+            raise HTTPException(status_code=400, detail="明确选择已有Sub Account时必须同时确认Platform")
+        if account.platform_id != payload.account_platform_id:
+            raise HTTPException(status_code=409, detail="所选Sub Account的Platform已变化，请刷新后重新选择")
         if account.account_number != payload.account_number:
             raise HTTPException(status_code=400, detail="Account Number与指定账户不一致")
+    elif payload.account_platform_id is not None:
+        raise HTTPException(status_code=400, detail="未选择Sub Account时不能单独提交Platform")
     else:
         candidates = db.scalars(
             select(SubAccount).where(SubAccount.account_number == payload.account_number)
@@ -489,6 +495,7 @@ def _confirm_statement_locked(
             mode="json",
             exclude={
                 "account_id",
+                "account_platform_id",
                 "ai_conflicts_reviewed",
                 "luna_document_type_reviewed",
                 "holdings",

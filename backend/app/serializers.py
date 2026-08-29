@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .money import money_string
 from .models import Attachment, BalanceSnapshot, Invoice, QuarterlySettlement
+from .services.invoice_archive import invoice_recovery_path_sets
 from .services.storage import is_within
 
 
@@ -70,6 +71,7 @@ def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> 
                 "id": line.id,
                 "account_id": line.account_id,
                 "account_number": line.account.account_number if line.account else None,
+                "scheme_name": line.account.scheme_name if line.account else None,
                 "previous_line_id": line.previous_line_id,
                 "start_date": line.start_date.isoformat(),
                 "closing_date": line.closing_date.isoformat(),
@@ -119,14 +121,17 @@ def invoice_dict(item: Invoice) -> dict:
     if item.lifecycle_status == "ISSUING":
         settings = get_settings()
         pdf_root = settings.data_root / "output" / "pdf"
-        expected_paths = (
-            [pdf_root / f"{item.invoice_number}_{language}.pdf" for language in ("zh", "en")]
+        recovery_path_sets = (
+            invoice_recovery_path_sets(item.invoice_number, pdf_root)
             if item.invoice_number
-            else []
+            else ()
         )
-        files_complete = len(expected_paths) == 2 and all(
-            path.is_file() and is_within(path, pdf_root) for path in expected_paths
-        )
+        complete_path_sets = [
+            path_set
+            for path_set in recovery_path_sets
+            if all(path.is_file() and is_within(path, pdf_root) for path in path_set.values())
+        ]
+        files_complete = len(complete_path_sets) == 1
         issue_recovery = {
             "files_complete": files_complete,
             "can_complete": files_complete,
@@ -152,6 +157,11 @@ def invoice_dict(item: Invoice) -> dict:
                 "settlement_id": line.source_settlement_id,
                 "platform_name": line.platform_name_snapshot,
                 "account_number": line.account_number_snapshot,
+                "scheme_name": (
+                    line.source_account_line.account.scheme_name
+                    if line.source_account_line and line.source_account_line.account
+                    else None
+                ),
                 "start_date": line.start_date.isoformat() if line.start_date else None,
                 "closing_date": line.closing_date.isoformat() if line.closing_date else None,
                 "service_fee": money_string(line.service_fee_cents),

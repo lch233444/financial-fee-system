@@ -153,7 +153,29 @@ def generate_invoice_pdf(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     labels = _labels(language)
-    font = "Helvetica" if language == "en" else _register_chinese_font()
+    company = invoice.company
+    client = invoice.client
+    fee_plan = invoice.fee_plan
+    dynamic_text = "\n".join(
+        str(value or "")
+        for value in (
+            company.name,
+            company.address,
+            company.contact,
+            company.bank_information,
+            company.cheque_information,
+            client.name,
+            fee_plan.name,
+            invoice.invoice_number,
+            *(line.platform_name_snapshot for line in invoice.lines),
+            *(line.account_number_snapshot for line in invoice.lines),
+        )
+    )
+    font = (
+        _register_chinese_font()
+        if language != "en" or not dynamic_text.isascii()
+        else "Helvetica"
+    )
     bold_font = "Helvetica-Bold" if font == "Helvetica" else font
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
@@ -191,9 +213,14 @@ def generate_invoice_pdf(
         leading=10,
         textColor=MUTED,
     )
-    company = invoice.company
-    client = invoice.client
-    fee_plan = invoice.fee_plan
+    invoice_number_style = ParagraphStyle(
+        "invoice-number",
+        parent=normal_style,
+        fontSize=7.5,
+        leading=9,
+        wordWrap="CJK",
+        splitLongWords=True,
+    )
 
     def footer(canvas, doc) -> None:
         canvas.saveState()
@@ -231,7 +258,12 @@ def generate_invoice_pdf(
     issue_date = f"{invoice.issue_date:%d/%m/%Y}" if invoice.issue_date else "-"
     due_date = f"{invoice.due_date:%d/%m/%Y}" if invoice.due_date else "-"
     meta_rows = [
-        [labels["client"], client.name, labels["invoice_no"], invoice.invoice_number or "-"],
+        [
+            labels["client"],
+            client.name,
+            labels["invoice_no"],
+            Paragraph(escape(invoice.invoice_number or "-"), invoice_number_style),
+        ],
         [labels["fee_plan"], fee_plan.name, labels["quarter"], f"{invoice.year} Q{invoice.quarter}"],
         [labels["issue_date"], issue_date, labels["due_date"], due_date],
     ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
@@ -11,9 +12,22 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import ExportRecord, FeePlan, Invoice, InvoiceIssueAttempt, InvoiceSource
+from app.models import (
+    AuditEvent,
+    ExportRecord,
+    FeePlan,
+    Invoice,
+    InvoiceIssueAttempt,
+    InvoiceSequence,
+    InvoiceSource,
+)
 from app.routes import invoices as invoices_module
 from app.services.calculation import quarter_dates
+from app.services.invoice_archive import (
+    invoice_archive_paths,
+    invoice_recovery_path_sets,
+    legacy_invoice_archive_paths,
+)
 from app.services.pdf_invoice import _money
 
 
@@ -94,6 +108,7 @@ def _group(
                 "platform_id": platform["id"],
                 "fee_plan_id": plan["id"],
                 "account_number": f"ACC-{suffix}-{index}",
+                "scheme_name": f"Scheme {suffix} {index}",
                 "start_date": "2025-01-01",
                 "status": "ACTIVE",
             },
@@ -166,6 +181,271 @@ def _pdf_text(content: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
 
 
+def test_full_company_name_number_uses_safe_internal_archive_and_skips_reserved_collision(
+    monkeypatch,
+) -> None:
+    rendered_paths: list[str] = []
+
+    def write_pdf(*, output_path, **_kwargs):
+        rendered_paths.append(str(output_path))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"%PDF-1.4\nfull-name invoice\n%%EOF")
+        return output_path
+
+    monkeypatch.setattr(invoices_module, "generate_invoice_pdf", write_pdf)
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        company_name = "Alpha/香港: Advisory Limited"
+        data = _group(client, "FULLNAME829", platform_count=1, company_name=company_name)
+        _finalized_settlement(client, data, 0, year=2026, quarter=1)
+        draft = _draft(client, data, year=2026, quarter=1).json()
+        first_candidate = f"{company_name}-{data['fc']['code']}-20260405-1"
+        with SessionLocal() as db:
+            db.add(
+                InvoiceIssueAttempt(
+                    invoice_id=draft["id"],
+                    invoice_number=first_candidate,
+                    status="FAILED",
+                    details="simulated historical reservation collision",
+                )
+            )
+            db.commit()
+
+        issued = client.post(
+            f"/api/invoices/{draft['id']}/issue",
+            json={"issue_date": "2026-04-05", "language": "zh"},
+        )
+        assert issued.status_code == 200, issued.text
+        expected_number = f"{company_name}-{data['fc']['code']}-20260405-2"
+        assert issued.json()["invoice_number"] == expected_number
+
+        pdf_root = get_settings().data_root / "output" / "pdf"
+        expected_paths = invoice_archive_paths(expected_number, pdf_root)
+        assert len(rendered_paths) == 2
+        assert all(Path(path).parent == pdf_root for path in rendered_paths)
+        assert all(Path(path).name.startswith(".invoice-") for path in rendered_paths)
+        assert all(path.parent == pdf_root and path.name.startswith("invoice-") for path in expected_paths.values())
+        assert all(path.is_file() for path in expected_paths.values())
+
+        downloaded = client.post(f"/api/invoices/{draft['id']}/pdf?language=zh")
+        assert downloaded.status_code == 200, downloaded.text
+        disposition = downloaded.headers["content-disposition"]
+        assert "Alpha/" not in disposition
+        assert f"record-{draft['id']}" in disposition
+        assert ".pdf" in disposition
+
+        with SessionLocal() as db:
+            attempts = db.scalars(
+                select(InvoiceIssueAttempt)
+                .where(InvoiceIssueAttempt.invoice_id == draft["id"])
+                .order_by(InvoiceIssueAttempt.id)
+            ).all()
+            assert [attempt.status for attempt in attempts] == ["FAILED", "COMPLETED"]
+            assert [attempt.invoice_number for attempt in attempts] == [first_candidate, expected_number]
+
+
+def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monkeypatch) -> None:
+    def write_pdf(*, output_path, **_kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"%PDF-1.4\nInvoice table collision\n%%EOF")
+        return output_path
+
+    monkeypatch.setattr(invoices_module, "generate_invoice_pdf", write_pdf)
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        blocker_data = _group(client, "BLOCK829", platform_count=1)
+        _finalized_settlement(client, blocker_data, 0, year=2026, quarter=1)
+        blocker_draft = _draft(client, blocker_data, year=2026, quarter=1).json()
+
+        data = _group(client, "INVCOLL829", platform_count=1, company_name="Invoice Collision Company")
+        _finalized_settlement(client, data, 0, year=2026, quarter=1)
+        draft = _draft(client, data, year=2026, quarter=1).json()
+        first_candidate = f"{data['company']['name']}-{data['fc']['code']}-20260405-1"
+        with SessionLocal() as db:
+            blocker = db.get(Invoice, blocker_draft["id"])
+            blocker.invoice_number = first_candidate
+            blocker.issue_date = date(2026, 4, 5)
+            blocker.due_date = date(2026, 4, 19)
+            blocker.lifecycle_status = "ISSUING"
+            db.commit()
+
+        issued = client.post(
+            f"/api/invoices/{draft['id']}/issue",
+            json={"issue_date": "2026-04-05", "language": "en"},
+        )
+        assert issued.status_code == 200, issued.text
+        assert issued.json()["invoice_number"] == (
+            f"{data['company']['name']}-{data['fc']['code']}-20260405-2"
+        )
+
+        with SessionLocal() as db:
+            sequence = db.scalar(
+                select(InvoiceSequence).where(
+                    InvoiceSequence.company_id == data["company"]["id"],
+                    InvoiceSequence.fc_id == data["fc"]["id"],
+                )
+            )
+            assert sequence is not None
+            assert sequence.last_number == 2
+            events = db.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "INVOICE_NUMBER_COLLISION_SKIPPED",
+                    AuditEvent.entity_type == "INVOICE",
+                    AuditEvent.entity_id == draft["id"],
+                )
+            ).all()
+            assert len(events) == 1
+            assert events[0].details_json == {
+                "invoice_number": first_candidate,
+                "sequence": 1,
+            }
+
+
+def test_unsafe_full_name_issuing_recovery_removes_hashed_partial_files() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        company_name = "Recovery/香港: Advisory Limited"
+        data = _group(client, "RECNAME829", platform_count=1, company_name=company_name)
+        _finalized_settlement(client, data, 0, year=2026, quarter=2)
+        draft = _draft(client, data, year=2026, quarter=2).json()
+        invoice_number = f"{company_name}-{data['fc']['code']}-20260705-1"
+        with SessionLocal() as db:
+            invoice = db.get(Invoice, draft["id"])
+            invoice.invoice_number = invoice_number
+            invoice.issue_date = date(2026, 7, 5)
+            invoice.due_date = date(2026, 7, 19)
+            invoice.lifecycle_status = "ISSUING"
+            db.add(
+                InvoiceIssueAttempt(
+                    invoice_id=invoice.id,
+                    invoice_number=invoice_number,
+                    status="RESERVED",
+                    details="simulated interrupted full-name issue",
+                )
+            )
+            db.commit()
+
+        pdf_root = get_settings().data_root / "output" / "pdf"
+        paths = invoice_archive_paths(invoice_number, pdf_root)
+        partial = paths["zh"]
+        partial.parent.mkdir(parents=True, exist_ok=True)
+        partial.write_bytes(b"%PDF-1.4\npartial\n%%EOF")
+        temp = partial.with_name(f".{partial.name}.interrupted.tmp")
+        temp.write_bytes(b"partial")
+
+        recovered = client.post(
+            f"/api/invoices/{draft['id']}/recover-issuing",
+            json={"action": "RETURN_TO_DRAFT"},
+        )
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["lifecycle_status"] == "DRAFT"
+        assert recovered.json()["invoice_number"] is None
+        assert not partial.exists()
+        assert not temp.exists()
+
+
+def test_issuing_recovery_completes_unique_hashed_archive_pair() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        company_name = "Hash/香港 Recovery Company"
+        data = _group(client, "HASHREC829", platform_count=1, company_name=company_name)
+        _finalized_settlement(client, data, 0, year=2026, quarter=2)
+        draft = _draft(client, data, year=2026, quarter=2).json()
+        invoice_number = f"{company_name}-{data['fc']['code']}-20260705-1"
+        with SessionLocal() as db:
+            invoice = db.get(Invoice, draft["id"])
+            invoice.invoice_number = invoice_number
+            invoice.issue_date = date(2026, 7, 5)
+            invoice.due_date = date(2026, 7, 19)
+            invoice.lifecycle_status = "ISSUING"
+            db.add(
+                InvoiceIssueAttempt(
+                    invoice_id=invoice.id,
+                    invoice_number=invoice_number,
+                    status="RESERVED",
+                    details="simulated interrupted hashed issue",
+                )
+            )
+            db.commit()
+
+        pdf_root = get_settings().data_root / "output" / "pdf"
+        paths = invoice_archive_paths(invoice_number, pdf_root)
+        for language, path in paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"%PDF-1.4\ncomplete {language}\n%%EOF".encode())
+
+        listed = next(item for item in client.get("/api/invoices").json() if item["id"] == draft["id"])
+        assert listed["issue_recovery"]["files_complete"] is True
+        completed = client.post(
+            f"/api/invoices/{draft['id']}/recover-issuing",
+            json={"action": "COMPLETE"},
+        )
+        assert completed.status_code == 200, completed.text
+        assert completed.json()["lifecycle_status"] == "ISSUED"
+        with SessionLocal() as db:
+            invoice = db.get(Invoice, draft["id"])
+            assert invoice.pdf_paths_json == {language: str(path) for language, path in paths.items()}
+            exports = db.scalars(
+                select(ExportRecord).where(
+                    ExportRecord.entity_type == "INVOICE",
+                    ExportRecord.entity_id == draft["id"],
+                )
+            ).all()
+            assert {record.stored_path for record in exports} == {str(path) for path in paths.values()}
+            assert all(len(record.sha256) == 64 for record in exports)
+
+
+def test_issuing_recovery_rejects_dual_complete_archives_and_return_cleans_both() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _group(client, "DUAL829", platform_count=1)
+        _finalized_settlement(client, data, 0, year=2026, quarter=2)
+        draft = _draft(client, data, year=2026, quarter=2).json()
+        invoice_number = "CDUAL829-FDUAL829-20260705-1"
+        with SessionLocal() as db:
+            invoice = db.get(Invoice, draft["id"])
+            invoice.invoice_number = invoice_number
+            invoice.issue_date = date(2026, 7, 5)
+            invoice.due_date = date(2026, 7, 19)
+            invoice.lifecycle_status = "ISSUING"
+            db.add(
+                InvoiceIssueAttempt(
+                    invoice_id=invoice.id,
+                    invoice_number=invoice_number,
+                    status="RESERVED",
+                    details="simulated dual archive state",
+                )
+            )
+            db.commit()
+
+        pdf_root = get_settings().data_root / "output" / "pdf"
+        path_sets = invoice_recovery_path_sets(invoice_number, pdf_root)
+        assert len(path_sets) == 2
+        temp_paths: list[Path] = []
+        for path_set in path_sets:
+            for path in path_set.values():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"%PDF-1.4\ndual complete\n%%EOF")
+                temp_path = path.with_name(f".{path.name}.interrupted.tmp")
+                temp_path.write_bytes(b"partial")
+                temp_paths.append(temp_path)
+
+        listed = next(item for item in client.get("/api/invoices").json() if item["id"] == draft["id"])
+        assert listed["issue_recovery"]["files_complete"] is False
+        assert listed["issue_recovery"]["can_complete"] is False
+        rejected = client.post(
+            f"/api/invoices/{draft['id']}/recover-issuing",
+            json={"action": "COMPLETE"},
+        )
+        assert rejected.status_code == 409
+        assert "同时发现哈希归档和旧版原名双语归档" in rejected.json()["detail"]
+        with SessionLocal() as db:
+            assert db.get(Invoice, draft["id"]).lifecycle_status == "ISSUING"
+
+        returned = client.post(
+            f"/api/invoices/{draft['id']}/recover-issuing",
+            json={"action": "RETURN_TO_DRAFT"},
+        )
+        assert returned.status_code == 200, returned.text
+        assert not any(path.exists() for path_set in path_sets for path in path_set.values())
+        assert not any(path.exists() for path in temp_paths)
+
+
 def test_cross_platform_invoice_freezes_all_lines_and_releases_all_sources_on_void() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _group(client, "AGG829")
@@ -189,6 +469,10 @@ def test_cross_platform_invoice_freezes_all_lines_and_releases_all_sources_on_vo
         assert {line["platform_name"] for line in invoice["account_lines"]} == {
             data["platforms"][0]["name"],
             data["platforms"][1]["name"],
+        }
+        assert {line["scheme_name"] for line in invoice["account_lines"]} == {
+            "Scheme AGG829 1",
+            "Scheme AGG829 2",
         }
         assert _draft(client, data, year=2026, quarter=1).status_code == 409
         assert client.post(
@@ -421,9 +705,32 @@ def test_settlement_and_invoice_pdfs_use_frozen_company_after_client_reassignmen
         invoice_text = _pdf_text(invoice_pdf.content)
         normalized_invoice_text = " ".join(invoice_text.split())
         assert data["company"]["name"] in normalized_invoice_text
+        assert "".join(issued.json()["invoice_number"].split()) in "".join(invoice_text.split())
         assert 'ORIGINAL <BANK> & "Desk" PDF829' in normalized_invoice_text
         assert replacement_company["name"] not in invoice_text
         assert "NEW BANK PDF829" not in invoice_text
+
+
+def test_bilingual_invoice_pdfs_extract_chinese_company_and_full_invoice_number() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        company_name = "香港顾问有限公司"
+        data = _group(client, "CJK829", platform_count=1, company_name=company_name)
+        _finalized_settlement(client, data, 0, year=2026, quarter=3)
+        draft = _draft(client, data, year=2026, quarter=3).json()
+        issued = client.post(
+            f"/api/invoices/{draft['id']}/issue",
+            json={"issue_date": "2026-10-05", "language": "en"},
+        )
+        assert issued.status_code == 200, issued.text
+        invoice_number = issued.json()["invoice_number"]
+        assert invoice_number == f"{company_name}-{data['fc']['code']}-20261005-1"
+
+        for language in ("zh", "en"):
+            response = client.post(f"/api/invoices/{draft['id']}/pdf?language={language}")
+            assert response.status_code == 200, response.text
+            normalized_text = "".join(_pdf_text(response.content).split())
+            assert company_name in normalized_text
+            assert invoice_number in normalized_text
 
 
 def test_pdf_money_format_preserves_cents_above_float_precision_limit() -> None:
@@ -461,13 +768,23 @@ def test_issuing_recovery_requires_both_pdfs_and_records_hashes() -> None:
 
         pdf_root = get_settings().data_root / "output" / "pdf"
         pdf_root.mkdir(parents=True, exist_ok=True)
-        return_zh = pdf_root / "CRET829-FRET829-202501-901_zh.pdf"
-        return_zh.write_bytes(b"%PDF-1.4\npartial\n%%EOF")
-        complete_paths = [
-            pdf_root / "CCMP829-FCMP829-202501-902_zh.pdf",
-            pdf_root / "CCMP829-FCMP829-202501-902_en.pdf",
+        return_number = "CRET829-FRET829-202501-901"
+        return_hash_paths = invoice_archive_paths(return_number, pdf_root)
+        return_legacy_paths = legacy_invoice_archive_paths(return_number, pdf_root)
+        assert return_legacy_paths is not None
+        return_legacy_paths["zh"].write_bytes(b"%PDF-1.4\nlegacy partial\n%%EOF")
+        return_hash_paths["en"].write_bytes(b"%PDF-1.4\nhash partial\n%%EOF")
+        cleanup_temp_paths = [
+            return_hash_paths["zh"].with_name(f".{return_hash_paths['zh'].name}.interrupted.tmp"),
+            return_legacy_paths["en"].with_name(f".{return_legacy_paths['en'].name}.interrupted.tmp"),
         ]
-        for path in complete_paths:
+        for path in cleanup_temp_paths:
+            path.write_bytes(b"partial")
+
+        complete_number = "CCMP829-FCMP829-202501-902"
+        complete_legacy_paths = legacy_invoice_archive_paths(complete_number, pdf_root)
+        assert complete_legacy_paths is not None
+        for path in complete_legacy_paths.values():
             path.write_bytes(b"%PDF-1.4\ncomplete\n%%EOF")
 
         invoices = {item["id"]: item for item in client.get("/api/invoices").json()}
@@ -490,7 +807,12 @@ def test_issuing_recovery_requires_both_pdfs_and_records_hashes() -> None:
         assert returned.status_code == 200, returned.text
         assert returned.json()["lifecycle_status"] == "DRAFT"
         assert returned.json()["invoice_number"] is None
-        assert not return_zh.exists()
+        assert not any(
+            path.exists()
+            for path_set in invoice_recovery_path_sets(return_number, pdf_root)
+            for path in path_set.values()
+        )
+        assert not any(path.exists() for path in cleanup_temp_paths)
 
         completed = client.post(
             f"/api/invoices/{complete_draft['id']}/recover-issuing", json={"action": "COMPLETE"}
@@ -499,6 +821,9 @@ def test_issuing_recovery_requires_both_pdfs_and_records_hashes() -> None:
         assert completed.json()["lifecycle_status"] == "ISSUED"
         assert completed.json()["issue_recovery"] is None
         with SessionLocal() as db:
+            assert db.get(Invoice, complete_draft["id"]).pdf_paths_json == {
+                language: str(path) for language, path in complete_legacy_paths.items()
+            }
             exports = db.scalars(
                 select(ExportRecord).where(
                     ExportRecord.entity_type == "INVOICE",
@@ -591,8 +916,12 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
             assert failed_attempt.completed_at is not None
             failed_number = failed_attempt.invoice_number
         pdf_root = get_settings().data_root / "output" / "pdf"
-        assert not list(pdf_root.glob(f".{failed_number}_*.pdf.*.tmp"))
-        assert not list(pdf_root.glob(f"{failed_number}_*.pdf"))
+        failed_paths = invoice_archive_paths(failed_number, pdf_root)
+        assert not any(path.exists() for path in failed_paths.values())
+        for final_path in failed_paths.values():
+            assert not list(pdf_root.glob(f".{final_path.name}.*.tmp"))
+        legacy_paths = legacy_invoice_archive_paths(failed_number, pdf_root)
+        assert legacy_paths is None
 
         def write_pdf(*, output_path, **_kwargs):
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -645,9 +974,12 @@ def test_legacy_missing_pdf_uses_atomic_single_writer_fallback(monkeypatch) -> N
         failed = client.post(f"/api/invoices/{draft['id']}/pdf?language=en")
         assert failed.status_code == 500
         pdf_root = get_settings().data_root / "output" / "pdf"
-        final_path = pdf_root / f"{invoice_number}_en.pdf"
+        final_path = invoice_archive_paths(invoice_number, pdf_root)["en"]
+        legacy_paths = legacy_invoice_archive_paths(invoice_number, pdf_root)
+        assert legacy_paths is not None
         assert not final_path.exists()
-        assert not list(pdf_root.glob(f".{invoice_number}_en.pdf.*.tmp"))
+        assert not list(pdf_root.glob(f".{final_path.name}.*.tmp"))
+        assert not legacy_paths["en"].exists()
 
         render_calls: list[str] = []
 
@@ -667,6 +999,7 @@ def test_legacy_missing_pdf_uses_atomic_single_writer_fallback(monkeypatch) -> N
         assert statuses == [200, 200]
         assert len(render_calls) == 1
         assert final_path.is_file()
+        assert not legacy_paths["en"].exists()
         with SessionLocal() as db:
             exports = db.scalars(
                 select(ExportRecord).where(
@@ -702,7 +1035,10 @@ def test_archived_pdf_download_rejects_tampering_and_missing_audit_record(monkey
 
         with SessionLocal() as db:
             invoice = db.get(Invoice, draft["id"])
-            archive_path = get_settings().data_root / "output" / "pdf" / f"{invoice.invoice_number}_zh.pdf"
+            archive_path = invoice_archive_paths(
+                invoice.invoice_number,
+                get_settings().data_root / "output" / "pdf",
+            )["zh"]
         original_content = archive_path.read_bytes()
         archive_path.write_bytes(b"%PDF-1.4\ntampered invoice\n%%EOF")
         tampered = client.post(f"/api/invoices/{draft['id']}/pdf?language=zh")

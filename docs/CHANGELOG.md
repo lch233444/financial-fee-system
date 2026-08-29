@@ -2,6 +2,37 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.12 - 2026-08-29（Windows运行版）
+
+### Invoice编号与安全归档
+
+- 用户于2026-08-29纠正Invoice编号第一段：必须使用Company全名，不使用Company Code；Company Code继续保留为基础资料内部标识。新编号格式为`Company全名-中介人名字缩写-Issue Date(YYYYMMDD)-连续号`。
+- 连续号继续按同一Company+FC组合持续递增，不按日期重置；切换格式不会重置现有InvoiceSequence，历史Issued、Void和签发尝试编号不改写、不批量迁移。
+- 编号预留同时检查Invoice及InvoiceIssueAttempt中的历史号码。若新全名格式与既有正式号或失败预留号碰撞，系统跳过该序号、写入`INVOICE_NUMBER_COLLISION_SKIPPED`审计，再分配下一号码；被跳过号码不复用。
+- 业务Invoice编号不再直接作为内部PDF路径。0.2.12新签发及旧Issued缺档补建统一以完整业务号的SHA-256作为内部归档名，避免Windows大小写不敏感路径碰撞；旧版已登记PDF路径照常读取，遗留ISSUING的安全原名仍可完成或清理，若哈希/原名两套归档同时完整则拒绝自动判定。下载文件名另做Windows安全化并包含记录ID，PDF正文和数据库仍保留完整业务编号。
+- 中英文Invoice均使用可显示中文的Unicode字体渲染动态业务资料；Company全名或编号含中文时，英文版PDF仍须完整显示，不得出现缺字替代符。
+- 本批不改变数据库Schema，也不新增Alembic迁移。正式运行仍为SQLite；现有Invoice编号列具TEXT affinity，不会按声明的`VARCHAR(100)`截断本批全名编号。若未来更换数据库，必须先重新评估并扩宽编号字段，不能直接沿用当前长度声明。
+
+### Sub Account、账单入账与季度结算追踪
+
+- “客户与账户”改为逐Client完整显示每个Sub Account的Platform、Account Number、Scheme、Fee Plan、管理期间、状态和备注；下拉选择统一显示`Client · Platform · Account Number · Scheme`，避免不同Platform使用相同Account Number时无法区分。
+- 已确认Statement Import页面显示关联Client、Platform、Sub Account、Scheme、Trustee、Fee Plan、Snapshot日期/金额、Closing资格、持仓及Snapshot审计编号，并提示DRAFT资料补全或下一步人工结算。
+- “资金与余额”增加Client、Platform和Sub Account三级筛选；余额快照显示来源、持仓、Closing资格和原账单入口，资金流水与快照均显示完整账户身份。季度结算的内部Excel候选及历史Settlement列表逐行显示Sub Account号码和Scheme；Invoice候选、已选组合和明细显示Fee Plan及`Scheme（当前资料）`。跨Platform同号账户不再只显示无法区分的Account Number。
+- 账单复核的已有Sub Account改为受控选择；每次切换导入记录均强制清空，确认请求同时提交并核对所选账户的Platform ID。凭证目标同样改为受控选择，切换Snapshot/Transaction或任一账户筛选时清空旧目标，避免不同实体相同数字ID造成错挂凭证。
+- 公开只读列表增强：`GET /api/transactions`增加`client_id/client_name`、`platform_id/platform_name`、`fee_plan_id/fee_plan_name`和`scheme_name`；`GET /api/balance-snapshots`增加同组账户身份字段以及`statement_import_id`和`holdings`。写入结构和数据库Schema不变。
+- 明确数据链：余额账单经财务确认后保留StatementImport原件、OCR/Luna候选、人工确认值和审计记录，并建立`source_type=STATEMENT_IMPORT`的BalanceSnapshot；它随后出现在资金页和季度结算Snapshot选项中，但不会自动建立Contribution/Withdrawal、不会自动Calculate或Finalize Settlement。供款记录只能保留为凭证/摘要，资金流水仍须财务在具体Sub Account下人工登记并关联凭证。
+- 非季末且非实际退出日的导入快照只作普通余额记录，不能作为Closing；新建的DRAFT Client/Sub Account须先补全Company、FC、Platform、Fee Plan和管理日期并激活，ACTIVE Sub Account缺少开始管理日期时服务端直接拒绝。补全Sub Account时可录入实际结束日期；结束日期不得早于该账户任何未作废Settlement的Closing Date，服务端同时重核未被Settlement引用的导入Snapshot资格并留审计，会改变已引用Snapshot时同样拒绝修改。Calculate与Finalize均再次强制Client及全部Sub Account为ACTIVE且具备开始管理日期。
+
+### 验收与发布状态
+
+- 新增编号归档、全名/特殊字符、碰撞跳号、双语Unicode PDF、账单确认追踪、真实合成原件下载、退出日Snapshot→Settlement闭环、ACTIVE/开始日期的Calculate及Finalize状态门槛、结算后结束日期保护、跨Platform同号及只读API字段测试；源码完整回归168/168通过，前端TypeScript及生产构建通过。
+- Windows最终候选包于2026-08-29 16:41:44 +08:00构建；写入`构建结果.txt`前共397个文件、613,244,167字节，写入后共398个文件、613,244,868字节。主EXE SHA-256为`3B042DD705453BA75DA6A45427CCC3CC13CD50B81D953254C7CFBC0DE90369C9`，ProductVersion/FileVersion为0.2.12/0.2.12.0；Excel母版SHA-256保持不变。
+- 候选EXE在8001端口及F盘隔离合成数据根完成完整流程：同一Company全名/FC先后签发的编号证明Issue Date正确且连续号不按日期重置；跨Platform同号Sub Account在导入、资金、结算和Invoice界面均可区分，Statement确认只生成可追溯BalanceSnapshot且不自动生成Transaction或Settlement。补充验收确认ACTIVE账户缺少开始日期返回400、已Finalized季度后把结束日期提前到Closing Date之前返回409，Invoice返回并显示Fee Plan及当前Scheme。中英文PDF的中文全名及换行编号完成渲染检查；8个页面无横向溢出、浏览器控制台无告警错误。
+- 正式切换前由0.2.11创建并验证`financial_system_backup_20260829_154800.zip`，共1,513,851字节，SHA-256为`149CF48FF11B945A1BCCD0B2E1485A0F95A6F268B07E80A52901E7ED4049306D`；0.2.12在其F盘副本上启动并安全退出后数据库哈希仍与Manifest一致。最终构建替换前又由当时运行的0.2.12创建`financial_system_backup_20260829_162909.zip`，共1,513,852字节，SHA-256为`0C2C1DA5E30AED9030CB6FD72EE9710243F4879059A652C71F5AE45D00B655AA`；两份备份的ZIP、Manifest、4个文件记录及逐文件哈希均通过。数据库结构校验为Alembic head `c4b7f1d92e60`、`integrity_check=ok`、外键违规0、Trigger 19个；校验没有输出客户字段或文件内容。
+- 0.2.12已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.12_20260829\FinancialFeeSystem`接管8000端口及既有独立数据根。正式健康检查返回0.2.12，进程路径、45条OpenAPI路径、最新前端资源、入口禁缓存、EXE版本/哈希、数据库head/完整性/外键及19个Trigger均通过。
+- 旧0.2.11正式目录的399个文件、613,185,497字节已移入Windows回收站；固定`release`候选、`backend/build`、`backend/FinancialFeeSystem.spec`、`frontend/dist`及本批合成测试、PDF渲染、备份预检和Luna隔离临时目标均已清理。本机活动运行目录只保留0.2.12正式版，独立业务数据和完整备份继续保留。
+- 本批不修改Excel母版，不读取真实客户资料，也不调用Luna处理真实文件。
+
 ## 0.2.11 - 2026-08-28（Windows运行版）
 
 ### Invoice编号与基础设置

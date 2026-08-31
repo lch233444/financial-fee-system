@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -38,6 +38,20 @@ def _require_basis_point_precision(value: Decimal) -> Decimal:
     if value != rounded:
         raise ValueError("Fee Rate百分比最多只能有两位小数")
     return rounded
+
+
+def _require_meaningful_reason(value: str) -> str:
+    reason = value.strip()
+    if len(reason) < 2:
+        raise ValueError("原因去除首尾空格后至少需要2个字符")
+    return reason
+
+
+def _require_meaningful_payment_method(value: str) -> str:
+    method = value.strip()
+    if not method:
+        raise ValueError("付款或退款方式不能为空")
+    return method
 
 
 class CompanyCreate(BaseModel):
@@ -207,17 +221,106 @@ class InvoiceIssueRecoveryRequest(BaseModel):
 class VoidRequest(BaseModel):
     reason: str = Field(min_length=2, max_length=500)
 
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
 
 class PaymentCreate(BaseModel):
     payment_date: date
     amount: Decimal = Field(gt=0)
     method: str = Field(min_length=1, max_length=80)
+    proof_attachment_id: int = Field(gt=0)
+    company_difference: Decimal = Field(default=Decimal("0"), ge=0)
+    difference_reason: str | None = Field(default=None, max_length=500)
     remark: str | None = None
+
+    @field_validator("amount", "company_difference")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        return _require_meaningful_payment_method(value)
+
+    @model_validator(mode="after")
+    def validate_difference_reason(self) -> PaymentCreate:
+        reason = self.difference_reason.strip() if self.difference_reason else None
+        if self.company_difference > 0 and not reason:
+            raise ValueError("公司承担差额时必须填写原因")
+        if self.company_difference == 0 and reason:
+            raise ValueError("公司承担差额为0时不能填写差额原因")
+        self.difference_reason = reason
+        return self
+
+
+class InvoiceCorrectionCreate(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
+
+class RetainedPaymentAllocation(BaseModel):
+    payment_id: int = Field(gt=0)
+    amount: Decimal = Field(ge=0)
 
     @field_validator("amount")
     @classmethod
     def validate_amount_precision(cls, value: Decimal) -> Decimal:
         return _require_cent_precision(value)
+
+
+class PaymentRefundInput(BaseModel):
+    payment_id: int = Field(gt=0)
+    refund_date: date
+    amount: Decimal = Field(gt=0)
+    method: str = Field(min_length=1, max_length=80)
+    proof_attachment_id: int = Field(gt=0)
+    reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        return _require_meaningful_payment_method(value)
+
+
+class InvoiceCorrectionComplete(BaseModel):
+    replacement_invoice_id: int = Field(gt=0)
+    retained_allocations: list[RetainedPaymentAllocation] = Field(default_factory=list)
+    refunds: list[PaymentRefundInput] = Field(default_factory=list)
+    company_difference: Decimal = Field(default=Decimal("0"), ge=0)
+    difference_reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("company_difference")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
+    @model_validator(mode="after")
+    def validate_difference_reason(self) -> InvoiceCorrectionComplete:
+        reason = self.difference_reason.strip() if self.difference_reason else None
+        if self.company_difference > 0 and not reason:
+            raise ValueError("公司承担差额时必须填写原因")
+        if self.company_difference == 0 and reason:
+            raise ValueError("公司承担差额为0时不能填写差额原因")
+        self.difference_reason = reason
+        return self
 
 
 class StatementHoldingInput(BaseModel):

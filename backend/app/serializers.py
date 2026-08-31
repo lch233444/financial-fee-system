@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .money import money_string
-from .models import Attachment, BalanceSnapshot, Invoice, QuarterlySettlement
+from .models import Attachment, BalanceSnapshot, Invoice, InvoiceCorrection, QuarterlySettlement
 from .services.invoice_archive import invoice_recovery_path_sets
 from .services.storage import is_within
 
@@ -40,6 +40,8 @@ def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> 
         "fc_id": item.fc_id,
         "fc_name": item.fc.name if item.fc else None,
         "previous_settlement_id": item.previous_settlement_id,
+        "version_no": item.version_no,
+        "replaces_settlement_id": item.replaces_settlement_id,
         "platform_id": item.platform_id,
         "platform_name": item.platform.name if item.platform else None,
         "fee_plan_id": item.fee_plan_id,
@@ -66,6 +68,7 @@ def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> 
         "formula_version": item.formula_version,
         "calculation_mode": item.calculation_mode,
         "status": item.status,
+        "void_reason": item.void_reason,
         "account_lines": [
             {
                 "id": line.id,
@@ -100,20 +103,85 @@ def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> 
     }
 
 
+def invoice_accounting_cents(item: Invoice) -> tuple[int, int, int]:
+    """Return net cash allocation, company adjustment, and outstanding cents."""
+
+    paid_cents = sum(
+        allocation.amount_cents if allocation.entry_type == "APPLY" else -allocation.amount_cents
+        for allocation in item.payment_allocations
+        if _allocation_is_effective(allocation)
+    )
+    adjustment_cents = sum(
+        adjustment.amount_cents
+        for adjustment in item.adjustments
+        if _adjustment_is_effective(adjustment)
+    )
+    outstanding_cents = max(item.amount_cents - paid_cents - adjustment_cents, 0)
+    return paid_cents, adjustment_cents, outstanding_cents
+
+
+def _allocation_is_effective(allocation) -> bool:
+    # Opening a correction immediately reverses the original allocation.  New
+    # APPLY rows are only accounting-effective when that correction completes;
+    # this keeps an OPEN replacement financially blank even if a direct SQL
+    # writer commits pending rows between the two lifecycle transitions.
+    return (
+        allocation.entry_type == "REVERSAL"
+        or allocation.correction_id is None
+        or (allocation.correction is not None and allocation.correction.status == "COMPLETED")
+    )
+
+
+def _adjustment_is_effective(adjustment) -> bool:
+    # Ordinary adjustments are atomically generated from Payment and have no
+    # correction_id.  Correction adjustments become visible only with the
+    # OPEN -> COMPLETED transition.
+    return adjustment.correction_id is None or (
+        adjustment.correction is not None and adjustment.correction.status == "COMPLETED"
+    )
+
+
+def _active_payment_allocations(item: Invoice) -> list:
+    reversed_ids = {
+        allocation.reverses_allocation_id
+        for allocation in item.payment_allocations
+        if allocation.entry_type == "REVERSAL" and _allocation_is_effective(allocation)
+    }
+    return [
+        allocation
+        for allocation in item.payment_allocations
+        if allocation.entry_type == "APPLY"
+        and _allocation_is_effective(allocation)
+        and allocation.id not in reversed_ids
+    ]
+
+
 def invoice_payment_status(item: Invoice, today: date | None = None) -> str:
+    _ = today  # Kept for callers from earlier versions; overdue is now a separate flag.
+    _, _, outstanding_cents = invoice_accounting_cents(item)
+    return "PAID" if outstanding_cents == 0 else "UNPAID"
+
+
+def invoice_is_overdue(item: Invoice, today: date | None = None) -> bool:
     today = today or date.today()
-    paid_cents = sum(payment.amount_cents for payment in item.payments)
-    if paid_cents >= item.amount_cents:
-        return "PAID"
-    if paid_cents > 0:
-        return "PARTIALLY_PAID"
-    if item.lifecycle_status == "ISSUED" and item.due_date and item.due_date < today:
-        return "OVERDUE"
-    return "UNPAID"
+    return (
+        item.lifecycle_status == "ISSUED"
+        and invoice_payment_status(item) == "UNPAID"
+        and item.due_date is not None
+        and item.due_date < today
+    )
 
 
 def invoice_dict(item: Invoice) -> dict:
-    paid_cents = sum(payment.amount_cents for payment in item.payments)
+    paid_cents, adjustment_cents, outstanding_cents = invoice_accounting_cents(item)
+    active_allocations = _active_payment_allocations(item)
+    allocated_by_payment: dict[int, int] = {}
+    displayed_payments = {payment.id: payment for payment in item.payments}
+    for allocation in active_allocations:
+        allocated_by_payment[allocation.payment_id] = (
+            allocated_by_payment.get(allocation.payment_id, 0) + allocation.amount_cents
+        )
+        displayed_payments[allocation.payment_id] = allocation.payment
     sources = sorted(item.sources, key=lambda source: (source.settlement_id, source.id))
     lines = sorted(item.lines, key=lambda line: (line.display_order, line.id))
     latest_attempt = max(item.issue_attempts, key=lambda attempt: attempt.id, default=None)
@@ -171,11 +239,13 @@ def invoice_dict(item: Invoice) -> dict:
         "invoice_number": item.invoice_number,
         "lifecycle_status": item.lifecycle_status,
         "payment_status": invoice_payment_status(item),
+        "is_overdue": invoice_is_overdue(item),
         "issue_date": item.issue_date.isoformat() if item.issue_date else None,
         "due_date": item.due_date.isoformat() if item.due_date else None,
         "amount": money_string(item.amount_cents),
         "paid_amount": money_string(paid_cents),
-        "outstanding_amount": money_string(max(item.amount_cents - paid_cents, 0)),
+        "adjustment_amount": money_string(adjustment_cents),
+        "outstanding_amount": money_string(outstanding_cents),
         "language": item.language,
         "company_name": item.company.name if item.company else None,
         "fc_name": item.fc.name if item.fc else None,
@@ -185,10 +255,94 @@ def invoice_dict(item: Invoice) -> dict:
             {
                 "id": payment.id,
                 "payment_date": payment.payment_date.isoformat(),
-                "amount": money_string(payment.amount_cents),
+                "amount": money_string(allocated_by_payment.get(payment.id, payment.amount_cents)),
                 "method": payment.method,
+                "proof_attachment_id": payment.proof_attachment_id,
                 "remark": payment.remark,
             }
-            for payment in item.payments
+            for payment in sorted(displayed_payments.values(), key=lambda payment: payment.id)
+        ],
+    }
+
+
+def invoice_correction_dict(item: InvoiceCorrection) -> dict:
+    original = item.original_invoice
+    replacement = item.replacement_invoice
+    reversible_by_payment: dict[int, int] = {}
+    correction_payments = {}
+    for allocation in item.allocations:
+        if allocation.entry_type != "REVERSAL":
+            continue
+        reversible_by_payment[allocation.payment_id] = (
+            reversible_by_payment.get(allocation.payment_id, 0) + allocation.amount_cents
+        )
+        correction_payments[allocation.payment_id] = allocation.payment
+    return {
+        "id": item.id,
+        "status": item.status,
+        "reason": item.reason,
+        "opened_at": item.opened_at.isoformat(),
+        "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+        "original_invoice": {
+            "id": original.id,
+            "invoice_number": original.invoice_number,
+            "lifecycle_status": original.lifecycle_status,
+            "amount": money_string(original.amount_cents),
+        },
+        "replacement_invoice": (
+            {
+                "id": replacement.id,
+                "invoice_number": replacement.invoice_number,
+                "lifecycle_status": replacement.lifecycle_status,
+                "amount": money_string(replacement.amount_cents),
+            }
+            if replacement
+            else None
+        ),
+        "payments": [
+            {
+                "id": payment.id,
+                "payment_date": payment.payment_date.isoformat(),
+                "amount": money_string(reversible_by_payment[payment.id]),
+                "method": payment.method,
+                "proof_attachment_id": payment.proof_attachment_id,
+            }
+            for payment in sorted(correction_payments.values(), key=lambda payment: payment.id)
+        ],
+        "allocations": [
+            {
+                "id": allocation.id,
+                "payment_id": allocation.payment_id,
+                "invoice_id": allocation.invoice_id,
+                "amount": money_string(allocation.amount_cents),
+                "entry_type": allocation.entry_type,
+                "reverses_allocation_id": allocation.reverses_allocation_id,
+            }
+            for allocation in sorted(item.allocations, key=lambda allocation: allocation.id)
+            if allocation.entry_type == "REVERSAL" or item.status == "COMPLETED"
+        ],
+        "refunds": [
+            {
+                "id": refund.id,
+                "payment_id": refund.payment_id,
+                "refund_date": refund.refund_date.isoformat(),
+                "amount": money_string(refund.amount_cents),
+                "method": refund.method,
+                "reason": refund.reason,
+                "proof_attachment_id": refund.proof_attachment_id,
+            }
+            for refund in sorted(item.refunds, key=lambda refund: refund.id)
+            if item.status == "COMPLETED"
+        ],
+        "adjustments": [
+            {
+                "id": adjustment.id,
+                "invoice_id": adjustment.invoice_id,
+                "adjustment_type": adjustment.adjustment_type,
+                "amount": money_string(adjustment.amount_cents),
+                "reason": adjustment.reason,
+            }
+            for adjustment in sorted(item.adjustments, key=lambda adjustment: adjustment.id)
+            if item.status == "COMPLETED"
         ],
     }

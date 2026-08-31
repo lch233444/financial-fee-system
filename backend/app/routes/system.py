@@ -18,13 +18,15 @@ from ..models import (
     ExportRecord,
     FC,
     Invoice,
+    InvoiceAdjustment,
     InvoiceSource,
+    PaymentAllocation,
     QuarterlySettlement,
     SettlementAccountLine,
     SubAccount,
 )
 from ..money import money_string
-from ..serializers import invoice_payment_status
+from ..serializers import invoice_accounting_cents, invoice_is_overdue
 from ..services.backup import create_backup, stage_restore
 from ..services.excel_export import export_settlements_to_template, file_sha256
 from ..services.pdf_invoice import generate_settlement_pdf
@@ -135,7 +137,11 @@ def dashboard(
     settlements = db.scalars(query).all()
     invoice_query = (
         select(Invoice)
-        .options(selectinload(Invoice.payments))
+        .options(
+            selectinload(Invoice.payment_allocations),
+            selectinload(Invoice.payment_allocations).selectinload(PaymentAllocation.correction),
+            selectinload(Invoice.adjustments).selectinload(InvoiceAdjustment.correction),
+        )
         .where(
             Invoice.lifecycle_status == "ISSUED",
             Invoice.year == year,
@@ -145,9 +151,10 @@ def dashboard(
         invoice_query = invoice_query.where(Invoice.quarter == quarter)
     invoices = db.scalars(invoice_query).all()
     generated_fee = sum(item.service_fee_cents for item in settlements)
-    paid = sum(sum(payment.amount_cents for payment in invoice.payments) for invoice in invoices)
-    outstanding = sum(max(invoice.amount_cents - sum(p.amount_cents for p in invoice.payments), 0) for invoice in invoices)
-    overdue = sum(1 for invoice in invoices if invoice_payment_status(invoice) == "OVERDUE")
+    accounting = [invoice_accounting_cents(invoice) for invoice in invoices]
+    paid = sum(paid_cents for paid_cents, _, _ in accounting)
+    outstanding = sum(outstanding_cents for _, _, outstanding_cents in accounting)
+    overdue = sum(1 for invoice in invoices if invoice_is_overdue(invoice))
     return {
         "active_clients": db.scalar(select(func.count()).select_from(Client).where(Client.status == "ACTIVE")) or 0,
         "active_accounts": db.scalar(

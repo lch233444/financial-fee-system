@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -10,8 +11,16 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
-from ..models import Attachment, AuditEvent, BalanceSnapshot, Payment, SubAccount, TransactionRecord
-from ..services.storage import is_within, store_bytes
+from ..models import (
+    Attachment,
+    AuditEvent,
+    BalanceSnapshot,
+    Payment,
+    PaymentRefund,
+    SubAccount,
+    TransactionRecord,
+)
+from ..services.storage import is_within, sha256_bytes, store_bytes
 
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
@@ -22,7 +31,9 @@ ENTITY_MODELS = {
     "SNAPSHOT": BalanceSnapshot,
     "TRANSACTION": TransactionRecord,
     "PAYMENT": Payment,
+    "PAYMENT_REFUND": PaymentRefund,
 }
+UNCLAIMED_PROOF_TYPES = {"PAYMENT", "PAYMENT_REFUND"}
 
 
 def _attachment_dict(item: Attachment) -> dict:
@@ -56,14 +67,20 @@ def list_attachments(
 async def upload_attachment(
     file: UploadFile = File(...),
     entity_type: str = Form(...),
-    entity_id: int = Form(...),
+    entity_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
     normalized_type = entity_type.strip().upper()
     model = ENTITY_MODELS.get(normalized_type)
     if not model:
         raise HTTPException(status_code=400, detail="不支持的凭证关联类型")
-    if not db.get(model, entity_id):
+    # Payment/refund evidence is uploaded before the financial record exists.
+    # Its NULL association is claimed atomically by the database insert trigger.
+    if normalized_type in UNCLAIMED_PROOF_TYPES and entity_id in {None, 0}:
+        entity_id = None
+    elif entity_id is None:
+        raise HTTPException(status_code=400, detail="凭证关联记录ID不能为空")
+    elif not db.get(model, entity_id):
         raise HTTPException(status_code=404, detail="凭证关联记录不存在")
     suffix = Path(file.filename or "attachment").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -74,13 +91,7 @@ async def upload_attachment(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="凭证文件不能超过25MB")
 
-    settings = get_settings()
-    path, digest = store_bytes(
-        data=data,
-        original_name=file.filename or f"attachment{suffix}",
-        directory=settings.data_root / "attachments" / normalized_type.lower(),
-        prefix=f"{entity_id}_",
-    )
+    digest = sha256_bytes(data)
     existing = db.scalar(
         select(Attachment).where(
             Attachment.entity_type == normalized_type,
@@ -90,6 +101,14 @@ async def upload_attachment(
     )
     if existing:
         return {**_attachment_dict(existing), "duplicate": True}
+
+    settings = get_settings()
+    path, digest = store_bytes(
+        data=data,
+        original_name=file.filename or f"attachment{suffix}",
+        directory=settings.data_root / "attachments" / normalized_type.lower(),
+        prefix=f"{entity_id}_" if entity_id is not None else f"unclaimed_{uuid4().hex}_",
+    )
     item = Attachment(
         entity_type=normalized_type,
         entity_id=entity_id,

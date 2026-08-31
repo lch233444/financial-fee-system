@@ -7,18 +7,36 @@ import sqlite3
 import warnings
 import zipfile
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.config import get_settings
+import app.config as config_module
+from app.config import Settings, get_settings
 from app.database import SessionLocal, engine, init_db
 from app import main as app_main
 from app.main import app
-from app.models import AppSetting
+from app.models import (
+    AppSetting,
+    Attachment,
+    Client,
+    Company,
+    FC,
+    FeePlan,
+    Invoice,
+    InvoiceCorrection,
+    Payment,
+    PaymentAllocation,
+    PaymentRefund,
+    Platform,
+    QuarterlySettlement,
+)
 from app.routes import system as system_routes
 from app.services import backup as backup_service
 from app.services.backup import apply_pending_restore, create_backup, stage_restore, validate_backup_archive_root
@@ -75,6 +93,27 @@ def _write_variant(
     return destination
 
 
+def _mutate_archive_database(
+    files: dict[str, bytes],
+    manifest: dict,
+    database_copy: Path,
+    mutate: Callable[[sqlite3.Connection], None],
+) -> None:
+    database_record = next(
+        record for record in manifest["files"] if record["path"].startswith("database/")
+    )
+    database_copy.write_bytes(files[database_record["path"]])
+    connection = sqlite3.connect(database_copy)
+    try:
+        mutate(connection)
+        connection.commit()
+    finally:
+        connection.close()
+    content = database_copy.read_bytes()
+    files[database_record["path"]] = content
+    database_record["sha256"] = hashlib.sha256(content).hexdigest()
+
+
 def _assert_restore_rejected(backup_path: Path) -> None:
     settings = get_settings()
     marker = settings.data_root / "pending_restore.json"
@@ -82,6 +121,201 @@ def _assert_restore_rejected(backup_path: Path) -> None:
         stage_restore(backup_path)
     assert not marker.exists()
     assert not list((settings.data_root / "tmp").glob("pending_restore*"))
+
+
+def _seed_payment_and_refund_proofs() -> dict[str, object]:
+    init_db()
+    settings = get_settings()
+    token = uuid4().hex[:12]
+    payment_bytes = f"payment-proof-{token}".encode()
+    refund_bytes = f"refund-proof-{token}".encode()
+    payment_path = settings.data_root / "attachments" / f"payment-proof-{token}.pdf"
+    refund_path = settings.data_root / "attachments" / f"refund-proof-{token}.pdf"
+    payment_path.write_bytes(payment_bytes)
+    refund_path.write_bytes(refund_bytes)
+
+    with SessionLocal() as db:
+        company = Company(name=f"Backup Proof {token}", code=f"B{token}")
+        db.add(company)
+        db.flush()
+        fc = FC(company_id=company.id, name=f"FC {token}", code=f"F{token}")
+        plan = FeePlan(company_id=company.id, name=f"Plan {token}", code=f"P{token}")
+        platform = Platform(name=f"Platform {token}", code=f"PL{token}")
+        db.add_all([fc, plan, platform])
+        db.flush()
+        customer = Client(
+            company_id=company.id,
+            fc_id=fc.id,
+            name=f"Client {token}",
+            management_start_date=date(2026, 1, 1),
+            status="ACTIVE",
+        )
+        db.add(customer)
+        db.flush()
+        settlement = QuarterlySettlement(
+            client_id=customer.id,
+            platform_id=platform.id,
+            fee_plan_id=plan.id,
+            company_id=company.id,
+            fc_id=fc.id,
+            version_no=1,
+            year=2026,
+            quarter=1,
+            start_date=date(2026, 1, 1),
+            closing_date=date(2026, 3, 31),
+            days=90,
+            beginning_cents=10_000,
+            contribution_cents=0,
+            withdrawal_cents=0,
+            net_contribution_cents=0,
+            closing_cents=11_000,
+            gain_loss_cents=1_000,
+            period_rate_ppm=100_000,
+            original_hwm_cents=10_000,
+            adjusted_hwm_cents=10_000,
+            watermark_difference_cents=1_000,
+            chargeable_above_hwm_cents=1_000,
+            service_fee_cents=1_000,
+            next_hwm_cents=11_000,
+            fee_rate_bps=2_000,
+            formula_version="HWM-1.0",
+            calculation_mode="ACCOUNT_HWM",
+            status="DRAFT",
+        )
+        db.add(settlement)
+        db.flush()
+        invoice = Invoice(
+            settlement_id=settlement.id,
+            client_id=customer.id,
+            year=2026,
+            quarter=1,
+            fee_plan_id=plan.id,
+            company_id=company.id,
+            fc_id=fc.id,
+            lifecycle_status="DRAFT",
+            amount_cents=1_000,
+            language="zh",
+        )
+        db.add(invoice)
+        db.commit()
+        invoice_id = invoice.id
+
+    with sqlite3.connect(settings.database_path) as connection:
+        trigger_names = (
+            "trg_invoice_validate_issue",
+            "trg_invoice_lifecycle_transition",
+            "trg_invoice_issue_metadata_guard",
+        )
+        trigger_sql = {
+            name: connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                (name,),
+            ).fetchone()[0]
+            for name in trigger_names
+        }
+        try:
+            for name in trigger_names:
+                connection.execute(f'DROP TRIGGER "{name}"')
+            connection.execute(
+                """
+                UPDATE invoices
+                SET invoice_number = ?, lifecycle_status = 'ISSUED',
+                    issue_date = '2026-04-01', due_date = '2026-04-15',
+                    issued_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (f"BACKUP-{token}", invoice_id),
+            )
+        finally:
+            for name in trigger_names:
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                    (name,),
+                ).fetchone() is None:
+                    connection.execute(trigger_sql[name])
+            connection.commit()
+
+    with SessionLocal() as db:
+        payment_proof = Attachment(
+            entity_type="PAYMENT",
+            entity_id=None,
+            original_name=f"payment-{token}.pdf",
+            stored_path=str(payment_path),
+            sha256=hashlib.sha256(payment_bytes).hexdigest(),
+            mime_type="application/pdf",
+            size_bytes=len(payment_bytes),
+        )
+        db.add(payment_proof)
+        db.flush()
+        payment = Payment(
+            invoice_id=invoice_id,
+            payment_date=date(2026, 4, 2),
+            amount_cents=1_000,
+            company_difference_cents=0,
+            difference_reason=None,
+            method="BANK_TRANSFER",
+            proof_attachment_id=payment_proof.id,
+        )
+        db.add(payment)
+        db.flush()
+        initial_allocation = db.scalar(
+            select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)
+        )
+        assert initial_allocation is not None
+        correction = InvoiceCorrection(
+            original_invoice_id=invoice_id,
+            status="OPEN",
+            reason="Synthetic valid refund proof chain",
+        )
+        db.add(correction)
+        db.flush()
+        db.add(
+            PaymentAllocation(
+                payment_id=payment.id,
+                invoice_id=invoice_id,
+                amount_cents=1_000,
+                entry_type="REVERSAL",
+                reverses_allocation_id=initial_allocation.id,
+                correction_id=correction.id,
+            )
+        )
+        db.flush()
+        invoice = db.get(Invoice, invoice_id)
+        assert invoice is not None
+        invoice.lifecycle_status = "VOID"
+        invoice.voided_at = datetime.now(timezone.utc)
+        invoice.void_reason = "Synthetic refund proof chain"
+        db.flush()
+        refund_proof = Attachment(
+            entity_type="PAYMENT_REFUND",
+            entity_id=None,
+            original_name=f"refund-{token}.pdf",
+            stored_path=str(refund_path),
+            sha256=hashlib.sha256(refund_bytes).hexdigest(),
+            mime_type="application/pdf",
+            size_bytes=len(refund_bytes),
+        )
+        db.add(refund_proof)
+        db.flush()
+        refund = PaymentRefund(
+            payment_id=payment.id,
+            correction_id=correction.id,
+            refund_date=date(2026, 4, 3),
+            amount_cents=1_000,
+            method="BANK_TRANSFER",
+            reason="Synthetic full refund",
+            proof_attachment_id=refund_proof.id,
+        )
+        db.add(refund)
+        db.commit()
+        return {
+            "payment_path": payment_path,
+            "payment_bytes": payment_bytes,
+            "payment_attachment_id": payment_proof.id,
+            "refund_path": refund_path,
+            "refund_bytes": refund_bytes,
+            "refund_attachment_id": refund_proof.id,
+        }
 
 
 def test_backup_creation_uses_unique_atomic_names_within_same_timestamp(
@@ -126,6 +360,56 @@ def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fai
     after = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
     assert after == before
     assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+
+
+@pytest.mark.parametrize(
+    ("proof_kind", "mutation"),
+    [
+        ("payment", "missing"),
+        ("payment", "tampered"),
+        ("refund", "missing"),
+    ],
+)
+def test_backup_creation_rejects_missing_or_tampered_financial_proof(
+    proof_kind: str, mutation: str
+) -> None:
+    seeded = _seed_payment_and_refund_proofs()
+    settings = get_settings()
+    proof_path = Path(seeded[f"{proof_kind}_path"])
+    original = bytes(seeded[f"{proof_kind}_bytes"])
+    before = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    try:
+        if mutation == "missing":
+            proof_path.unlink()
+        else:
+            proof_path.write_bytes(bytes(byte ^ 0x01 for byte in original))
+        with pytest.raises(ValueError, match="付款凭证"):
+            create_backup()
+    finally:
+        proof_path.write_bytes(original)
+    assert set((settings.data_root / "backups").glob("financial_system_backup_*.zip")) == before
+    assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+
+
+def test_archive_context_rejects_legacy_payment_without_proof(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy-null-proof.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE payments (id INTEGER PRIMARY KEY, proof_attachment_id INTEGER);
+            CREATE TABLE attachments (
+                id INTEGER PRIMARY KEY,
+                entity_type TEXT,
+                entity_id INTEGER,
+                stored_path TEXT,
+                size_bytes INTEGER,
+                sha256 TEXT
+            );
+            INSERT INTO payments (id, proof_attachment_id) VALUES (1, NULL);
+            """
+        )
+    with pytest.raises(ValueError, match="付款凭证关系"):
+        backup_service._validate_payment_proof_archive(database_path, tmp_path, {})
 
 
 def test_restore_request_is_exclusive_before_upload_read() -> None:
@@ -371,6 +655,64 @@ def test_restore_rejects_hash_mismatch(tmp_path: Path) -> None:
     _assert_restore_rejected(invalid_backup)
 
 
+@pytest.mark.parametrize("proof_kind", ["payment", "refund"])
+def test_restore_rejects_manifest_consistent_archive_missing_referenced_proof(
+    tmp_path: Path, proof_kind: str
+) -> None:
+    seeded = _seed_payment_and_refund_proofs()
+    settings = get_settings()
+    backup_path = create_backup()
+    relative_path = Path(seeded[f"{proof_kind}_path"]).relative_to(
+        settings.data_root
+    ).as_posix()
+
+    def remove_referenced_proof(files: dict[str, bytes], manifest: dict) -> None:
+        files.pop(relative_path)
+        manifest["files"] = [
+            record for record in manifest["files"] if record["path"] != relative_path
+        ]
+
+    invalid_backup = _write_variant(
+        backup_path,
+        tmp_path / f"missing-{proof_kind}-proof.zip",
+        remove_referenced_proof,
+    )
+    _assert_restore_rejected(invalid_backup)
+
+
+def test_restore_proof_mapping_does_not_depend_on_current_data_root(tmp_path: Path) -> None:
+    seeded = _seed_payment_and_refund_proofs()
+    settings = get_settings()
+    backup_path = create_backup()
+    relative_path = Path(seeded["payment_path"]).relative_to(settings.data_root).as_posix()
+    rebased_stored_path = f"Z:/different-source-root/{relative_path}"
+
+    def rebase_database_path(files: dict[str, bytes], manifest: dict) -> None:
+        def mutate(connection: sqlite3.Connection) -> None:
+            trigger_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'trg_attachment_update_block_payment_evidence'"
+            ).fetchone()[0]
+            connection.execute("DROP TRIGGER trg_attachment_update_block_payment_evidence")
+            connection.execute(
+                "UPDATE attachments SET stored_path = ? WHERE id = ?",
+                (rebased_stored_path, seeded["payment_attachment_id"]),
+            )
+            connection.execute(trigger_sql)
+
+        _mutate_archive_database(
+            files, manifest, tmp_path / "rebased-proof-path.sqlite3", mutate
+        )
+
+    rebased_backup = _write_variant(
+        backup_path,
+        tmp_path / "rebased-source-root.zip",
+        rebase_database_path,
+    )
+    staged = stage_restore(rebased_backup)
+    assert staged.marker.is_file()
+
+
 def test_restore_rejects_corrupt_sqlite_with_matching_hash(tmp_path: Path) -> None:
     backup_path = _valid_backup()
 
@@ -454,6 +796,131 @@ def test_restore_rejects_unknown_database_revision_with_matching_hash(tmp_path: 
 
     invalid_backup = _write_variant(backup_path, tmp_path / "future-revision.zip", replace_revision)
     _assert_restore_rejected(invalid_backup)
+
+
+def test_restore_rejects_new_head_with_incomplete_trigger_set(tmp_path: Path) -> None:
+    backup_path = _valid_backup()
+
+    def drop_required_trigger(files: dict[str, bytes], manifest: dict) -> None:
+        database_record = next(record for record in manifest["files"] if record["path"].startswith("database/"))
+        database_copy = tmp_path / "missing-new-head-trigger.sqlite3"
+        database_copy.write_bytes(files[database_record["path"]])
+        connection = sqlite3.connect(database_copy)
+        try:
+            connection.execute("DROP TRIGGER trg_payment_refund_validate_insert")
+            connection.commit()
+        finally:
+            connection.close()
+        content = database_copy.read_bytes()
+        files[database_record["path"]] = content
+        database_record["sha256"] = hashlib.sha256(content).hexdigest()
+
+    invalid_backup = _write_variant(
+        backup_path,
+        tmp_path / "missing-new-head-trigger.zip",
+        drop_required_trigger,
+    )
+    _assert_restore_rejected(invalid_backup)
+
+
+@pytest.mark.parametrize(
+    "replacement_sql",
+    [
+        """
+        CREATE INDEX uq_settlement_group_period_active
+        ON quarterly_settlements (client_id, platform_id, fee_plan_id, year, quarter)
+        WHERE status != 'VOID'
+        """,
+        """
+        CREATE UNIQUE INDEX uq_settlement_group_period_active
+        ON quarterly_settlements (client_id, platform_id, fee_plan_id, year, id)
+        WHERE status != 'VOID'
+        """,
+    ],
+    ids=("same-name-non-unique", "same-name-wrong-columns"),
+)
+def test_restore_rejects_forged_active_settlement_partial_index(
+    tmp_path: Path, replacement_sql: str
+) -> None:
+    backup_path = _valid_backup()
+
+    def forge_active_index(files: dict[str, bytes], manifest: dict) -> None:
+        database_record = next(
+            record for record in manifest["files"] if record["path"].startswith("database/")
+        )
+        database_copy = tmp_path / "forged-active-index.sqlite3"
+        database_copy.write_bytes(files[database_record["path"]])
+        connection = sqlite3.connect(database_copy)
+        try:
+            connection.execute("DROP INDEX uq_settlement_group_period_active")
+            connection.execute(replacement_sql)
+            connection.commit()
+        finally:
+            connection.close()
+        content = database_copy.read_bytes()
+        files[database_record["path"]] = content
+        database_record["sha256"] = hashlib.sha256(content).hexdigest()
+
+    invalid_backup = _write_variant(
+        backup_path,
+        tmp_path / f"forged-active-index-{hashlib.sha256(replacement_sql.encode()).hexdigest()[:8]}.zip",
+        forge_active_index,
+    )
+    _assert_restore_rejected(invalid_backup)
+
+
+def test_restore_rejects_same_name_nonunique_active_invoice_index(tmp_path: Path) -> None:
+    backup_path = _valid_backup()
+
+    def forge_invoice_index(files: dict[str, bytes], manifest: dict) -> None:
+        def mutate(connection: sqlite3.Connection) -> None:
+            connection.execute("DROP INDEX uq_invoices_active_client_period_plan")
+            connection.execute(
+                """
+                CREATE INDEX uq_invoices_active_client_period_plan
+                ON invoices (client_id, year, quarter, fee_plan_id)
+                WHERE lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')
+                """
+            )
+
+        _mutate_archive_database(
+            files, manifest, tmp_path / "forged-active-invoice-index.sqlite3", mutate
+        )
+
+    invalid_backup = _write_variant(
+        backup_path,
+        tmp_path / "forged-active-invoice-index.zip",
+        forge_invoice_index,
+    )
+    _assert_restore_rejected(invalid_backup)
+
+
+def test_restore_accepts_complete_supported_9d_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup_path = _valid_backup()
+    legacy_settings = Settings(data_root=tmp_path / "legacy-9d-data")
+    legacy_settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: legacy_settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", legacy_settings.database_url)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+
+    def replace_with_9d_database(files: dict[str, bytes], manifest: dict) -> None:
+        database_record = next(record for record in manifest["files"] if record["path"].startswith("database/"))
+        content = legacy_settings.database_path.read_bytes()
+        files[database_record["path"]] = content
+        database_record["sha256"] = hashlib.sha256(content).hexdigest()
+
+    legacy_backup = _write_variant(
+        backup_path,
+        tmp_path / "supported-9d-backup.zip",
+        replace_with_9d_database,
+    )
+    staged = stage_restore(legacy_backup)
+    assert staged.marker.is_file()
 
 
 def test_restore_accepts_recognizable_unversioned_legacy_database(tmp_path: Path) -> None:

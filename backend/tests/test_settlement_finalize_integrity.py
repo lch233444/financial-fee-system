@@ -10,6 +10,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 import app.config as config_module
 from app.config import Settings, get_settings
@@ -23,12 +24,13 @@ from app.models import (
     StatementImport,
     TransactionRecord,
 )
-from app.routes.settlements import finalize_settlement
+from app.routes.settlements import finalize_settlement, void_settlement
+from app.schemas import VoidRequest
 from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "9d2f6a8c4b13"
+HEAD_REVISION = "7f3c2a91b6e4"
 
 
 def _master(client: TestClient, suffix: str) -> dict:
@@ -478,7 +480,8 @@ def test_direct_status_bypasses_require_metadata_reason_and_draft_insert() -> No
                     """
                     INSERT INTO quarterly_settlements (
                         client_id, platform_id, fee_plan_id, company_id, fc_id,
-                        previous_settlement_id, year, quarter, start_date, closing_date, days,
+                        previous_settlement_id, version_no, replaces_settlement_id,
+                        year, quarter, start_date, closing_date, days,
                         beginning_cents, contribution_cents, withdrawal_cents,
                         net_contribution_cents, closing_cents, gain_loss_cents,
                         period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
@@ -487,7 +490,8 @@ def test_direct_status_bypasses_require_metadata_reason_and_draft_insert() -> No
                         calculation_mode, status, finalized_at, void_reason, created_at, updated_at
                     )
                     SELECT client_id, platform_id, fee_plan_id, company_id, fc_id,
-                           previous_settlement_id, 2027, 1, '2027-01-01', '2027-03-31', 90,
+                           previous_settlement_id, 1, NULL,
+                           2027, 1, '2027-01-01', '2027-03-31', 90,
                            beginning_cents, contribution_cents, withdrawal_cents,
                            net_contribution_cents, closing_cents, gain_loss_cents,
                            period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
@@ -667,6 +671,46 @@ def test_draft_can_be_deleted_with_audit_but_cannot_be_voided_or_delete_history(
         assert blocked_void.status_code == 409
 
 
+def test_finalize_rechecks_replacement_identity_even_if_database_guard_was_bypassed() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data, beginning, closing, first = _case(client, "REPLFINAL")
+        finalized = client.post(f"/api/settlements/{first['id']}/finalize")
+        assert finalized.status_code == 200, finalized.text
+        voided = client.post(
+            f"/api/settlements/{first['id']}/void",
+            json={"reason": "Create a controlled replacement draft"},
+        )
+        assert voided.status_code == 200, voided.text
+        replacement = _calculate(client, data, beginning, closing)
+        assert replacement["version_no"] == 2
+        assert replacement["replaces_settlement_id"] == first["id"]
+
+        database_path = get_settings().database_path
+        with sqlite3.connect(database_path) as connection:
+            trigger_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                "AND name='trg_settlement_parent_financial_lock'"
+            ).fetchone()[0]
+            try:
+                connection.execute("DROP TRIGGER trg_settlement_parent_financial_lock")
+                connection.execute(
+                    "UPDATE quarterly_settlements SET year = year + 1 WHERE id = ?",
+                    (replacement["id"],),
+                )
+            finally:
+                connection.execute(trigger_sql)
+                connection.commit()
+
+        blocked = client.post(f"/api/settlements/{replacement['id']}/finalize")
+        assert blocked.status_code == 409
+        assert "替代关系已失效" in blocked.json()["detail"]
+        with sqlite3.connect(database_path) as connection:
+            assert connection.execute(
+                "SELECT status FROM quarterly_settlements WHERE id = ?",
+                (replacement["id"],),
+            ).fetchone()[0] == "DRAFT"
+
+
 def test_delete_stale_draft_unblocks_recalculation_after_account_plan_change() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data, beginning, closing, stale_draft = _case(client, "DRAFTREPLACE")
@@ -757,7 +801,8 @@ def test_same_account_period_cannot_repeat_after_plan_change_in_app_or_sql() -> 
                 """
                 INSERT INTO quarterly_settlements (
                     client_id, platform_id, fee_plan_id, company_id, fc_id,
-                    previous_settlement_id, year, quarter, start_date, closing_date, days,
+                    previous_settlement_id, version_no, replaces_settlement_id,
+                    year, quarter, start_date, closing_date, days,
                     beginning_cents, contribution_cents, withdrawal_cents,
                     net_contribution_cents, closing_cents, gain_loss_cents,
                     period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
@@ -766,7 +811,7 @@ def test_same_account_period_cannot_repeat_after_plan_change_in_app_or_sql() -> 
                     calculation_mode, status, finalized_at, void_reason, created_at, updated_at
                 )
                 SELECT client_id, platform_id, ?, company_id, fc_id,
-                       NULL, year, quarter, start_date, closing_date, days,
+                       NULL, 1, NULL, year, quarter, start_date, closing_date, days,
                        beginning_cents, contribution_cents, withdrawal_cents,
                        net_contribution_cents, closing_cents, gain_loss_cents,
                        period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
@@ -878,6 +923,40 @@ def test_finalize_begin_immediate_serializes_two_database_connections() -> None:
                 first.commit()
                 result = future.result(timeout=5)
             assert result["status"] == "FINALIZED"
+            assert statements
+            assert statements[0].upper() == "BEGIN IMMEDIATE"
+        finally:
+            event.remove(engine, "before_cursor_execute", record_statement)
+            first.close()
+
+
+def test_void_begin_immediate_serializes_before_reading_dependencies() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        _data, _beginning, _closing, settlement = _case(client, "VOIDTWOCONN")
+        finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+        assert finalized.status_code == 200, finalized.text
+        statements: list[str] = []
+
+        def record_statement(_conn, _cursor, statement, _parameters, _context, _many) -> None:
+            statements.append(statement.strip())
+
+        def void_in_worker() -> dict:
+            with SessionLocal() as db:
+                return void_settlement(
+                    settlement["id"], VoidRequest(reason="serialize dependency check"), db
+                )
+
+        first = sqlite3.connect(get_settings().database_path, timeout=5, check_same_thread=False)
+        first.execute("BEGIN IMMEDIATE")
+        event.listen(engine, "before_cursor_execute", record_statement)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(void_in_worker)
+                time.sleep(0.2)
+                assert not future.done()
+                first.commit()
+                result = future.result(timeout=5)
+            assert result["status"] == "VOID"
             assert statements
             assert statements[0].upper() == "BEGIN IMMEDIATE"
         finally:
@@ -1161,3 +1240,256 @@ def test_upgrade_rejects_corrupted_finalized_hwm_history(
         command.upgrade(alembic_config, "head")
     with sqlite3.connect(settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "c4b7f1d92e60"
+
+
+def _prepare_9d_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> tuple[Settings, Config]:
+    settings = Settings(data_root=tmp_path / name)
+    settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, "c4b7f1d92e60")
+    with sqlite3.connect(settings.database_path) as connection:
+        _seed_c4_finalized_account_history(connection)
+        connection.commit()
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+    return settings, alembic_config
+
+
+def _schema_snapshot(database_path: Path) -> list[tuple]:
+    with sqlite3.connect(database_path) as connection:
+        return connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+
+
+def test_0_2_14_upgrade_preserves_settlement_ids_self_references_and_foreign_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, alembic_config = _prepare_9d_history(tmp_path, monkeypatch, "preserve-ids")
+
+    command.upgrade(alembic_config, "head")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == HEAD_REVISION
+        assert connection.execute(
+            "SELECT id, previous_settlement_id, version_no, replaces_settlement_id "
+            "FROM quarterly_settlements ORDER BY id"
+        ).fetchall() == [(1, None, 1, None), (2, 1, 1, None)]
+        assert connection.execute(
+            "SELECT id, settlement_id, previous_line_id FROM settlement_account_lines ORDER BY id"
+        ).fetchall() == [(1, 1, None), (2, 2, 1)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        settlement_fks = {
+            (row[3], row[2], row[4], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(quarterly_settlements)")
+        }
+        assert ("previous_settlement_id", "quarterly_settlements", "id", "RESTRICT") in settlement_fks
+        assert ("replaces_settlement_id", "quarterly_settlements", "id", "RESTRICT") in settlement_fks
+        line_fks = {
+            (row[3], row[2], row[4], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(settlement_account_lines)")
+        }
+        assert ("previous_line_id", "settlement_account_lines", "id", "RESTRICT") in line_fks
+        # This revision intentionally does not repair the historical ORM/DDL
+        # drift for closing_snapshot_id; changing it belongs in a separate risk review.
+        assert ("closing_snapshot_id", "balance_snapshots", "id", "SET NULL") in line_fks
+        active_index_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND name='uq_settlement_group_period_active'"
+        ).fetchone()[0]
+        assert "WHERE status != 'VOID'" in active_index_sql
+
+        connection.execute(
+            "UPDATE quarterly_settlements SET status='VOID', "
+            "void_reason='Synthetic version replacement' WHERE id=2"
+        )
+        columns = [
+            row[1] for row in connection.execute("PRAGMA table_info(quarterly_settlements)")
+        ]
+        original = dict(
+            zip(
+                columns,
+                connection.execute(
+                    f"SELECT {', '.join(columns)} FROM quarterly_settlements WHERE id=2"
+                ).fetchone(),
+                strict=True,
+            )
+        )
+        replacement = {
+            **original,
+            "id": 3,
+            "version_no": 2,
+            "replaces_settlement_id": 2,
+            "status": "DRAFT",
+            "finalized_at": None,
+            "void_reason": None,
+        }
+        placeholders = ", ".join("?" for _ in columns)
+        connection.execute(
+            f"INSERT INTO quarterly_settlements ({', '.join(columns)}) "
+            f"VALUES ({placeholders})",
+            tuple(replacement[name] for name in columns),
+        )
+        assert connection.execute(
+            "SELECT version_no, replaces_settlement_id FROM quarterly_settlements WHERE id=3"
+        ).fetchone() == (2, 2)
+
+        connection.execute(
+            "UPDATE quarterly_settlements SET previous_settlement_id = NULL WHERE id = 3"
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="settlement_container_previous_changed",
+        ):
+            connection.execute(
+                "UPDATE quarterly_settlements SET status = 'FINALIZED', "
+                "finalized_at = CURRENT_TIMESTAMP WHERE id = 3"
+            )
+        assert connection.execute(
+            "SELECT previous_settlement_id, status, finalized_at "
+            "FROM quarterly_settlements WHERE id = 3"
+        ).fetchone() == (None, "DRAFT", None)
+        connection.execute(
+            "UPDATE quarterly_settlements SET previous_settlement_id = 1 WHERE id = 3"
+        )
+
+        replacement["id"] = 4
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO quarterly_settlements ({', '.join(columns)}) "
+                f"VALUES ({placeholders})",
+                tuple(replacement[name] for name in columns),
+            )
+
+        with pytest.raises(
+            sqlite3.IntegrityError, match="settlement_replacement_identity_immutable"
+        ):
+            connection.execute(
+                "UPDATE quarterly_settlements SET year = 2027 WHERE id = 3"
+            )
+        assert connection.execute(
+            "SELECT year, status FROM quarterly_settlements WHERE id = 3"
+        ).fetchone() == (2026, "DRAFT")
+
+        parent_trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='trg_settlement_parent_financial_lock'"
+        ).fetchone()[0]
+        finalize_trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='trg_settlement_validate_finalize'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER trg_settlement_parent_financial_lock")
+        connection.execute("UPDATE quarterly_settlements SET year = 2027 WHERE id = 3")
+        connection.execute(parent_trigger_sql)
+        connection.execute("DROP TRIGGER trg_settlement_validate_finalize")
+        try:
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match="settlement_replacement_invalid_at_finalize",
+            ):
+                connection.execute(
+                    "UPDATE quarterly_settlements SET status = 'FINALIZED', "
+                    "finalized_at = CURRENT_TIMESTAMP WHERE id = 3"
+                )
+        finally:
+            connection.execute(finalize_trigger_sql)
+        assert connection.execute(
+            "SELECT year, status, finalized_at FROM quarterly_settlements WHERE id = 3"
+        ).fetchone() == (2027, "DRAFT", None)
+
+
+def test_0_2_14_upgrade_refuses_foreign_keys_on_before_any_ddl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, alembic_config = _prepare_9d_history(tmp_path, monkeypatch, "fk-on")
+    schema_before = _schema_snapshot(settings.database_path)
+
+    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    event.listen(Engine, "connect", enable_foreign_keys)
+    try:
+        with pytest.raises(RuntimeError, match="foreign_keys=OFF"):
+            command.upgrade(alembic_config, "head")
+    finally:
+        event.remove(Engine, "connect", enable_foreign_keys)
+
+    assert _schema_snapshot(settings.database_path) == schema_before
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "9d2f6a8c4b13"
+
+
+def test_0_2_14_mid_ddl_failure_rolls_back_tables_triggers_and_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, alembic_config = _prepare_9d_history(tmp_path, monkeypatch, "ddl-rollback")
+    schema_before = _schema_snapshot(settings.database_path)
+
+    def fail_after_copy(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+        normalized = " ".join(statement.upper().replace('"', "").split())
+        if normalized == "DROP TABLE QUARTERLY_SETTLEMENTS":
+            raise RuntimeError("synthetic mid-DDL failure")
+
+    event.listen(Engine, "before_cursor_execute", fail_after_copy)
+    try:
+        with pytest.raises(RuntimeError, match="synthetic mid-DDL failure"):
+            command.upgrade(alembic_config, "head")
+    finally:
+        event.remove(Engine, "before_cursor_execute", fail_after_copy)
+
+    assert _schema_snapshot(settings.database_path) == schema_before
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "9d2f6a8c4b13"
+        assert connection.execute(
+            "SELECT id, previous_settlement_id FROM quarterly_settlements ORDER BY id"
+        ).fetchall() == [(1, None), (2, 1)]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '\\_%\\_0214' ESCAPE '\\'"
+        ).fetchone()[0] == 0
+
+
+def test_0_2_14_acquires_writer_lock_before_reading_legacy_preflight_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, alembic_config = _prepare_9d_history(tmp_path, monkeypatch, "preflight-lock")
+    state = {"begin_seen": False, "write_probe_done": False, "write_error": ""}
+
+    def probe_competing_writer(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+        normalized = " ".join(statement.upper().replace('"', "").split())
+        if normalized == "BEGIN IMMEDIATE":
+            state["begin_seen"] = True
+            return
+        if (
+            state["begin_seen"]
+            and not state["write_probe_done"]
+            and "SELECT VERSION_NUM FROM ALEMBIC_VERSION" in normalized
+        ):
+            state["write_probe_done"] = True
+            try:
+                with sqlite3.connect(settings.database_path, timeout=0) as competing:
+                    competing.execute(
+                        "INSERT INTO app_settings(key, value) VALUES ('legacy-race', 'unsafe')"
+                    )
+                    competing.commit()
+            except sqlite3.OperationalError as exc:
+                state["write_error"] = str(exc)
+
+    event.listen(Engine, "before_cursor_execute", probe_competing_writer)
+    try:
+        command.upgrade(alembic_config, "head")
+    finally:
+        event.remove(Engine, "before_cursor_execute", probe_competing_writer)
+
+    assert state["begin_seen"] is True
+    assert state["write_probe_done"] is True
+    assert "locked" in state["write_error"].casefold()
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM app_settings WHERE key = 'legacy-race'"
+        ).fetchone()[0] == 0

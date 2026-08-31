@@ -152,6 +152,8 @@ export type Settlement = {
   fc_id: number | null;
   fc_name: string | null;
   previous_settlement_id: number | null;
+  version_no: number;
+  replaces_settlement_id: number | null;
   platform_id: number;
   platform_name: string;
   fee_plan_id: number;
@@ -178,6 +180,7 @@ export type Settlement = {
   formula_version: string;
   calculation_mode: "ACCOUNT_HWM" | "LEGACY_GROUP_HWM";
   status: "DRAFT" | "FINALIZED" | "VOID";
+  void_reason: string | null;
   account_lines: Array<{
     id: number;
     account_id: number;
@@ -214,7 +217,7 @@ export type Invoice = {
   year: number;
   quarter: number;
   fee_plan_id: number;
-  fee_plan_name?: string;
+  fee_plan_name: string | null;
   source_count: number;
   account_lines: Array<{
     id: number;
@@ -233,15 +236,72 @@ export type Invoice = {
   } | null;
   invoice_number: string | null;
   lifecycle_status: "DRAFT" | "ISSUING" | "ISSUED" | "VOID";
-  payment_status: "UNPAID" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
+  payment_status: "UNPAID" | "PAID";
+  is_overdue: boolean;
   issue_date: string | null;
   due_date: string | null;
   amount: string;
   paid_amount: string;
+  adjustment_amount: string;
   outstanding_amount: string;
   language: string;
   void_reason: string | null;
-  company_name: string;
-  fc_name: string;
-  client_name: string;
+  company_name: string | null;
+  fc_name: string | null;
+  client_name: string | null;
+  payments: PaymentRecord[];
+};
+
+export type PaymentRecord = {
+  id: number;
+  payment_date: string;
+  amount: string;
+  method: string;
+  proof_attachment_id: number;
+  remark?: string | null;
+};
+
+export type InvoiceCorrection = {
+  id: number;
+  status: "OPEN" | "COMPLETED";
+  reason: string;
+  opened_at: string;
+  completed_at: string | null;
+  original_invoice: {
+    id: number;
+    invoice_number: string | null;
+    lifecycle_status: Invoice["lifecycle_status"];
+    amount: string;
+  };
+  replacement_invoice: {
+    id: number;
+    invoice_number: string | null;
+    lifecycle_status: Invoice["lifecycle_status"];
+    amount: string;
+  } | null;
+  payments: PaymentRecord[];
+  allocations: Array<{
+    id: number;
+    payment_id: number;
+    invoice_id: number;
+    amount: string;
+    entry_type: "APPLY" | "REVERSAL";
+    reverses_allocation_id: number | null;
+  }>;
+  refunds: Array<{
+    id: number;
+    payment_id: number;
+    refund_date: string;
+    amount: string;
+    method: string;
+    reason: string;
+    proof_attachment_id: number;
+  }>;
+  adjustments: Array<{
+    id: number;
+    invoice_id: number;
+    adjustment_type: "COMPANY_BORNE_DIFFERENCE";
+    amount: string;
+    reason: string;
+  }>;
 };

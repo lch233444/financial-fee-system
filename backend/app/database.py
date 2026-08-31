@@ -61,8 +61,29 @@ def init_db() -> None:
     alembic_config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
     existing_tables = set(inspect(engine).get_table_names())
     if existing_tables and "alembic_version" not in existing_tables:
+        # Only this audited legacy-bootstrap path may reach 0.2.14 with
+        # current metadata having pre-created the otherwise missing parent
+        # tables.  A normally stamped 9d database with that target shape is
+        # treated as an interrupted/manual migration and must stop.
+        alembic_config.attributes["allow_precreated_0214_parent_shape"] = True
         # Upgrade a pre-migration MVP database without destroying its records.
-        Base.metadata.create_all(bind=engine)
+        # Do not let current metadata pre-create the 0.2.14 ledger tables in an
+        # older unversioned database.  Their presence is a deliberate migration
+        # shape marker and the real revision must create/backfill them atomically.
+        settlement_ledger_table_names = {
+            "invoice_corrections",
+            "payment_allocations",
+            "payment_refunds",
+            "invoice_adjustments",
+        }
+        Base.metadata.create_all(
+            bind=engine,
+            tables=[
+                table
+                for table_name, table in Base.metadata.tables.items()
+                if table_name not in settlement_ledger_table_names
+            ],
+        )
         refreshed_inspector = inspect(engine)
         statement_columns = {
             column["name"] for column in refreshed_inspector.get_columns("statement_imports")
@@ -77,6 +98,7 @@ def init_db() -> None:
             column["name"] for column in refreshed_inspector.get_columns("quarterly_settlements")
         }
         settlement_chain_columns = {"company_id", "fc_id", "previous_settlement_id"}
+        settlement_version_columns = {"version_no", "replaces_settlement_id"}
         settlement_account_mode_columns = {"calculation_mode"}
         account_line_columns = {
             column["name"] for column in refreshed_inspector.get_columns("settlement_account_lines")
@@ -91,6 +113,10 @@ def init_db() -> None:
         }
         account_period_columns = {"start_date", "closing_date", "days"}
         refreshed_tables = set(refreshed_inspector.get_table_names())
+        payments_columns = {
+            column["name"]: column
+            for column in refreshed_inspector.get_columns("payments")
+        }
         invoice_columns = {
             column["name"] for column in refreshed_inspector.get_columns("invoices")
         }
@@ -135,6 +161,52 @@ def init_db() -> None:
                 }
             )
             for table_name, required_columns in invoice_ledger_columns.items()
+        )
+        correction_ledger_columns = {
+            "invoice_corrections": {
+                "original_invoice_id",
+                "replacement_invoice_id",
+                "status",
+                "reason",
+                "opened_at",
+                "completed_at",
+            },
+            "payment_allocations": {
+                "payment_id",
+                "invoice_id",
+                "amount_cents",
+                "entry_type",
+                "reverses_allocation_id",
+                "correction_id",
+            },
+            "payment_refunds": {
+                "payment_id",
+                "correction_id",
+                "refund_date",
+                "amount_cents",
+                "method",
+                "reason",
+                "proof_attachment_id",
+            },
+            "invoice_adjustments": {
+                "invoice_id",
+                "correction_id",
+                "payment_id",
+                "adjustment_type",
+                "amount_cents",
+                "reason",
+            },
+        }
+        present_correction_ledger_tables = refreshed_tables & set(correction_ledger_columns)
+        correction_ledger_tables_complete = all(
+            table_name in refreshed_tables
+            and required_columns.issubset(
+                {
+                    column["name"]
+                    for column in refreshed_inspector.get_columns(table_name)
+                }
+            )
+            for table_name, required_columns in correction_ledger_columns.items()
         )
         with engine.connect() as connection:
             trigger_sql = {
@@ -205,10 +277,18 @@ def init_db() -> None:
             in trigger_sql.get("trg_invoice_source_update_draft_only", "").lower()
             and "source.invoice_id = new.invoice_id"
             in trigger_sql.get("trg_invoice_line_update_draft_only", "").lower()
-            and "payment_amount_exceeds_invoice"
-            in trigger_sql.get("trg_payment_validate_insert", "").lower()
-            and "invoice_has_payments"
-            in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+            and (
+                "payment_amount_exceeds_invoice"
+                in trigger_sql.get("trg_payment_validate_insert", "").lower()
+                or "payment_proof_invalid"
+                in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            )
+            and (
+                "invoice_has_payments"
+                in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+                or "invoice_payment_allocation_not_reversed"
+                in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+            )
             and "invoice_lifecycle_transition_invalid"
             in trigger_sql.get("trg_invoice_lifecycle_transition", "").lower()
             and "invoice_issue_metadata_invalid"
@@ -260,7 +340,96 @@ def init_db() -> None:
             and "settlement.status = 'finalized'"
             in trigger_sql.get("trg_transactions_block_finalized_period", "").lower()
         )
-        if not ai_columns.issubset(statement_columns):
+        required_correction_triggers = {
+            "trg_payment_claim_proof",
+            "trg_payment_update_immutable",
+            "trg_payment_delete_immutable",
+            "trg_invoice_correction_validate_insert",
+            "trg_invoice_correction_validate_update",
+            "trg_invoice_correction_delete_immutable",
+            "trg_payment_allocation_validate_insert",
+            "trg_payment_allocation_update_immutable",
+            "trg_payment_allocation_delete_immutable",
+            "trg_payment_refund_validate_insert",
+            "trg_payment_refund_claim_proof",
+            "trg_payment_refund_update_immutable",
+            "trg_payment_refund_delete_immutable",
+            "trg_invoice_adjustment_validate_insert",
+            "trg_invoice_adjustment_update_immutable",
+            "trg_invoice_adjustment_delete_immutable",
+            "trg_attachment_update_block_payment_evidence",
+            "trg_attachment_delete_block_payment_evidence",
+        }
+        expected_new_head_triggers = (
+            required_settlement_triggers
+            | required_settlement_integrity_triggers
+            | {"trg_settlement_account_line_update_order"}
+            | required_invoice_triggers
+            | required_correction_triggers
+        )
+        settlement_version_shape_complete = (
+            settlement_version_columns.issubset(settlement_columns)
+            and correction_ledger_tables_complete
+            and payments_columns.get("proof_attachment_id", {}).get("nullable") is False
+            and payments_columns.get("company_difference_cents", {}).get("nullable") is False
+            and "difference_reason" in payments_columns
+            and "uq_invoice_adjustment_payment" in index_names
+            and "uq_settlement_group_period_active" in index_names
+            and required_correction_triggers.issubset(settlement_triggers)
+            and settlement_triggers == expected_new_head_triggers
+            and "settlement_replacement_invalid"
+            in trigger_sql.get("trg_settlement_insert_draft_only", "").lower()
+            and "settlement_replacement_identity_immutable"
+            in trigger_sql.get("trg_settlement_parent_financial_lock", "").lower()
+            and "settlement_replacement_invalid_at_finalize"
+            in trigger_sql.get("trg_settlement_parent_financial_lock", "").lower()
+            and "settlement_container_previous_changed"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "invoice_void_metadata_invalid"
+            in trigger_sql.get("trg_invoice_lifecycle_transition", "").lower()
+            and "invoice_void_metadata_immutable"
+            in trigger_sql.get("trg_invoice_lifecycle_transition", "").lower()
+            and "invoice_payment_allocation_not_reversed"
+            in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+            and "invoice_open_correction_replacement_cannot_void"
+            in trigger_sql.get("trg_invoice_block_void_with_payment", "").lower()
+            and "payment_invoice_group_has_open_correction"
+            in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            and "payment_invoice_ledger_not_empty"
+            in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            and "payment_must_settle_invoice"
+            in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            and "payment_method_invalid"
+            in trigger_sql.get("trg_payment_validate_insert", "").lower()
+            and "payment_refund_method_invalid"
+            in trigger_sql.get("trg_payment_refund_validate_insert", "").lower()
+            and "payment.company_difference_cents"
+            in trigger_sql.get("trg_invoice_adjustment_validate_insert", "").lower()
+            and "invoice_correction_group_already_open"
+            in trigger_sql.get("trg_invoice_correction_validate_insert", "").lower()
+            and "invoice_correction_source_lineage_invalid"
+            in trigger_sql.get("trg_invoice_correction_validate_update", "").lower()
+            and "invoice_correction_blank_replacement_ledger_required"
+            in trigger_sql.get("trg_invoice_correction_validate_update", "").lower()
+        )
+        settlement_version_shape_absent = (
+            settlement_columns.isdisjoint(settlement_version_columns)
+            and not present_correction_ledger_tables
+            and "uq_settlement_group_period_active" not in index_names
+            and not (required_correction_triggers & settlement_triggers)
+        )
+        if present_correction_ledger_tables and not settlement_version_shape_complete:
+            # These tables are created only by the 0.2.14 revision.  Seeing
+            # any incomplete subset in an unstamped database is evidence of a
+            # manually-created or interrupted schema, not an older MVP shape.
+            # Stop before stamping an earlier revision over that evidence.
+            raise RuntimeError(
+                "数据库存在不完整的Settlement版本或付款更正账本结构；"
+                "已停止启动，请使用已验证备份并人工检查"
+            )
+        if settlement_version_shape_complete:
+            command.stamp(alembic_config, "head")
+        elif not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
             # directly at head would falsely mark missing columns as applied.
             command.stamp(alembic_config, "b3c4b22cde0d")
@@ -299,7 +468,13 @@ def init_db() -> None:
         ):
             command.stamp(alembic_config, "c4b7f1d92e60")
             command.upgrade(alembic_config, "head")
+        elif settlement_version_shape_absent:
+            command.stamp(alembic_config, "9d2f6a8c4b13")
+            command.upgrade(alembic_config, "head")
         else:
-            command.stamp(alembic_config, "head")
+            raise RuntimeError(
+                "数据库存在不完整的Settlement版本或付款更正账本结构；"
+                "已停止启动，请使用已验证备份并人工检查"
+            )
     else:
         command.upgrade(alembic_config, "head")

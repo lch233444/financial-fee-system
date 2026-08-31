@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 from queue import Queue
@@ -16,7 +17,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "9d2f6a8c4b13"
+HEAD_REVISION = "7f3c2a91b6e4"
 PREVIOUS_REVISION = "a6d1f4c28b73"
 
 
@@ -49,9 +50,21 @@ def test_empty_database_upgrades_to_invoice_aggregation_head(tmp_path, monkeypat
         invoice_columns[column_name]["nullable"] is False
         for column_name in ("client_id", "year", "quarter", "fee_plan_id")
     )
-    assert {"invoice_sources", "invoice_lines", "invoice_issue_attempts"}.issubset(
+    assert {
+        "invoice_sources",
+        "invoice_lines",
+        "invoice_issue_attempts",
+        "invoice_corrections",
+        "payment_allocations",
+        "payment_refunds",
+        "invoice_adjustments",
+    }.issubset(
         inspector.get_table_names()
     )
+    settlement_columns = {
+        column["name"] for column in inspector.get_columns("quarterly_settlements")
+    }
+    assert {"version_no", "replaces_settlement_id"}.issubset(settlement_columns)
     with engine.connect() as connection:
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         schema_objects = {
@@ -70,6 +83,8 @@ def test_empty_database_upgrades_to_invoice_aggregation_head(tmp_path, monkeypat
     ]
     assert "invoice_sources" in schema_objects["trg_settlement_validate_void"]
     assert "invoice_lines" in schema_objects["trg_invoice_validate_issue"]
+    assert "WHERE status != 'VOID'" in schema_objects["uq_settlement_group_period_active"]
+    assert "settlement_replacement_invalid" in schema_objects["trg_settlement_insert_draft_only"]
     engine.dispose()
 
 
@@ -213,6 +228,416 @@ def _seed_0_2_8_invoice_states(database_path: Path) -> None:
         connection.commit()
 
 
+def _make_legacy_payment_compliant(database_path: Path) -> None:
+    proof_bytes = b"synthetic legacy payment proof"
+    proof_path = database_path.parent.parent / "attachments" / "migration-payment.pdf"
+    proof_path.parent.mkdir(parents=True, exist_ok=True)
+    proof_path.write_bytes(proof_bytes)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO attachments (
+                id, entity_type, entity_id, original_name, stored_path, sha256,
+                mime_type, size_bytes, created_at, updated_at
+            ) VALUES (
+                7, 'PAYMENT', 1, 'payment.pdf', ?,
+                ?, 'application/pdf', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            (str(proof_path), hashlib.sha256(proof_bytes).hexdigest(), len(proof_bytes)),
+        )
+        connection.execute(
+            """
+            UPDATE payments
+            SET amount_cents = 5000,
+                proof_attachment_id = 7,
+                remark = 'Legacy settled payment'
+            WHERE id = 1
+            """
+        )
+        connection.commit()
+
+
+def test_legacy_partial_or_unproved_payment_stops_before_0_2_14_ddl(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-payment-rejected", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        triggers_before = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        ).fetchall()
+    with pytest.raises(RuntimeError, match="部分付款"):
+        command.upgrade(alembic_config, "head")
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "9d2f6a8c4b13"
+        )
+        assert "version_no" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(quarterly_settlements)")
+        }
+        assert not {
+            "invoice_corrections",
+            "payment_allocations",
+            "payment_refunds",
+            "invoice_adjustments",
+        } & {
+            row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        triggers_after = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        ).fetchall()
+    assert triggers_after == triggers_before
+
+
+def test_legacy_payment_with_tampered_physical_proof_stops_before_0_2_14_ddl(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-payment-tampered-proof", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+    proof_path = settings.data_root / "attachments" / "migration-payment.pdf"
+    proof_path.write_bytes(b"x" * proof_path.stat().st_size)
+
+    schema_before = None
+    with sqlite3.connect(settings.database_path) as connection:
+        schema_before = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+    with pytest.raises(RuntimeError, match="SHA-256"):
+        command.upgrade(alembic_config, "head")
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "9d2f6a8c4b13"
+        )
+        schema_after = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+    assert schema_after == schema_before
+
+
+def test_legacy_payment_on_non_issued_invoice_stops_before_0_2_14_ddl(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-payment-non-issued", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE invoices SET lifecycle_status = 'VOID', voided_at = CURRENT_TIMESTAMP, "
+            "void_reason = 'Legacy inconsistent paid void' WHERE id = 3"
+        )
+        connection.commit()
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+
+    with pytest.raises(RuntimeError, match="非ISSUED"):
+        command.upgrade(alembic_config, "head")
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "9d2f6a8c4b13"
+        )
+        assert "version_no" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(quarterly_settlements)")
+        }
+
+
+def test_legacy_void_invoice_without_audit_metadata_stops_before_0_2_14_ddl(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-void-metadata", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute("UPDATE invoices SET void_reason = NULL WHERE id = 4")
+        connection.commit()
+        schema_before = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+
+    with pytest.raises(RuntimeError, match="作废原因或作废时间"):
+        command.upgrade(alembic_config, "head")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "9d2f6a8c4b13"
+        )
+        assert connection.execute(
+            "SELECT voided_at, void_reason FROM invoices WHERE id = 4"
+        ).fetchone()[1] is None
+        schema_after = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+    assert schema_after == schema_before
+
+
+def test_legacy_payment_with_blank_method_stops_before_0_2_14_ddl(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-payment-method", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute("UPDATE payments SET method = '   ' WHERE id = 1")
+        connection.commit()
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+
+    with pytest.raises(RuntimeError, match="付款方式为空或超过80字符"):
+        command.upgrade(alembic_config, "head")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "9d2f6a8c4b13"
+        )
+        assert connection.execute("SELECT method FROM payments WHERE id = 1").fetchone()[0] == (
+            "   "
+        )
+        assert "version_no" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(quarterly_settlements)")
+        }
+
+
+def test_multiple_legacy_payments_migrate_when_sum_and_each_proof_are_complete(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "legacy-multiple-payments", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    second_bytes = b"synthetic second legacy payment proof"
+    second_path = settings.data_root / "attachments" / "migration-payment-2.pdf"
+    second_path.write_bytes(second_bytes)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute("UPDATE payments SET amount_cents = 2500 WHERE id = 1")
+        connection.execute(
+            """
+            INSERT INTO attachments (
+                id, entity_type, entity_id, original_name, stored_path, sha256,
+                mime_type, size_bytes, created_at, updated_at
+            ) VALUES (
+                8, 'PAYMENT', 2, 'payment-2.pdf', ?, ?, 'application/pdf', ?,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            (str(second_path), hashlib.sha256(second_bytes).hexdigest(), len(second_bytes)),
+        )
+        connection.execute(
+            """
+            INSERT INTO payments (
+                id, invoice_id, payment_date, amount_cents, method,
+                proof_attachment_id, remark, created_at, updated_at
+            ) VALUES (
+                2, 3, '2026-04-11', 2500, 'BANK', 8,
+                'Second legacy payment', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.commit()
+
+    command.upgrade(alembic_config, "head")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT id, amount_cents, proof_attachment_id, "
+            "company_difference_cents, difference_reason "
+            "FROM payments ORDER BY id"
+        ).fetchall() == [(1, 2500, 7, 0, None), (2, 2500, 8, 0, None)]
+        assert connection.execute(
+            "SELECT payment_id, invoice_id, amount_cents, entry_type "
+            "FROM payment_allocations ORDER BY payment_id"
+        ).fetchall() == [(1, 3, 2500, "APPLY"), (2, 3, 2500, "APPLY")]
+
+
+def test_database_blocks_parallel_group_correction_payment_and_unrelated_replacement(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, "correction-sql-bypass", monkeypatch)
+    alembic_config = _alembic_config(settings)
+    command.upgrade(alembic_config, PREVIOUS_REVISION)
+    _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            "INSERT INTO platforms (id, name, code, active, created_at, updated_at) "
+            "VALUES (2, 'Unrelated Platform', 'UNREL', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+        connection.execute(
+            """
+            INSERT INTO quarterly_settlements (
+                id, client_id, platform_id, fee_plan_id, company_id, fc_id,
+                year, quarter, start_date, closing_date, days,
+                beginning_cents, contribution_cents, withdrawal_cents,
+                net_contribution_cents, closing_cents, gain_loss_cents,
+                period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
+                watermark_difference_cents, chargeable_above_hwm_cents,
+                service_fee_cents, next_hwm_cents, fee_rate_bps, formula_version,
+                calculation_mode, status, finalized_at, created_at, updated_at
+            )
+            SELECT
+                5, client_id, 2, fee_plan_id, company_id, fc_id,
+                year, quarter, start_date, closing_date, days,
+                beginning_cents, contribution_cents, withdrawal_cents,
+                net_contribution_cents, closing_cents, gain_loss_cents,
+                period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
+                watermark_difference_cents, chargeable_above_hwm_cents,
+                service_fee_cents, next_hwm_cents, fee_rate_bps, formula_version,
+                calculation_mode, status, finalized_at, created_at, updated_at
+            FROM quarterly_settlements WHERE id = 3
+            """
+        )
+        connection.commit()
+    command.upgrade(alembic_config, "head")
+
+    with sqlite3.connect(settings.database_path) as connection:
+        correction_id = connection.execute(
+            """
+            INSERT INTO invoice_corrections (
+                original_invoice_id, replacement_invoice_id, status, reason,
+                opened_at, completed_at, created_at, updated_at
+            ) VALUES (
+                3, NULL, 'OPEN', 'Synthetic controlled correction',
+                CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING id
+            """
+        ).fetchone()[0]
+        initial_allocation_id = connection.execute(
+            "SELECT id FROM payment_allocations WHERE payment_id = 1 AND entry_type = 'APPLY'"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO payment_allocations (
+                payment_id, invoice_id, amount_cents, entry_type,
+                reverses_allocation_id, correction_id, created_at, updated_at
+            ) VALUES (
+                1, 3, 5000, 'REVERSAL', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            (initial_allocation_id, correction_id),
+        )
+        connection.execute(
+            "UPDATE invoices SET lifecycle_status='VOID', voided_at=CURRENT_TIMESTAMP, "
+            "void_reason='Synthetic controlled correction' WHERE id=3"
+        )
+        connection.execute(
+            "UPDATE quarterly_settlements SET status='VOID', "
+            "void_reason='Synthetic source replacement' WHERE id=3"
+        )
+        replacement_invoice_id = connection.execute(
+            """
+            INSERT INTO invoices (
+                settlement_id, client_id, year, quarter, fee_plan_id, company_id, fc_id,
+                lifecycle_status, amount_cents, language, created_at, updated_at
+            ) VALUES (
+                5, 3, 2026, 1, 1, 1, 1, 'DRAFT', 5000, 'zh',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING id
+            """
+        ).fetchone()[0]
+        source_id = connection.execute(
+            """
+            INSERT INTO invoice_sources (
+                invoice_id, settlement_id, locked_amount_cents, active, created_at, updated_at
+            ) VALUES (?, 5, 5000, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (replacement_invoice_id,),
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO invoice_lines (
+                invoice_id, source_id, source_settlement_id, source_account_line_id,
+                platform_id, platform_name_snapshot, account_number_snapshot,
+                start_date, closing_date, service_fee_cents, display_order,
+                created_at, updated_at
+            ) VALUES (
+                ?, ?, 5, NULL, 2, 'Unrelated Platform', 'LEGACY_GROUP_HWM',
+                '2026-01-01', '2026-03-31', 5000, 0,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            (replacement_invoice_id, source_id),
+        )
+        connection.execute(
+            """
+            UPDATE invoices
+            SET invoice_number='MTC-MTF-202603-099', issue_date='2026-04-20',
+                due_date='2026-05-04', lifecycle_status='ISSUING'
+            WHERE id=?
+            """,
+            (replacement_invoice_id,),
+        )
+        connection.execute(
+            "UPDATE invoices SET lifecycle_status='ISSUED', issued_at=CURRENT_TIMESTAMP "
+            "WHERE id=?",
+            (replacement_invoice_id,),
+        )
+
+        with pytest.raises(
+            sqlite3.IntegrityError, match="invoice_correction_group_already_open"
+        ):
+            connection.execute(
+                """
+                INSERT INTO invoice_corrections (
+                    original_invoice_id, status, reason, opened_at, created_at, updated_at
+                ) VALUES (?, 'OPEN', 'Nested SQL correction', CURRENT_TIMESTAMP,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (replacement_invoice_id,),
+            )
+
+        connection.execute(
+            """
+            INSERT INTO attachments (
+                id, entity_type, entity_id, original_name, stored_path, sha256,
+                mime_type, size_bytes, created_at, updated_at
+            ) VALUES (
+                9, 'PAYMENT', NULL, 'blocked-payment.pdf', 'F:/synthetic/blocked-payment.pdf',
+                ?, 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            ("9" * 64,),
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError, match="payment_invoice_group_has_open_correction"
+        ):
+            connection.execute(
+                """
+                INSERT INTO payments (
+                    invoice_id, payment_date, amount_cents, method, proof_attachment_id,
+                    created_at, updated_at
+                ) VALUES (?, '2026-04-21', 5000, 'BANK', 9,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (replacement_invoice_id,),
+            )
+
+        with pytest.raises(
+            sqlite3.IntegrityError, match="invoice_correction_source_lineage_invalid"
+        ):
+            connection.execute(
+                "UPDATE invoice_corrections SET replacement_invoice_id=? WHERE id=?",
+                (replacement_invoice_id, correction_id),
+            )
+
+
 def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
     tmp_path, monkeypatch
 ) -> None:
@@ -220,6 +645,7 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
     alembic_config = _alembic_config(settings)
     command.upgrade(alembic_config, PREVIOUS_REVISION)
     _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
 
     command.upgrade(alembic_config, "head")
     # A repeated startup/upgrade must not duplicate frozen records.
@@ -256,6 +682,13 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
         payment_row = connection.execute(
             "SELECT id, invoice_id, amount_cents, method, remark FROM payments WHERE id = 1"
         ).fetchone()
+        allocation_row = connection.execute(
+            """
+            SELECT payment_id, invoice_id, amount_cents, entry_type,
+                   reverses_allocation_id, correction_id
+            FROM payment_allocations WHERE payment_id = 1
+            """
+        ).fetchone()
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
         assert revision == HEAD_REVISION
@@ -288,7 +721,8 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
             (3, "MTC-MTF-202403-002", "COMPLETED", 1),
             (4, "MTC-MTF-202404-003", "COMPLETED", 1),
         ]
-        assert payment_row == (1, 3, 1234, "BANK", "Legacy partial payment")
+        assert payment_row == (1, 3, 5000, "BANK", "Legacy settled payment")
+        assert allocation_row == (1, 3, 5000, "APPLY", None, None)
 
         # The new ledger guard refuses a direct legacy Finalize; stale Drafts
         # must be recalculated through the current account-level route.
@@ -303,6 +737,7 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
             """
             INSERT INTO quarterly_settlements (
                 id, client_id, platform_id, fee_plan_id, company_id, fc_id,
+                version_no, replaces_settlement_id,
                 year, quarter, start_date, closing_date, days,
                 beginning_cents, contribution_cents, withdrawal_cents,
                 net_contribution_cents, closing_cents, gain_loss_cents,
@@ -311,7 +746,8 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
                 service_fee_cents, next_hwm_cents, fee_rate_bps, formula_version,
                 calculation_mode, status, finalized_at, created_at, updated_at
             ) VALUES (
-                6, 1, 2, 1, 1, 1, 2026, 1, '2026-01-01', '2026-03-31', 90,
+                6, 1, 2, 1, 1, 1, 1, NULL,
+                2026, 1, '2026-01-01', '2026-03-31', 90,
                 100000, 0, 0, 0, 105000, 5000, 50000, 100000, 100000,
                 5000, 5000, 1000, 105000, 2000, 'HWM-1.0',
                 'LEGACY_GROUP_HWM', 'DRAFT', NULL,
@@ -503,7 +939,11 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
 
         # Voiding an Invoice atomically retires its active Settlement sources.
         connection.execute("UPDATE invoices SET lifecycle_status = 'ISSUED' WHERE id = 1")
-        connection.execute("UPDATE invoices SET lifecycle_status = 'VOID' WHERE id = 1")
+        connection.execute(
+            "UPDATE invoices SET lifecycle_status = 'VOID', "
+            "voided_at = CURRENT_TIMESTAMP, void_reason = 'Retire active sources' "
+            "WHERE id = 1"
+        )
         active = connection.execute(
             "SELECT active FROM invoice_sources WHERE invoice_id = 1"
         ).fetchone()[0]
@@ -511,114 +951,166 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
         connection.commit()
 
 
-def test_payment_triggers_serialize_overpayment_and_void_races(tmp_path, monkeypatch) -> None:
+def test_payment_triggers_require_proof_auto_allocate_and_block_direct_paid_void(
+    tmp_path, monkeypatch
+) -> None:
     settings = _settings(tmp_path, "payment-trigger-races", monkeypatch)
     alembic_config = _alembic_config(settings)
     command.upgrade(alembic_config, PREVIOUS_REVISION)
     _seed_0_2_8_invoice_states(settings.database_path)
+    _make_legacy_payment_compliant(settings.database_path)
     command.upgrade(alembic_config, "head")
 
     with sqlite3.connect(settings.database_path) as connection:
         connection.execute("UPDATE invoices SET lifecycle_status = 'ISSUED' WHERE id = 2")
-        with pytest.raises(sqlite3.IntegrityError, match="payment_amount_invalid"):
+        with pytest.raises(sqlite3.IntegrityError, match="invoice_adjustment_invalid"):
+            connection.execute(
+                """
+                INSERT INTO invoice_adjustments (
+                    invoice_id, correction_id, payment_id, adjustment_type,
+                    amount_cents, reason, created_at, updated_at
+                ) VALUES (
+                    2, NULL, 1, 'COMPANY_BORNE_DIFFERENCE',
+                    1000, 'Independent SQL adjustment', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 """
                 INSERT INTO payments (
-                    invoice_id, payment_date, amount_cents, method, created_at, updated_at
-                ) VALUES (2, '2026-04-10', 0, 'BANK', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    invoice_id, payment_date, amount_cents, method,
+                    proof_attachment_id, created_at, updated_at
+                ) VALUES (2, '2026-04-10', 4000, 'BANK', NULL,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """
             )
-        with pytest.raises(sqlite3.IntegrityError, match="payment_invoice_not_issued"):
+        connection.execute(
+            """
+            INSERT INTO attachments (
+                id, entity_type, entity_id, original_name, stored_path, sha256,
+                mime_type, size_bytes, created_at, updated_at
+            ) VALUES (
+                8, 'PAYMENT', NULL, 'new-payment.pdf', 'F:/synthetic/new-payment.pdf',
+                ?, 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            ("8" * 64,),
+        )
+        for invalid_method in ("   ", "x" * 81):
+            with pytest.raises(sqlite3.IntegrityError, match="payment_method_invalid"):
+                connection.execute(
+                    """
+                    INSERT INTO payments (
+                        invoice_id, payment_date, amount_cents,
+                        company_difference_cents, difference_reason, method,
+                        proof_attachment_id, created_at, updated_at
+                    ) VALUES (
+                        2, '2026-04-11', 3000,
+                        1000, 'Company absorbs verified difference', ?,
+                        8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (invalid_method,),
+                )
+        assert connection.execute(
+            "SELECT entity_id FROM attachments WHERE id = 8"
+        ).fetchone()[0] is None
+        connection.execute(
+            """
+            CREATE TEMP TRIGGER test_fail_initial_apply
+            BEFORE INSERT ON payment_allocations
+            WHEN NEW.invoice_id = 2 AND NEW.correction_id IS NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'synthetic_initial_apply_failure');
+            END
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic_initial_apply_failure"):
             connection.execute(
                 """
                 INSERT INTO payments (
-                    invoice_id, payment_date, amount_cents, method, created_at, updated_at
-                ) VALUES (4, '2026-04-10', 100, 'BANK', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    invoice_id, payment_date, amount_cents,
+                    company_difference_cents, difference_reason, method,
+                    proof_attachment_id, created_at, updated_at
+                ) VALUES (
+                    2, '2026-04-11', 3000,
+                    1000, 'Company absorbs verified difference', 'BANK',
+                    8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
                 """
             )
-        connection.commit()
-
-    def run_waiting_statement(sql: str, started: Event, result: Queue[object]) -> None:
-        try:
-            with sqlite3.connect(settings.database_path, timeout=5) as waiting_connection:
-                waiting_connection.execute("PRAGMA busy_timeout=5000")
-                started.set()
-                waiting_connection.execute(sql)
-                waiting_connection.commit()
-            result.put("committed")
-        except Exception as exc:  # noqa: BLE001 - the exact SQLite result is asserted below
-            result.put(exc)
-
-    # Payment obtains the SQLite writer lock first. The waiting VOID sees that
-    # committed Payment and must fail instead of producing VOID + Payment.
-    first_connection = sqlite3.connect(settings.database_path, timeout=5)
-    first_connection.execute("PRAGMA busy_timeout=5000")
-    first_connection.execute("BEGIN IMMEDIATE")
-    first_connection.execute(
-        """
-        INSERT INTO payments (
-            invoice_id, payment_date, amount_cents, method, created_at, updated_at
-        ) VALUES (2, '2026-04-11', 1000, 'BANK', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
-    void_started = Event()
-    void_result: Queue[object] = Queue()
-    void_thread = Thread(
-        target=run_waiting_statement,
-        args=("UPDATE invoices SET lifecycle_status = 'VOID' WHERE id = 2", void_started, void_result),
-    )
-    void_thread.start()
-    assert void_started.wait(timeout=5)
-    first_connection.commit()
-    first_connection.close()
-    void_thread.join(timeout=10)
-    assert not void_thread.is_alive()
-    void_outcome = void_result.get_nowait()
-    assert isinstance(void_outcome, sqlite3.IntegrityError)
-    assert "invoice_has_payments" in str(void_outcome)
-
-    # Two otherwise-valid payments serialize. The second rechecks the newly
-    # committed total inside its trigger and cannot overpay the Invoice.
-    first_connection = sqlite3.connect(settings.database_path, timeout=5)
-    first_connection.execute("PRAGMA busy_timeout=5000")
-    first_connection.execute("BEGIN IMMEDIATE")
-    first_connection.execute(
-        """
-        INSERT INTO payments (
-            invoice_id, payment_date, amount_cents, method, created_at, updated_at
-        ) VALUES (2, '2026-04-12', 2000, 'BANK', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
-    payment_started = Event()
-    payment_result: Queue[object] = Queue()
-    payment_thread = Thread(
-        target=run_waiting_statement,
-        args=(
-            "INSERT INTO payments (invoice_id, payment_date, amount_cents, method, created_at, updated_at) "
-            "VALUES (2, '2026-04-13', 2000, 'BANK', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            payment_started,
-            payment_result,
-        ),
-    )
-    payment_thread.start()
-    assert payment_started.wait(timeout=5)
-    first_connection.commit()
-    first_connection.close()
-    payment_thread.join(timeout=10)
-    assert not payment_thread.is_alive()
-    payment_outcome = payment_result.get_nowait()
-    assert isinstance(payment_outcome, sqlite3.IntegrityError)
-    assert "payment_amount_exceeds_invoice" in str(payment_outcome)
-
-    with sqlite3.connect(settings.database_path) as connection:
-        total_paid = connection.execute(
-            "SELECT SUM(amount_cents) FROM payments WHERE invoice_id = 2"
-        ).fetchone()[0]
-        lifecycle_status = connection.execute(
-            "SELECT lifecycle_status FROM invoices WHERE id = 2"
-        ).fetchone()[0]
-    assert total_paid == 3000
-    assert lifecycle_status == "ISSUED"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM payments WHERE invoice_id = 2"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM invoice_adjustments WHERE invoice_id = 2"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM payment_allocations WHERE invoice_id = 2"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT entity_id FROM attachments WHERE id = 8"
+        ).fetchone()[0] is None
+        connection.execute("DROP TRIGGER test_fail_initial_apply")
+        cursor = connection.execute(
+            """
+            INSERT INTO payments (
+                invoice_id, payment_date, amount_cents,
+                company_difference_cents, difference_reason, method,
+                proof_attachment_id, created_at, updated_at
+            ) VALUES (
+                2, '2026-04-11', 3000,
+                1000, 'Company absorbs verified difference', 'BANK',
+                8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+        payment_id = cursor.lastrowid
+        assert connection.execute(
+            "SELECT amount_cents, company_difference_cents, difference_reason "
+            "FROM payments WHERE id = ?",
+            (payment_id,),
+        ).fetchone() == (3000, 1000, "Company absorbs verified difference")
+        assert connection.execute(
+            "SELECT entity_id FROM attachments WHERE id = 8"
+        ).fetchone()[0] == payment_id
+        assert connection.execute(
+            """
+            SELECT invoice_id, amount_cents, entry_type
+            FROM payment_allocations WHERE payment_id = ?
+            """,
+            (payment_id,),
+        ).fetchone() == (2, 3000, "APPLY")
+        assert connection.execute(
+            """
+            SELECT invoice_id, correction_id, payment_id, adjustment_type,
+                   amount_cents, reason
+            FROM invoice_adjustments WHERE payment_id = ?
+            """,
+            (payment_id,),
+        ).fetchone() == (
+            2,
+            None,
+            payment_id,
+            "COMPANY_BORNE_DIFFERENCE",
+            1000,
+            "Company absorbs verified difference",
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError, match="invoice_with_payment_requires_open_correction"
+        ):
+            connection.execute(
+                "UPDATE invoices SET lifecycle_status = 'VOID', "
+                "voided_at = CURRENT_TIMESTAMP, void_reason = 'Direct paid void rejected' "
+                "WHERE id = 2"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="payment_history_immutable"):
+            connection.execute("UPDATE payments SET remark = 'tamper' WHERE id = ?", (payment_id,))
+        with pytest.raises(sqlite3.IntegrityError, match="payment_evidence_immutable"):
+            connection.execute("UPDATE attachments SET sha256 = ? WHERE id = 8", ("9" * 64,))
+        with pytest.raises(sqlite3.IntegrityError, match="payment_evidence_immutable"):
+            connection.execute("DELETE FROM attachments WHERE id = 8")
 
 
 def test_unstamped_partial_invoice_columns_are_migrated_not_stamped_as_head(

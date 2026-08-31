@@ -1,42 +1,23 @@
-金融计划收费计算系统 MVP 0.2.13
-构建日期：2026-08-31
+金融计划收费计算系统 MVP 0.2.14
+构建日期：2026-09-01
 
 本版主要更新：
-- Settlement Finalize取得SQLite写锁后按当前Client/账户状态、Company/FC、Fee Plan费率、Snapshot、Transaction、凭证及前序HWM重新计算；任何Draft陈旧或来源改变都会返回409并要求重新Calculate，不再直接锁定旧结果。
-- 新迁移`9d2f6a8c4b13`把Finalized Settlement、账户行、引用流水/Snapshot及其证据关系的不可变约束下沉到SQLite；升级前会检查外键、账户HWM链、核心整数公式、期间收益率、同账户同季度重复和存量凭证关系，异常时停止而不猜测修复。SQLite精确收益率校验要求Beginning、Net Contribution和Gain/Loss三项各自绝对值均不超过HKD 90bn，任一项超过即要求专门高精度迁移，并非业务额度。
-- 同一Sub Account同一年度季度不得跨Platform或Fee Plan重复Finalize；仅Draft Settlement可由财务确认删除并保留审计，Finalized/VOID不可删除。VOID后重建同自然键Settlement仍需独立高风险迁移，季度结算页面也尚无Settlement Void入口；本版不声称普通用户已具备完整纠错闭环，禁止直接改库代替受控操作。
-- Finalize要求凭证数据库关系与磁盘原文件同时存在、非空且SHA-256一致；物理缺失或篡改会明确阻止正式结算。资金流水、快照、Calculate、Finalize、Draft删除、备份生成和恢复均增加前端防重复提交及请求期间输入锁定；恢复成功时清除旧错误提示。
-- 备份创建使用唯一临时ZIP，完成严格恢复级自校验后才在同一备份目录原子公布，避免同秒并发覆盖或下载半成品。恢复从上传读取前即独占，严格核对Manifest结构、路径全集、逐文件哈希、系统数据库身份、Alembic版本、SQLite完整性和外键；成功排队后立即阻止新增财务写入并自动安全退出。下次启动采用同盘预制、事务日志、目录原子切换、失败回滚和断电后重试，避免新数据库与旧附件混用。旧暂存目录及上传ZIP清理失败会显式告警并在后续启动安全重试。
-- Invoice编号第一段改为Company全名，完整格式为`Company全名-中介人名字缩写-Issue Date(YYYYMMDD)-连续号`；Company Code仅作基础资料内部标识。连续号仍按同一Company+FC持续递增，不按日期重置，作废、失败及碰撞号码不复用，历史编号不改写。
-- 业务编号与磁盘归档名解耦：PDF正文和系统记录保留完整账单编号；0.2.12新签发及旧Issued缺档补建统一使用确定性哈希归档名，避免Windows大小写碰撞，旧版已登记路径及遗留ISSUING安全原名继续兼容。下载文件名另作Windows安全处理并包含记录ID。
-- 中英文Invoice都能完整显示中文Company全名及业务编号。
-- 账单确认后显示明确入账回执，包括Client、Platform、Sub Account、Scheme、Trustee、Fee Plan、Snapshot日期、金额、持仓和Closing资格；资金与余额页面可按客户、平台和账户筛选，并追溯原始Statement Import。
-- 客户与账户页面改为清晰的Sub Account明细；所有关键账户下拉统一显示Client、Platform、Account Number及Scheme，季度结算的内部Excel候选和历史列表也逐行显示账户号及Scheme，Invoice候选、已选组合和明细显示Fee Plan及`Scheme（当前资料）`，避免跨Platform同号账户选错。
-- 账单确认仍只生成Balance Snapshot，不自动生成Contribution/Withdrawal或Settlement；季度结算继续由财务选择账户级Beginning/Closing Snapshot、核对流水后人工Calculate及Finalize。
-- 切换导入记录、凭证类型或账户筛选时会清空旧关联选择；服务端核对显式选户的Platform，避免跨Platform同号账户或相同数字ID造成错挂。
-- ACTIVE Sub Account必须填写开始管理日期；补全Sub Account时可填写实际结束日期，但不得早于该账户任何未作废Settlement的Closing Date。服务端同时审计化重核未被Settlement引用的导入Snapshot Closing资格；季度Calculate和Finalize均拒绝DRAFT/CLOSED或缺少开始日期的账户。
-- 基础设置将FC的`Initial Code`更正为“中介人名字缩写”，删除灰色`TW`示例；底层字段保持兼容，不增加迁移。
-- 公司Excel母版按用户确认改名为“新收费计划计算纯净版模板.xlsx”，工作簿内容及SHA-256保持不变。
-- 基础设置为Company、FC、Platform和Fee Plan增加受保护删除；只允许删除从未被其他基础资料、客户、账户、Settlement、Invoice、编号序列或审计/附件/导出历史引用的误建资料，存在引用时明确拒绝且不级联删除历史财务数据。
-- Invoice Draft改为按Client、Year、Quarter和Fee Plan由服务端自动纳入全部Finalized Settlement；多个Platform只在客户Invoice阶段汇总。
-- Invoice逐行冻结Platform、Sub Account、账户期间和锁定Service Fee，并显示客户季度应付合计；界面另显示当前Scheme用于辨认账户，但Scheme尚未冻结。账户HWM仍各自独立计算，不会跨账户抵销。
-- 同一客户季度收费计划最多一张活动Invoice，同一Settlement最多属于一张活动Invoice。Draft后若出现迟到Settlement，Issue会拒绝漏项签发，必须作废Draft并重建。
-- 出单PDF使用Settlement冻结的Company/FC及Invoice冻结账户行，不再从Client当前Company重新读取抬头或收款资料。
-- 已登记的Issued/VOID正式Invoice PDF每次下载都会按Invoice、语言和归档路径核对审计记录及SHA-256；文件缺失、不可读、审计记录缺失或哈希不符时拒绝返回并提示从已验证备份恢复，不会重生成覆盖。
-- 新增ISSUING中断恢复：双语归档完整时可完成签发，否则退回Draft并清理部分文件；预留编号永久保留且不复用。
-- FC服务统计精简为当前管理客户数、期间收费客户数和Finalized Service Fee，不再把Company已收/未收列作FC指标；Dashboard可选择Year和Quarter。
-- Payment仍保留现有多笔/部分付款界面，但新增提交防双击及数据库兜底：只能向Issued Invoice登记正数付款，累计不得超额，有Payment时不得Void。
-- 财务日期默认值改用Windows本地日历日期，避免北京时间凌晨被UTC换算成前一天。
-- 继续沿用0.2.9的Invoice迁移口径：保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。0.2.13新增Settlement Finalize完整性迁移；任何存量外键、公式、HWM链、同账户同季度或关键证据关系不一致都会安全停止并要求备份后人工检查。
-- Windows构建同时校验后端、前端、字符串版号和数值FileVersion，并固定验证Excel母版及Tesseract版本/SHA-256，防止发布信息漂移。
-- 公司Excel母版内容未修改，按用户确认改名为“新收费计划计算纯净版模板.xlsx”，SHA-256仍为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
-- 本版本仍不包含二态Payment、付款凭证硬前置、公司承担差额、错误Invoice更正/退款、Defer延付利息、自动邮件、用户权限及服务器部署。
+- Settlement页面新增Finalized作废入口。作废记录永久保留；同一Client、Platform、Fee Plan、年度、季度组合仅允许一个非VOID活动版本，后续重建按version_no和replaces_settlement_id形成不可覆盖的v1→v2→v3替代链。
+- Settlement Calculate取得SQLite写锁后判断活动版本并创建替代草稿；Finalize继续按当前资料重新计算、拒绝陈旧Draft，并保持结算、资金、余额、凭证及HWM关系冻结。
+- Payment业务状态收敛为UNPAID/PAID，逾期只作独立提示。每张Invoice只允许一次付款确认；付款/退款方式必须去空格后非空，付款必须绑定数据库内未占用的实体凭证，且磁盘原文件存在、非空、大小和SHA-256一致。占用按Attachment关系和凭证外键判断；SHA-256只证明文件完整性，相同哈希不自动代表同一业务凭证。
+- 付款确认同时记录实际现金和公司承担差额，两者必须精确等于Invoice金额；差额大于零时必须填写原因，差额为零时拒绝无意义的差额原因。Payment INSERT由数据库原子认领凭证并生成绑定该Payment的可选差额及初始现金分配，普通差额不能独立插入。系统不再接受多笔或部分付款。
+- 错单不删除原Invoice、编号、PDF或现金事实。Invoice Correction以OPEN→COMPLETED处理：原因去空格后至少2字符；原Invoice转VOID时强制作废时间和2至500字符原因并在之后冻结；先用不可变REVERSAL冲回当前活动现金分配，再把本轮可处置现金分配到完整Settlement替代链生成的新Invoice，或登记有实体凭证的退款。
+- 连续更正必须先完成上一轮；OPEN期间替代Invoice必须保持资金空白，也不能提前登记付款或发起嵌套更正。REVERSAL在OPEN立即生效，新分配、退款和更正差额只有完成态守恒校验通过后才同时进入会计值。每轮满足“REVERSAL=新分配+本轮退款”，全链满足“净分配+累计退款=原Payment现金”，已退款金额不能再次使用。
+- 新Alembic迁移7f3c2a91b6e4重建Settlement活动唯一约束，收紧Payment凭证外键并新增PaymentAllocation、PaymentRefund、InvoiceAdjustment和InvoiceCorrection不可变账本及SQLite Trigger。旧库仅在既有Invoice已由Payment合计完整结清、每笔Payment均有独立且物理一致的付款凭证时自动回填；尚未结清、缺证、共用凭证、外键异常或半迁移结构会在写入前安全停止。历史多笔Payment若合计恰好全额且逐笔合规会无损保留，新版本不再允许新增多笔付款。
+- 备份校验同时逐笔对照数据库Payment/PaymentRefund凭证关系与归档实体，核验归属、唯一受控路径、非空普通文件、大小、数据库SHA-256及Manifest SHA-256；旧9d Payment缺证或归档凭证被篡改、删去时拒绝。
+- 备份严格验证同时识别旧正式head 9d2f6a8c4b13和新head 7f3c2a91b6e4各自结构，不把半迁移数据库当作有效恢复源。
+- Settlement及Invoice页面显示版本、替代关系、二态付款、更正、分配、差额、退款和凭证信息，并对Void、付款及更正操作提供受控确认和防重复提交。
+- 公司Excel母版未修改，SHA-256保持16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
 
-正式发布状态：
-- 后端完整回归226/226、前端TypeScript及生产构建通过；候选包在8001端口和F盘纯合成数据根完成Settlement、备份恢复、自停机与重启收敛验收。
-- 正式切换前完整备份`financial_system_backup_20260831_205840.zip`及其API副本哈希一致，F盘隔离副本完成严格校验和`c4b7f1d92e60 → 9d2f6a8c4b13`迁移预检。
-- 正式版位于`F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem`，已接管8000端口；健康检查、进程路径、45条OpenAPI路径、最新前端、入口禁缓存、数据库完整性/外键及35个Trigger均通过。
-- 未读取或输出真实客户业务内容，未调用Luna处理真实文件；旧0.2.12运行目录已移入回收站，候选、构建和测试临时目标已清理。
+发布门槛：
+- 本构建必须先通过0.2.14后端完整回归、前端TypeScript及生产构建、Windows候选合成验收、正式完整备份、F盘隔离副本9d2f6a8c4b13→7f3c2a91b6e4迁移预检和8000端口正式验收。
+- 最终测试数量、EXE哈希、前端资源、正式备份和切换结果以构建目录内的构建结果.txt及源码docs中的最终验收记录为准；未完成全部门槛前不得把候选包当作正式版。
+- 隔离验收和正式切换不得读取或输出真实客户业务内容，不得打开真实客户文件，也不得未经用户授权调用Luna处理真实文件。
 
 启动方式：
 1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。
@@ -47,7 +28,7 @@
 注意：
 - 不要只复制exe，完整文件夹才是一键运行版。
 - 系统仅监听127.0.0.1，不开放外网。
-- 客人账单和数据库只保存在首次选择的数据目录。
+- 客人账单和数据库只保存在首次选择的数据目录；运行目录不等于数据目录。
 - 本地OCR不上传客人账单。只有用户主动点击“Luna辅助识别”时，当前账单图片才会发送给OpenAI。
 - ChatGPT Pro辅助识别不使用OpenAI API Key；所需Codex程序已包含在发布包中，首次使用需在本系统专用环境单独完成一次浏览器登录。
 - ChatGPT未登录、登录失效、额度不足或Luna不可用时，系统直接转人工复核，本地OCR和其他财务功能不受影响。
@@ -55,4 +36,4 @@
 - AI结果不能直接入账，仍须财务人员在原图旁确认。
 - 页面内“退出ChatGPT Pro”只退出本系统专用Luna环境，不影响桌面Codex；“安全退出系统”会先停止本程序启动的识别进程，再正常停止本地服务，不会删除财务数据。
 - 前端入口页禁止缓存，升级后不会继续显示上一版界面。
-- 需要迁移电脑时，请先在系统内建立备份。
+- 需要迁移电脑时，请先在系统内建立并验证完整备份。

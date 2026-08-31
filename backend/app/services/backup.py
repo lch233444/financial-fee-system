@@ -37,6 +37,64 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "a6d1f4c28b73",
         "c4b7f1d92e60",
         "9d2f6a8c4b13",
+        "7f3c2a91b6e4",
+    }
+)
+NEW_HEAD_TRIGGER_NAMES = frozenset(
+    {
+        "trg_transactions_block_finalized_period",
+        "trg_transactions_update_block_frozen_period",
+        "trg_transactions_delete_block_frozen_period",
+        "trg_snapshot_update_block_frozen_reference",
+        "trg_snapshot_delete_block_frozen_reference",
+        "trg_attachment_update_block_finalized_evidence",
+        "trg_attachment_delete_block_finalized_evidence",
+        "trg_statement_import_update_block_finalized_evidence",
+        "trg_statement_import_delete_block_finalized_evidence",
+        "trg_settlement_block_out_of_order_insert",
+        "trg_settlement_account_line_order",
+        "trg_settlement_account_line_update_order",
+        "trg_settlement_validate_finalize",
+        "trg_settlement_validate_void",
+        "trg_settlement_insert_draft_only",
+        "trg_settlement_lifecycle_transition",
+        "trg_settlement_delete_non_draft",
+        "trg_settlement_parent_financial_lock",
+        "trg_settlement_line_insert_draft_only",
+        "trg_settlement_line_update_draft_only",
+        "trg_settlement_line_delete_draft_only",
+        "trg_invoice_source_insert_draft_only",
+        "trg_invoice_source_update_draft_only",
+        "trg_invoice_source_delete_draft_only",
+        "trg_invoice_line_insert_draft_only",
+        "trg_invoice_line_update_draft_only",
+        "trg_invoice_line_delete_draft_only",
+        "trg_invoice_validate_issue",
+        "trg_invoice_financial_header_update_lock",
+        "trg_invoice_insert_draft_only",
+        "trg_invoice_lifecycle_transition",
+        "trg_invoice_issue_metadata_guard",
+        "trg_payment_validate_insert",
+        "trg_invoice_block_void_with_payment",
+        "trg_invoice_sources_deactivate_on_void",
+        "trg_payment_claim_proof",
+        "trg_payment_update_immutable",
+        "trg_payment_delete_immutable",
+        "trg_invoice_correction_validate_insert",
+        "trg_invoice_correction_validate_update",
+        "trg_invoice_correction_delete_immutable",
+        "trg_payment_allocation_validate_insert",
+        "trg_payment_allocation_update_immutable",
+        "trg_payment_allocation_delete_immutable",
+        "trg_payment_refund_validate_insert",
+        "trg_payment_refund_claim_proof",
+        "trg_payment_refund_update_immutable",
+        "trg_payment_refund_delete_immutable",
+        "trg_invoice_adjustment_validate_insert",
+        "trg_invoice_adjustment_update_immutable",
+        "trg_invoice_adjustment_delete_immutable",
+        "trg_attachment_update_block_payment_evidence",
+        "trg_attachment_delete_block_payment_evidence",
     }
 )
 REQUIRED_DATABASE_COLUMNS = {
@@ -46,6 +104,234 @@ REQUIRED_DATABASE_COLUMNS = {
     "quarterly_settlements": {"id", "client_id", "platform_id", "fee_plan_id", "year", "quarter", "status"},
     "app_settings": {"key", "value"},
 }
+
+
+def _normalized_index_where(sql: str) -> str:
+    normalized = re.sub(r"\s+", "", sql.upper())
+    normalized = normalized.replace('"', "").replace("`", "").replace("[", "").replace("]", "")
+    return normalized.split("WHERE", 1)[1].rstrip(";") if "WHERE" in normalized else ""
+
+
+def _require_named_partial_unique_index(
+    connection: sqlite3.Connection,
+    table_name: str,
+    index_name: str,
+    columns: tuple[str, ...],
+    where_sql: str,
+) -> None:
+    index_row = next(
+        (
+            row
+            for row in connection.execute(f'PRAGMA index_list("{table_name}")').fetchall()
+            if str(row[1]) == index_name
+        ),
+        None,
+    )
+    actual_columns = (
+        tuple(
+            str(row[2])
+            for row in connection.execute(f'PRAGMA index_info("{index_name}")').fetchall()
+        )
+        if index_row is not None
+        else ()
+    )
+    sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (index_name,),
+    ).fetchone()
+    if (
+        index_row is None
+        or len(index_row) < 5
+        or not bool(index_row[2])
+        or str(index_row[3]) != "c"
+        or not bool(index_row[4])
+        or actual_columns != columns
+        or sql_row is None
+        or _normalized_index_where(str(sql_row[0] or ""))
+        != _normalized_index_where(f"WHERE {where_sql}")
+    ):
+        raise ValueError("备份数据库结构不兼容")
+
+
+def _require_nonpartial_unique_columns(
+    connection: sqlite3.Connection,
+    table_name: str,
+    required_columns: set[tuple[str, ...]],
+) -> None:
+    actual: set[tuple[str, ...]] = set()
+    for row in connection.execute(f'PRAGMA index_list("{table_name}")').fetchall():
+        if not bool(row[2]) or (len(row) >= 5 and bool(row[4])):
+            continue
+        actual.add(
+            tuple(
+                str(info[2])
+                for info in connection.execute(f'PRAGMA index_info("{row[1]}")').fetchall()
+            )
+        )
+    if not required_columns.issubset(actual):
+        raise ValueError("备份数据库结构不兼容")
+
+
+def _stored_path_parts(stored_path: str) -> tuple[str, ...]:
+    windows_path = PureWindowsPath(stored_path)
+    posix_path = PurePosixPath(stored_path)
+    if windows_path.is_absolute() or windows_path.drive:
+        parts = windows_path.parts
+    elif posix_path.is_absolute():
+        parts = posix_path.parts
+    else:
+        raise ValueError("备份中的付款凭证路径无效")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("备份中的付款凭证路径无效")
+    return tuple(str(part) for part in parts)
+
+
+def _archived_attachment_path(
+    stored_path: str,
+    records: dict[str, str],
+    source_attachments_root: Path | None,
+) -> str:
+    if source_attachments_root is not None:
+        stored = Path(stored_path)
+        source_root = source_attachments_root.resolve()
+        try:
+            relative = stored.resolve().relative_to(source_root)
+        except (OSError, ValueError) as exc:
+            raise ValueError("付款凭证不在受控attachments目录") from exc
+        candidate = _validate_relative_path(
+            (PurePosixPath("attachments") / PurePosixPath(relative.as_posix())).as_posix(),
+            "付款凭证",
+        )
+        if candidate not in records:
+            raise ValueError("备份缺少数据库引用的付款凭证")
+        return candidate
+
+    stored_parts = tuple(part.casefold() for part in _stored_path_parts(stored_path))
+    matches: list[str] = []
+    for relative_path in records:
+        archive_parts = PurePosixPath(relative_path).parts
+        if not archive_parts or archive_parts[0].casefold() != "attachments":
+            continue
+        folded = tuple(part.casefold() for part in archive_parts)
+        if len(stored_parts) >= len(folded) and stored_parts[-len(folded) :] == folded:
+            matches.append(relative_path)
+    if len(matches) != 1:
+        raise ValueError("备份中的付款凭证路径无法唯一映射到attachments")
+    return matches[0]
+
+
+def _validate_payment_proof_archive(
+    database_path: Path,
+    archive_root: Path,
+    records: dict[str, str],
+    *,
+    source_attachments_root: Path | None = None,
+) -> None:
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
+    )
+    try:
+        table_names = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        proof_rows: list[
+            tuple[str, int, object, object, object, object, object, object]
+        ] = []
+        if {"payments", "attachments"}.issubset(table_names):
+            proof_rows.extend(
+                (
+                    "PAYMENT",
+                    int(row[0]),
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                )
+                for row in connection.execute(
+                    """
+                    SELECT payment.id, proof.id, proof.entity_type, proof.entity_id,
+                           proof.stored_path, proof.size_bytes, proof.sha256
+                    FROM payments AS payment
+                    LEFT JOIN attachments AS proof
+                      ON proof.id = payment.proof_attachment_id
+                    ORDER BY payment.id
+                    """
+                ).fetchall()
+            )
+        if {"payment_refunds", "attachments"}.issubset(table_names):
+            proof_rows.extend(
+                (
+                    "PAYMENT_REFUND",
+                    int(row[0]),
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                )
+                for row in connection.execute(
+                    """
+                    SELECT refund.id, proof.id, proof.entity_type, proof.entity_id,
+                           proof.stored_path, proof.size_bytes, proof.sha256
+                    FROM payment_refunds AS refund
+                    LEFT JOIN attachments AS proof
+                      ON proof.id = refund.proof_attachment_id
+                    ORDER BY refund.id
+                    """
+                ).fetchall()
+            )
+    finally:
+        connection.close()
+
+    for (
+        expected_type,
+        entity_id,
+        proof_id,
+        entity_type,
+        proof_entity_id,
+        stored,
+        size,
+        sha,
+    ) in proof_rows:
+        if (
+            proof_id is None
+            or entity_type != expected_type
+            or proof_entity_id != entity_id
+            or not isinstance(stored, str)
+            or not isinstance(size, int)
+            or size <= 0
+            or not isinstance(sha, str)
+            or SHA256_PATTERN.fullmatch(sha.casefold()) is None
+        ):
+            raise ValueError("备份中的付款凭证关系或元数据无效")
+        relative_path = _archived_attachment_path(
+            stored, records, source_attachments_root
+        )
+        archived_path = archive_root.joinpath(*PurePosixPath(relative_path).parts)
+        _require_within_root(archived_path, archive_root, "付款凭证")
+        if (
+            archived_path.is_symlink()
+            or archived_path.is_junction()
+            or not archived_path.is_file()
+        ):
+            raise ValueError("备份缺少有效的付款凭证文件")
+        try:
+            actual_size = archived_path.stat().st_size
+            actual_sha = sha256_file(archived_path)
+        except OSError as exc:
+            raise ValueError("备份中的付款凭证文件无法读取") from exc
+        if (
+            actual_size != size
+            or actual_sha.casefold() != sha.casefold()
+            or records.get(relative_path, "").casefold() != sha.casefold()
+        ):
+            raise ValueError("备份中的付款凭证文件校验失败")
 
 
 class _DuplicateJsonKeyError(ValueError):
@@ -123,6 +409,14 @@ def create_backup() -> Path:
                         files.append(
                             {"path": relative.as_posix(), "sha256": sha256_file(destination)}
                         )
+
+            archive_records = {str(record["path"]): str(record["sha256"]) for record in files}
+            _validate_payment_proof_archive(
+                db_copy,
+                tmp,
+                archive_records,
+                source_attachments_root=settings.data_root / "attachments",
+            )
 
             manifest = {
                 "format": BACKUP_FORMAT,
@@ -284,7 +578,9 @@ def validate_backup_archive_root(root: Path) -> dict:
 
     settings = get_settings()
     database_relative_path = f"database/{settings.database_path.name}"
-    _validate_sqlite_database(root.joinpath(*PurePosixPath(database_relative_path).parts))
+    database_path = root.joinpath(*PurePosixPath(database_relative_path).parts)
+    _validate_sqlite_database(database_path)
+    _validate_payment_proof_archive(database_path, root, records)
     return manifest
 
 
@@ -745,6 +1041,234 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     or revision_rows[0][0] not in SUPPORTED_DATABASE_REVISIONS
                 ):
                     raise ValueError("备份数据库迁移版本不受当前系统支持")
+                database_revision = revision_rows[0][0]
+                if database_revision in {
+                    "c4b7f1d92e60",
+                    "9d2f6a8c4b13",
+                    "7f3c2a91b6e4",
+                }:
+                    _require_named_partial_unique_index(
+                        connection,
+                        "invoices",
+                        "uq_invoices_active_client_period_plan",
+                        ("client_id", "year", "quarter", "fee_plan_id"),
+                        "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')",
+                    )
+                    _require_named_partial_unique_index(
+                        connection,
+                        "invoice_sources",
+                        "uq_invoice_sources_active_settlement",
+                        ("settlement_id",),
+                        "active = 1",
+                    )
+                if database_revision == "7f3c2a91b6e4":
+                    settlement_columns = {
+                        row[1]
+                        for row in connection.execute(
+                            'PRAGMA table_info("quarterly_settlements")'
+                        ).fetchall()
+                    }
+                    required_ledger_columns = {
+                        "invoice_corrections": {
+                            "original_invoice_id", "replacement_invoice_id", "status", "reason"
+                        },
+                        "payment_allocations": {
+                            "payment_id", "invoice_id", "amount_cents", "entry_type",
+                            "reverses_allocation_id", "correction_id"
+                        },
+                        "payment_refunds": {
+                            "payment_id", "correction_id", "amount_cents", "proof_attachment_id"
+                        },
+                        "invoice_adjustments": {
+                            "invoice_id", "correction_id", "payment_id",
+                            "adjustment_type", "amount_cents"
+                        },
+                    }
+                    if not {"version_no", "replaces_settlement_id"}.issubset(
+                        settlement_columns
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    for table_name, required_columns in required_ledger_columns.items():
+                        if table_name not in table_names:
+                            raise ValueError("备份数据库结构不兼容")
+                        actual_columns = {
+                            row[1]
+                            for row in connection.execute(
+                                f'PRAGMA table_info("{table_name}")'
+                            ).fetchall()
+                        }
+                        if not required_columns.issubset(actual_columns):
+                            raise ValueError("备份数据库结构不兼容")
+                    payment_info = {
+                        row[1]: row
+                        for row in connection.execute('PRAGMA table_info("payments")').fetchall()
+                    }
+                    if (
+                        not payment_info.get("proof_attachment_id")
+                        or payment_info["proof_attachment_id"][3] != 1
+                        or not payment_info.get("company_difference_cents")
+                        or payment_info["company_difference_cents"][3] != 1
+                        or "difference_reason" not in payment_info
+                        or str(payment_info["company_difference_cents"][4] or "").strip(
+                            "()'\" "
+                        ) != "0"
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    _require_named_partial_unique_index(
+                        connection,
+                        "quarterly_settlements",
+                        "uq_settlement_group_period_active",
+                        ("client_id", "platform_id", "fee_plan_id", "year", "quarter"),
+                        "status != 'VOID'",
+                    )
+
+                    def foreign_keys(table_name: str) -> set[tuple[str, str, str, str]]:
+                        return {
+                            (str(row[3]), str(row[2]), str(row[4]), str(row[6]).upper())
+                            for row in connection.execute(
+                                f'PRAGMA foreign_key_list("{table_name}")'
+                            ).fetchall()
+                        }
+
+                    required_foreign_keys = {
+                        "quarterly_settlements": {
+                            ("previous_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
+                            ("replaces_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
+                        },
+                        "payments": {
+                            ("invoice_id", "invoices", "id", "RESTRICT"),
+                            ("proof_attachment_id", "attachments", "id", "RESTRICT"),
+                        },
+                        "invoice_corrections": {
+                            ("original_invoice_id", "invoices", "id", "RESTRICT"),
+                            ("replacement_invoice_id", "invoices", "id", "RESTRICT"),
+                        },
+                        "payment_allocations": {
+                            ("payment_id", "payments", "id", "RESTRICT"),
+                            ("invoice_id", "invoices", "id", "RESTRICT"),
+                            ("reverses_allocation_id", "payment_allocations", "id", "RESTRICT"),
+                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                        },
+                        "payment_refunds": {
+                            ("payment_id", "payments", "id", "RESTRICT"),
+                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                            ("proof_attachment_id", "attachments", "id", "RESTRICT"),
+                        },
+                        "invoice_adjustments": {
+                            ("invoice_id", "invoices", "id", "RESTRICT"),
+                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                            ("payment_id", "payments", "id", "RESTRICT"),
+                        },
+                    }
+                    if any(
+                        not required.issubset(foreign_keys(table_name))
+                        for table_name, required in required_foreign_keys.items()
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+
+                    required_unique_columns = {
+                        "quarterly_settlements": {
+                            (
+                                "client_id", "platform_id", "fee_plan_id",
+                                "year", "quarter", "version_no",
+                            ),
+                            ("replaces_settlement_id",),
+                        },
+                        "payments": {("proof_attachment_id",)},
+                        "invoice_corrections": {
+                            ("original_invoice_id",),
+                            ("replacement_invoice_id",),
+                        },
+                        "payment_allocations": {("reverses_allocation_id",)},
+                        "payment_refunds": {("proof_attachment_id",)},
+                        "invoice_adjustments": {("payment_id",)},
+                    }
+                    for table_name, required_columns in required_unique_columns.items():
+                        _require_nonpartial_unique_columns(
+                            connection, table_name, required_columns
+                        )
+
+                    table_sql = {
+                        table_name: str(
+                            connection.execute(
+                                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                                (table_name,),
+                            ).fetchone()[0]
+                            or ""
+                        )
+                        for table_name in ("payments", "invoice_adjustments")
+                    }
+                    if not all(
+                        marker in table_sql["payments"]
+                        for marker in (
+                            "ck_payment_company_difference_nonnegative",
+                            "ck_payment_difference_reason",
+                        )
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "ck_invoice_adjustment_owner_shape" not in table_sql[
+                        "invoice_adjustments"
+                    ]:
+                        raise ValueError("备份数据库结构不兼容")
+                    trigger_sql = {
+                        row[0]: str(row[1] or "")
+                        for row in connection.execute(
+                            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+                        ).fetchall()
+                    }
+                    if set(trigger_sql) != NEW_HEAD_TRIGGER_NAMES:
+                        raise ValueError("备份数据库结构不兼容")
+                    required_trigger_markers = {
+                        "trg_settlement_validate_finalize": "settlement_container_previous_changed",
+                        "trg_settlement_insert_draft_only": "settlement_replacement_invalid",
+                        "trg_settlement_parent_financial_lock": "settlement_replacement_identity_immutable",
+                        "trg_invoice_lifecycle_transition": "invoice_void_metadata_invalid",
+                        "trg_payment_validate_insert": "payment_proof_invalid",
+                        "trg_payment_allocation_validate_insert": "ordinary_payment_must_settle_invoice",
+                        "trg_invoice_block_void_with_payment": "invoice_payment_allocation_not_reversed",
+                        "trg_invoice_correction_validate_insert": "invoice_correction_group_already_open",
+                        "trg_invoice_correction_validate_update": "invoice_correction_source_lineage_invalid",
+                        "trg_invoice_adjustment_validate_insert": "payment.company_difference_cents",
+                    }
+                    if any(
+                        marker not in trigger_sql.get(trigger_name, "")
+                        for trigger_name, marker in required_trigger_markers.items()
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "invoice_void_metadata_immutable" not in trigger_sql.get(
+                        "trg_invoice_lifecycle_transition", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "payment_invoice_group_has_open_correction" not in trigger_sql.get(
+                        "trg_payment_validate_insert", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if not all(
+                        marker in trigger_sql.get("trg_payment_validate_insert", "")
+                        for marker in (
+                            "payment_invoice_ledger_not_empty",
+                            "payment_must_settle_invoice",
+                            "payment_difference_invalid",
+                            "payment_method_invalid",
+                        )
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "payment_refund_method_invalid" not in trigger_sql.get(
+                        "trg_payment_refund_validate_insert", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "invoice_correction_blank_replacement_ledger_required" not in trigger_sql.get(
+                        "trg_invoice_correction_validate_update", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "settlement_replacement_invalid_at_finalize" not in trigger_sql.get(
+                        "trg_settlement_parent_financial_lock", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
+                    if "invoice_open_correction_replacement_cannot_void" not in trigger_sql.get(
+                        "trg_invoice_block_void_with_payment", ""
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
         finally:
             connection.close()
     except sqlite3.Error as exc:

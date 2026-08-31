@@ -42,6 +42,16 @@ def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str
     return item
 
 
+def _unclaimed_payment_proof(client: TestClient, marker: str) -> int:
+    response = client.post(
+        "/api/attachments",
+        data={"entity_type": "PAYMENT"},
+        files={"file": (f"payment-{marker}.pdf", f"%PDF-1.4\n{marker}\n%%EOF".encode(), "application/pdf")},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
 def _master(client: TestClient, suffix: str, *, start_date: str = "2025-01-01") -> dict:
     company = client.post(
         "/api/companies", json={"name": f"Review Company {suffix}", "code": f"RC{suffix}"}
@@ -403,9 +413,15 @@ def test_dashboard_and_fc_report_share_requested_year(monkeypatch) -> None:
             f"/api/invoices/{old_draft['id']}/issue", json={"issue_date": "2026-01-05", "language": "zh"}
         )
         assert old_invoice.status_code == 200, old_invoice.text
+        proof_id = _unclaimed_payment_proof(client, "dashboard-period")
         assert client.post(
             f"/api/invoices/{old_draft['id']}/payments",
-            json={"payment_date": "2026-01-10", "amount": old_invoice.json()["amount"], "method": "TEST"},
+            json={
+                "payment_date": "2026-01-10",
+                "amount": old_invoice.json()["amount"],
+                "method": "TEST",
+                "proof_attachment_id": proof_id,
+            },
         ).status_code == 201
         after_old_payment = client.get("/api/dashboard?year=2026").json()
         assert after_old_payment["generated_service_fee"] == before["generated_service_fee"]

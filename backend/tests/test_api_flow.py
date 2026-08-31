@@ -17,6 +17,17 @@ def _attach(client: TestClient, entity_type: str, entity_id: int) -> None:
     assert response.status_code == 201, response.text
 
 
+def _upload_unclaimed_proof(client: TestClient, marker: str) -> int:
+    response = client.post(
+        "/api/attachments",
+        data={"entity_type": "PAYMENT"},
+        files={"file": (f"payment-{marker}.pdf", f"%PDF-1.4\n{marker}\n%%EOF".encode(), "application/pdf")},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["entity_id"] is None
+    return response.json()["id"]
+
+
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
     response = client.post(
         "/api/balance-snapshots",
@@ -156,18 +167,41 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
         assert issued.json()["invoice_number"] == "Alpha Advisory Limited-TW-20261005-1"
         assert issued.json()["due_date"] == "2026-10-19"
 
+        proof_id = _upload_unclaimed_proof(client, "full-flow")
         partial = client.post(
             f"/api/invoices/{invoice_id}/payments",
-            json={"payment_date": "2026-10-10", "amount": "40.00", "method": "BANK_TRANSFER"},
+            json={
+                "payment_date": "2026-10-10",
+                "amount": "40.00",
+                "method": "BANK_TRANSFER",
+                "proof_attachment_id": proof_id,
+            },
         )
-        assert partial.status_code == 201, partial.text
-        assert partial.json()["payment_status"] == "PARTIALLY_PAID"
+        assert partial.status_code == 400, partial.text
+        assert "部分付款" in partial.json()["detail"]
         paid = client.post(
             f"/api/invoices/{invoice_id}/payments",
-            json={"payment_date": "2026-10-12", "amount": "60.00", "method": "BANK_TRANSFER"},
+            json={
+                "payment_date": "2026-10-12",
+                "amount": "100.00",
+                "method": "BANK_TRANSFER",
+                "proof_attachment_id": proof_id,
+            },
         )
         assert paid.status_code == 201, paid.text
         assert paid.json()["payment_status"] == "PAID"
+        assert paid.json()["paid_amount"] == "100.00"
+        assert paid.json()["adjustment_amount"] == "0.00"
+        duplicate = client.post(
+            f"/api/invoices/{invoice_id}/payments",
+            json={
+                "payment_date": "2026-10-13",
+                "amount": "100.00",
+                "method": "BANK_TRANSFER",
+                "proof_attachment_id": proof_id,
+            },
+        )
+        assert duplicate.status_code == 409
 
 
 def test_zero_fee_settlement_cannot_create_invoice() -> None:

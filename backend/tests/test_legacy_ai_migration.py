@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
@@ -11,6 +12,9 @@ import app.config as config_module
 import app.database as database_module
 from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
+
+
+HEAD_REVISION = "7f3c2a91b6e4"
 
 
 def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, monkeypatch) -> None:
@@ -77,7 +81,7 @@ def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, mon
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert settlement == ("LEGACY_GROUP_HWM", 2000, 110000)
     assert line == (100000, 110000, None, None, "2025-10-01", "2025-12-31", 92)
-    assert revision == "9d2f6a8c4b13"
+    assert revision == HEAD_REVISION
 
 
 def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
@@ -156,7 +160,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "9d2f6a8c4b13"
+        assert revision == HEAD_REVISION
 
     settlement_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
@@ -191,7 +195,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
     legacy_engine.dispose()
 
 
-def test_unstamped_current_shape_database_gains_missing_financial_triggers(
+def test_unstamped_partial_0_2_14_shape_stops_before_false_stamp(
     tmp_path, monkeypatch
 ) -> None:
     data_root = tmp_path / "current-shape-data"
@@ -205,32 +209,51 @@ def test_unstamped_current_shape_database_gains_missing_financial_triggers(
     monkeypatch.setattr(database_module, "settings", settings)
     monkeypatch.setattr(config_module, "get_settings", lambda: settings)
 
+    with pytest.raises(RuntimeError, match="不完整的Settlement版本"):
+        database_module.init_db()
+
+    with legacy_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE name = 'alembic_version'")
+        ).scalar_one() == 0
+    legacy_engine.dispose()
+
+
+def test_unstamped_complete_9d_shape_runs_0_2_14_migration_instead_of_false_head_stamp(
+    tmp_path, monkeypatch
+) -> None:
+    settings = Settings(data_root=tmp_path / "unstamped-9d-data")
+    settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute("DROP TABLE alembic_version")
+        connection.commit()
+
+    legacy_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+
     database_module.init_db()
 
     with legacy_engine.connect() as connection:
-        revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        triggers = {
-            row[0]
-            for row in connection.execute(
-                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-            )
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            HEAD_REVISION
+        )
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
+        ).scalar_one() == 53
+        settlement_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(quarterly_settlements)"
+            ).fetchall()
         }
-        assert revision == "9d2f6a8c4b13"
-    assert {
-        "trg_transactions_block_finalized_period",
-        "trg_settlement_block_out_of_order_insert",
-        "trg_settlement_validate_finalize",
-        "trg_settlement_validate_void",
-        "trg_settlement_account_line_order",
-        "trg_invoice_validate_issue",
-        "trg_invoice_source_update_draft_only",
-        "trg_invoice_line_update_draft_only",
-        "trg_invoice_sources_deactivate_on_void",
-        "trg_invoice_financial_header_update_lock",
-        "trg_invoice_insert_draft_only",
-        "trg_invoice_lifecycle_transition",
-        "trg_invoice_issue_metadata_guard",
-        "trg_payment_validate_insert",
-        "trg_invoice_block_void_with_payment",
-    }.issubset(triggers)
+        assert {"version_no", "replaces_settlement_id"}.issubset(settlement_columns)
     legacy_engine.dispose()

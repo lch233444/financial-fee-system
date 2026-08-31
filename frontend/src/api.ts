@@ -1,12 +1,29 @@
 import type { AiAssistantStatus, StatementImport } from "./types";
 
 const SAFE_REQUEST_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-type ApiErrorPayload = { detail?: string | { message?: string } };
+type ApiValidationIssue = { msg?: string; loc?: Array<string | number> };
+type ApiErrorPayload = { detail?: string | { message?: string } | ApiValidationIssue[] };
 
 async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
-  const payload = await response.json() as ApiErrorPayload;
+  let payload: ApiErrorPayload;
+  try {
+    payload = await response.json() as ApiErrorPayload;
+  } catch {
+    return fallback;
+  }
   if (typeof payload.detail === "string") return payload.detail;
-  if (payload.detail && typeof payload.detail.message === "string") return payload.detail.message;
+  if (Array.isArray(payload.detail)) {
+    const messages = payload.detail
+      .map((issue) => {
+        if (!issue.msg) return "";
+        const field = issue.loc?.filter((part) => part !== "body").join(".");
+        return field ? `${field}: ${issue.msg}` : issue.msg;
+      })
+      .filter(Boolean);
+    if (messages.length) return messages.join("；");
+  }
+  if (payload.detail && typeof payload.detail === "object" && "message" in payload.detail
+    && typeof payload.detail.message === "string") return payload.detail.message;
   return fallback;
 }
 

@@ -42,6 +42,11 @@ def _commit_state_change(db: Session, detail: str) -> None:
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=detail) from exc
+    except OperationalError as exc:
+        db.rollback()
+        if _is_sqlite_busy(exc):
+            raise HTTPException(status_code=409, detail="数据库正在处理另一笔财务写入，请稍后重试") from exc
+        raise
 
 
 def _is_sqlite_busy(exc: OperationalError) -> bool:
@@ -67,6 +72,7 @@ def _loaded_query():
         selectinload(QuarterlySettlement.company),
         selectinload(QuarterlySettlement.fc),
         selectinload(QuarterlySettlement.previous_settlement),
+        selectinload(QuarterlySettlement.replaces_settlement),
         selectinload(QuarterlySettlement.account_lines).selectinload(SettlementAccountLine.account),
     )
 
@@ -145,17 +151,27 @@ def calculate_or_update_settlement(
     payload: SettlementCalculateRequest,
     db: Session = Depends(get_db),
 ) -> dict:
+    # Version allocation and active-row selection are one serialized decision.
+    # Otherwise concurrent requests could both try to replace the same VOID row.
+    _begin_immediate(db)
+    natural_key = (
+        QuarterlySettlement.client_id == payload.client_id,
+        QuarterlySettlement.platform_id == payload.platform_id,
+        QuarterlySettlement.fee_plan_id == payload.fee_plan_id,
+        QuarterlySettlement.year == payload.year,
+        QuarterlySettlement.quarter == payload.quarter,
+    )
     existing = db.scalar(
-        select(QuarterlySettlement).where(
-            QuarterlySettlement.client_id == payload.client_id,
-            QuarterlySettlement.platform_id == payload.platform_id,
-            QuarterlySettlement.fee_plan_id == payload.fee_plan_id,
-            QuarterlySettlement.year == payload.year,
-            QuarterlySettlement.quarter == payload.quarter,
-        )
+        select(QuarterlySettlement).where(*natural_key, QuarterlySettlement.status != "VOID")
+    )
+    latest = db.scalar(
+        select(QuarterlySettlement)
+        .where(*natural_key)
+        .order_by(QuarterlySettlement.version_no.desc(), QuarterlySettlement.id.desc())
+        .limit(1)
     )
     if existing and existing.status != "DRAFT":
-        raise HTTPException(status_code=409, detail="已Finalized或Void的Settlement不能直接重算")
+        raise HTTPException(status_code=409, detail="已Finalized的Settlement不能直接重算")
 
     line_specs = [
         SettlementLineSpec(
@@ -196,6 +212,8 @@ def calculate_or_update_settlement(
             fee_plan_id=payload.fee_plan_id,
             year=payload.year,
             quarter=payload.quarter,
+            version_no=(latest.version_no + 1) if latest else 1,
+            replaces_settlement_id=latest.id if latest and latest.status == "VOID" else None,
         )
         db.add(item)
     for key, value in current.aggregate.to_dict().items():
@@ -289,6 +307,28 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
             detail="旧版LEGACY Draft不能直接锁定，请先重新Calculate为当前Sub Account独立HWM口径",
         )
 
+    replaced = item.replaces_settlement
+    replacement_is_valid = (
+        item.version_no == 1
+        and item.replaces_settlement_id is None
+    ) or (
+        item.version_no > 1
+        and replaced is not None
+        and replaced.status == "VOID"
+        and replaced.client_id == item.client_id
+        and replaced.platform_id == item.platform_id
+        and replaced.fee_plan_id == item.fee_plan_id
+        and replaced.year == item.year
+        and replaced.quarter == item.quarter
+        and replaced.version_no + 1 == item.version_no
+    )
+    if not replacement_is_valid:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Settlement替代关系已失效，请删除该Draft并重新Calculate",
+        )
+
     line_specs = [
         SettlementLineSpec(
             account_id=line.account_id,
@@ -357,6 +397,7 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
 
 @router.post("/{settlement_id}/void")
 def void_settlement(settlement_id: int, payload: VoidRequest, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == settlement_id))
     if not item:
         raise HTTPException(status_code=404, detail="Settlement不存在")

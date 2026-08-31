@@ -2,6 +2,40 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 未发布（目标版本0.2.14）
+
+### Settlement版本与受控作废
+
+- `QuarterlySettlement`新增`version_no`与`replaces_settlement_id`。自然键加版本永久唯一；SQLite部分唯一索引只约束`status != 'VOID'`记录，使同一Client、Platform、Fee Plan、年度和季度只有一个活动版本，同时完整保留VOID历史。
+- 首次Settlement为v1；最新版本VOID后再次Calculate会在`BEGIN IMMEDIATE`写锁内建立下一连续版本并直接指向被替代版本。应用和Trigger共同拒绝跨自然键替代、替代非VOID、跳号、同一旧版本被多次直接替代及并发双活动版本。
+- 季度结算页面新增Finalized Settlement作废入口，要求2至500字符原因及二次确认；活动Invoice来源或后续账户HWM依赖仍会阻止Void。结果区和历史表显示版本、直接替代来源及VOID原因，VOID记录不再提供导出或删除操作。
+- Invoice Correction的替代Invoice必须使用与原Invoice来源一一对应、沿完整`replaces_settlement_id`链到达的Finalized Settlement版本；不能遗漏原来源或混入无替代链来源。
+
+### 二态Payment、凭证和不可变账本
+
+- Payment业务状态收敛为`UNPAID/PAID`；Due Date逾期改为独立`is_overdue`提示，不再返回`PARTIALLY_PAID/OVERDUE`付款状态。
+- 日常付款只允许对Issued且资金账本为空的Invoice确认一次。请求必须提交正数实际现金、去空格后非空的方式及未被占用的`PAYMENT`凭证；服务端校验受控路径、普通非空文件、大小和SHA-256，再由数据库在同一Payment INSERT中原子认领凭证并建立初始APPLY。凭证占用按Attachment关系和凭证外键判断，SHA-256只证明物理完整性，相同哈希不自动合并业务凭证。Schema与SQLite Trigger都拒绝空白付款/退款方式；部分付款、重复付款及并发第二次确认均拒绝。
+- 支持`COMPANY_BORNE_DIFFERENCE`：`实际现金 + 公司承担差额 = Invoice金额`必须精确成立，差额大于0必须有原因且差额为0时拒绝填写差额原因。Payment冻结差额与原因，AFTER INSERT先自动建立唯一Payment绑定的InvoiceAdjustment，再建立APPLY；普通差额不能脱离Payment独立插入，触发器任一步失败会回滚整笔Payment。差额不计作现金。
+- 新增PaymentAllocation、PaymentRefund、InvoiceAdjustment及对应AuditEvent。Payment是原始现金事实；现金在Invoice间的去向只通过追加式APPLY/REVERSAL表达。Payment、分配、退款、差额及已认领付款/退款凭证均由RESTRICT外键和Trigger保护，不可更新或删除；Correction只允许从OPEN受控补齐唯一替代关系并转为COMPLETED，其他改写及删除均拒绝。
+
+### Invoice错单更正与退款
+
+- 新增`OPEN/COMPLETED` InvoiceCorrection。只有Issued原Invoice可以开启；有活动现金时原单必须已完整平账。开启操作原子作废原Invoice、退役来源，并为当前活动APPLY逐笔写等额且唯一的REVERSAL；原编号、中英文归档PDF、Payment现金事实和审计永久保留。
+- Void、Correction及Refund原因会去除首尾空格并要求至少2字符；Invoice转VOID必须同时写入2至500字符原因和作废时间，进入VOID后两字段由Trigger冻结。Correction开启/完成过程的中间flush若触发约束会统一回滚并返回409，不暴露未捕获数据库错误。
+- OPEN后须先按HWM顺序处理原Settlement、建立并Finalize完整替代版本，再建立并Issue同Client、年度、季度及Fee Plan的替代Invoice。替代Invoice在Correction完成前必须保持资金空白；后端拒绝对其登记新Payment或再次发起Correction。REVERSAL在OPEN立即生效，correction-linked APPLY、退款和差额只有COMPLETED后才进入会计值，跨事务pending行不能提前把替代单标为PAID；连续更正只能在上一轮COMPLETED后由当前Issued替代单开启。
+- 完成更正以本轮Correction实际REVERSAL为处置边界：每笔Payment均须满足`本轮保留APPLY + 本轮退款 = 本轮REVERSAL`，全部保留现金加可选公司差额必须精确结清替代Invoice。退款逐笔要求正金额、日期、方式、原因及唯一`PAYMENT_REFUND`实体凭证。
+- 连续更正继续校验`Payment原始现金 = 当前净分配 + 累计退款`，下一轮只能处置上一轮仍活动的分配，已经退款的现金不能再次使用。已确认的120→100+20口径现在表达为原120 Payment永久保留、100分配到替代Invoice及20有凭证退款，不登记虚假100新收款。
+- 原Invoice没有现金也可更正；完成态Trigger要求本轮不存在APPLY、退款或公司差额，只建立唯一原/替代Invoice关系，替代Invoice保持UNPAID。
+- Invoice页面新增实际现金/公司差额/未结及付款凭证展示、付款凭证上传、发起Correction、替代Invoice选择、逐Payment保留/退款、退款凭证上传和完成记录。直接Void只用于没有活动现金且无需替代关系的场景。
+
+### 迁移、安全停止与待验证交付
+
+- 新Alembic revision `7f3c2a91b6e4`从精确`9d2f6a8c4b13`升级，在显式事务内重建Settlement版本表和Payment约束，新增四张追加账本表，将存量Settlement回填为v1并将合格旧Payment无损回填为初始APPLY；替代Draft自然键冻结，Finalize重新核对替代链和最近前期`previous_settlement_id`，避免直接SQL冻结跨组合或错误父链；原地downgrade明确拒绝，须从升级前完整备份恢复。
+- 迁移要求完整旧head、35个既有Trigger、无外键违规且不存在半迁移新表。旧Invoice的Payment合计未精确结清（包括仍停留在部分付款状态）、Payment缺少一一匹配且元数据完整的`PAYMENT`凭证、多个Payment共用凭证时，在任何DDL前安全停止；不猜测分配、不伪造凭证、不误标新head。历史上多笔Payment若合计恰好全额且每笔都有独立合规凭证，则逐笔无损回填为初始APPLY，保留既有现金事实；这不重新开放日常多笔付款。
+- 备份数据库结构校验识别旧正式`9d2f6a8c4b13`和新`7f3c2a91b6e4`各自契约，并严格核验Settlement、活动Invoice/InvoiceSource及新付款账本的关键唯一/部分索引、RESTRICT外键和Trigger清单。创建及恢复校验还把数据库Payment/PaymentRefund凭证引用与归档实体逐笔交叉核对归属、唯一受控路径、非空普通文件、大小、数据库SHA-256和Manifest SHA-256；旧9d Payment缺证、篡改或连同Manifest记录删除实体文件均拒绝。正式切换前仍必须由当前正式版创建完整备份，并在F盘隔离副本完成高风险迁移预检。
+- 0.2.14后端最终完整回归259/259通过，其中数据库核心专项49/49、备份专项51/51通过；前端TypeScript及Vite 7.3.6生产构建通过，最终资源为`index-gxMgisA1.js`与`index-Bb_qOqzJ.css`。Windows候选、正式备份/隔离预检及8000正式切换结果尚待验证；目前不得写成Windows运行版。当前正式版仍为0.2.13。
+- 本批不修改已确认Excel母版，不读取或输出真实客户业务内容，也不调用Luna处理真实文件。
+
 ## 0.2.13 - 2026-08-31（Windows运行版）
 
 ### Settlement Finalize与数据库完整性

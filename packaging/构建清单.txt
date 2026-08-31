@@ -19,14 +19,19 @@
 - 新收费计划计算纯净版模板.xlsx: 16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 
 本次构建结果：
-- 构建时间、主EXE SHA-256、文件数和字节数由发布目录内的构建结果.txt自动记录。
-- Windows ProductVersion/FileVersion必须为0.2.14/0.2.14.0。
-- 最终前端资源、后端回归数量、候选及正式验收结果记录在docs/项目说明书.md、docs/技术与验收说明.md和docs/CHANGELOG.md。
-- 正式目录目标为F:\财务系统\金融计划收费系统_Windows运行版_0.2.14_20260901\FinancialFeeSystem；只有全部发布门槛通过后才允许提升为正式目录并接管8000端口。
+- 构建时间：2026-09-01 04:08:59 +08:00。
+- 写入构建结果.txt前：401个文件、613697621字节。
+- FinancialFeeSystem.exe SHA-256：B0DE1AE4439CFB8ACDB773D127F4A1FBDE8F230DAC82970839CF3B67834CC73B。
+- Windows ProductVersion/FileVersion：0.2.14/0.2.14.0。
+- 源码验收：后端260/260、数据库核心49/49、备份52/52、前端TypeScript及Vite 7.3.6生产构建通过；最终资源为index-gxMgisA1.js和index-Bb_qOqzJ.css。
+- 候选验收：8001纯合成HTTP/浏览器、Settlement v1→v2→v3、连续Correction现金/退款守恒、异常路径、原PDF、严格备份、UI无溢出/无告警以及head 7f3c2a91b6e4、外键0、53个Trigger通过。
+- 正式备份：F:\财务系统\财务数据\backups\financial_system_backup_20260901_041300_780215_2mlboy8f.zip，1517367字节，SHA-256为0EF541673DB0FFAE2377DAFE678B0805D42BAC00C929256C50BC878F2D59C538，API副本一致；F盘隔离迁移预检通过。
+- 正式目录：F:\财务系统\金融计划收费系统_Windows运行版_0.2.14_20260901\FinancialFeeSystem，含配置和结果文件共403个文件、613708412字节；已接管127.0.0.1:8000并通过49条OpenAPI路径、Settlement Void端点及Invoice Correction四项端点（合计5条相关新路径）、前端资源、no-store、进程/EXE及数据库完整验收。
 
 构建输出规则：
 - 每次只生成release/FinancialFeeSystem，构建开始时删除上一份release，不累计候选版本目录。
 - 源码回归：后端完整测试、前端TypeScript及生产构建均须通过后才生成运行包。
+- 构建内pytest的`TEMP/TMP`及`--basetemp`使用项目所在盘根下`.financial-fee-system-build-tmp`短路径，避免恢复事务与安全凭证文件名叠加触发Windows路径限制；pytest失败时脚本立即清理，完整构建成功时在脚本尾部清理，PyInstaller或组件校验等中后段失败时可能遗留，须按该固定路径精确清理。
 - 两个Codex可执行文件必须同时通过固定版本、SHA-256及OpenAI Authenticode签名校验；Tesseract必须通过固定版本和SHA-256；Excel母版必须保持已确认SHA-256；任一不符立即停止构建。
 - 后端、前端、Windows字符串版本和FixedFileInfo数值版本必须一致；构建后再次读取EXE验证，禁止用硬编码构建结果掩盖版号漂移。
 - 构建结果.txt由构建脚本在发布目录内自动生成，记录当次时间、EXE哈希、文件数、字节数和Windows版本，不复制上一版结果。
@@ -34,5 +39,6 @@
 - 本机只保留最新正式运行版；旧版不得连接已升级数据库。业务数据和完整备份继续独立保存，不随运行版清理。
 - 正式切换前必须由当前正式版创建完整备份，严格校验API副本，并在F盘隔离副本完成9d2f6a8c4b13→7f3c2a91b6e4迁移预检；任何旧Payment不满足自动回填条件时必须安全停止，禁止猜测修复。
 - 隔离验收不得读取真实客户业务内容或打开真实客户文件，不得调用Luna额度，除非用户另行明确授权。
+- 本次旧0.2.13正式目录已停止并移入Windows回收站；固定release、backend/build、backend/FinancialFeeSystem.spec、frontend/dist、候选/隔离预检及本批精确测试临时目录共31个目标、2549个文件、1132227932字节已永久清理。正式运行目录、真实数据根及完整备份继续保留。
 
 重新安装依赖、更新模板或替换任一内置程序后，必须重新生成本清单并执行完整验收。

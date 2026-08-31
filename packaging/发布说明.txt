@@ -14,10 +14,13 @@
 - Settlement及Invoice页面显示版本、替代关系、二态付款、更正、分配、差额、退款和凭证信息，并对Void、付款及更正操作提供受控确认和防重复提交。
 - 公司Excel母版未修改，SHA-256保持16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
 
-发布门槛：
-- 本构建必须先通过0.2.14后端完整回归、前端TypeScript及生产构建、Windows候选合成验收、正式完整备份、F盘隔离副本9d2f6a8c4b13→7f3c2a91b6e4迁移预检和8000端口正式验收。
-- 最终测试数量、EXE哈希、前端资源、正式备份和切换结果以构建目录内的构建结果.txt及源码docs中的最终验收记录为准；未完成全部门槛前不得把候选包当作正式版。
-- 隔离验收和正式切换不得读取或输出真实客户业务内容，不得打开真实客户文件，也不得未经用户授权调用Luna处理真实文件。
+最终发布验收：
+- 后端完整回归260/260、数据库核心专项49/49、备份专项52/52以及前端TypeScript/Vite 7.3.6生产构建通过；最终前端资源为index-gxMgisA1.js和index-Bb_qOqzJ.css。
+- Windows包于2026-09-01 04:08:59 +08:00构建，写入构建结果.txt前401个文件、613697621字节；FinancialFeeSystem.exe SHA-256为B0DE1AE4439CFB8ACDB773D127F4A1FBDE8F230DAC82970839CF3B67834CC73B，ProductVersion/FileVersion为0.2.14/0.2.14.0。
+- 8001端口纯合成HTTP及浏览器验收通过：Settlement v1/v2/v3收费为120.00/100.00/90.00，原120.00现金经20.00和10.00有凭证退款后最终Invoice为PAID 90.00；400/409/422、原PDF哈希、严格备份、页面无横向溢出和控制台无告警均通过。
+- 正式备份financial_system_backup_20260901_041300_780215_2mlboy8f.zip共1517367字节，SHA-256为0EF541673DB0FFAE2377DAFE678B0805D42BAC00C929256C50BC878F2D59C538，API副本一致；F盘隔离副本9d2f6a8c4b13→7f3c2a91b6e4迁移通过，integrity_check=ok、外键违规0、53个Trigger且无恢复残留。
+- 正式0.2.14已从F:\财务系统\金融计划收费系统_Windows运行版_0.2.14_20260901\FinancialFeeSystem接管127.0.0.1:8000和既有数据根；正式目录含配置和结果文件共403个文件、613708412字节，49条OpenAPI路径、Settlement Void端点及Invoice Correction四项端点（合计5条相关新路径）、最新前端、no-store、EXE版本/哈希及数据库结构均通过。旧0.2.13已停止并移入Windows回收站。
+- 验收未读取或输出真实客户业务内容、未打开真实客户文件、未调用Luna，也未修改Excel母版。固定release、构建产物、候选/隔离预检及本批精确测试临时目录共31个目标、2549个文件、1132227932字节已永久清理；正式运行目录、真实数据根及完整备份未删除。
 
 启动方式：
 1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。

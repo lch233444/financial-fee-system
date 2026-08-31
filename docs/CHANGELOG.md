@@ -2,7 +2,7 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
-## 未发布（目标版本0.2.14）
+## 0.2.14 - 2026-09-01（Windows运行版）
 
 ### Settlement版本与受控作废
 
@@ -28,12 +28,16 @@
 - 原Invoice没有现金也可更正；完成态Trigger要求本轮不存在APPLY、退款或公司差额，只建立唯一原/替代Invoice关系，替代Invoice保持UNPAID。
 - Invoice页面新增实际现金/公司差额/未结及付款凭证展示、付款凭证上传、发起Correction、替代Invoice选择、逐Payment保留/退款、退款凭证上传和完成记录。直接Void只用于没有活动现金且无需替代关系的场景。
 
-### 迁移、安全停止与待验证交付
+### 迁移、安全停止与发布交付
 
 - 新Alembic revision `7f3c2a91b6e4`从精确`9d2f6a8c4b13`升级，在显式事务内重建Settlement版本表和Payment约束，新增四张追加账本表，将存量Settlement回填为v1并将合格旧Payment无损回填为初始APPLY；替代Draft自然键冻结，Finalize重新核对替代链和最近前期`previous_settlement_id`，避免直接SQL冻结跨组合或错误父链；原地downgrade明确拒绝，须从升级前完整备份恢复。
 - 迁移要求完整旧head、35个既有Trigger、无外键违规且不存在半迁移新表。旧Invoice的Payment合计未精确结清（包括仍停留在部分付款状态）、Payment缺少一一匹配且元数据完整的`PAYMENT`凭证、多个Payment共用凭证时，在任何DDL前安全停止；不猜测分配、不伪造凭证、不误标新head。历史上多笔Payment若合计恰好全额且每笔都有独立合规凭证，则逐笔无损回填为初始APPLY，保留既有现金事实；这不重新开放日常多笔付款。
-- 备份数据库结构校验识别旧正式`9d2f6a8c4b13`和新`7f3c2a91b6e4`各自契约，并严格核验Settlement、活动Invoice/InvoiceSource及新付款账本的关键唯一/部分索引、RESTRICT外键和Trigger清单。创建及恢复校验还把数据库Payment/PaymentRefund凭证引用与归档实体逐笔交叉核对归属、唯一受控路径、非空普通文件、大小、数据库SHA-256和Manifest SHA-256；旧9d Payment缺证、篡改或连同Manifest记录删除实体文件均拒绝。正式切换前仍必须由当前正式版创建完整备份，并在F盘隔离副本完成高风险迁移预检。
-- 0.2.14后端最终完整回归259/259通过，其中数据库核心专项49/49、备份专项51/51通过；前端TypeScript及Vite 7.3.6生产构建通过，最终资源为`index-gxMgisA1.js`与`index-Bb_qOqzJ.css`。Windows候选、正式备份/隔离预检及8000正式切换结果尚待验证；目前不得写成Windows运行版。当前正式版仍为0.2.13。
+- 备份数据库结构校验识别旧正式`9d2f6a8c4b13`和新`7f3c2a91b6e4`各自契约，并严格核验Settlement、活动Invoice/InvoiceSource及新付款账本的关键唯一/部分索引、RESTRICT外键和Trigger清单。旧9d head现要求Trigger名称集合精确等于35项且每项SQL非空，删除任一旧Trigger的备份会在恢复暂存前被拒绝。创建及恢复校验还把数据库Payment/PaymentRefund凭证引用与归档实体逐笔交叉核对归属、唯一受控路径、非空普通文件、大小、数据库SHA-256和Manifest SHA-256；旧9d Payment缺证、篡改或连同Manifest记录删除实体文件均拒绝。正式切换前仍必须由当前正式版创建完整备份，并在F盘隔离副本完成高风险迁移预检。
+- 0.2.14后端最终完整回归260/260通过，其中数据库核心专项49/49、备份专项52/52通过；前端TypeScript及Vite 7.3.6生产构建通过，最终资源为`index-gxMgisA1.js`与`index-Bb_qOqzJ.css`。最终Windows包于2026-09-01 04:08:59 +08:00构建，写入`构建结果.txt`前401个文件、613697621字节；主EXE SHA-256为`B0DE1AE4439CFB8ACDB773D127F4A1FBDE8F230DAC82970839CF3B67834CC73B`，ProductVersion/FileVersion为0.2.14/0.2.14.0。正式目录加入配置和结果文件后共403个文件、613708412字节。
+- 候选EXE在8001端口和F盘纯合成数据根完成HTTP与浏览器验收：Settlement v1/v2/v3收费依次为120.00/100.00/90.00；原120.00现金经20.00和10.00两次有凭证退款后，最终Invoice保持PAID 90.00。异常400/409/422、OPEN替代单资金保护、原PDF哈希不变、严格备份校验、页面无横向溢出及控制台无告警均通过；候选数据库为`7f3c2a91b6e4`、`integrity_check=ok`、外键违规0且53个Trigger与精确合同一致。
+- 正式切换前由0.2.13创建`F:\财务系统\财务数据\backups\financial_system_backup_20260901_041300_780215_2mlboy8f.zip`，共1517367字节，SHA-256为`0EF541673DB0FFAE2377DAFE678B0805D42BAC00C929256C50BC878F2D59C538`，API下载副本哈希一致。0.2.14新代码严格验证Manifest format v1、4个payload文件和旧head精确35个Trigger；备份在F盘隔离副本完成受控绝对路径重定向及`9d2f6a8c4b13 → 7f3c2a91b6e4`迁移，结果为`integrity_check=ok`、外键违规0、53个Trigger且无恢复残留，全程未输出客户业务内容。
+- 正式0.2.14已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.14_20260901\FinancialFeeSystem`接管`127.0.0.1:8000`及既有数据根。健康检查、实际进程路径、EXE版本/哈希、49条OpenAPI路径、Settlement Void端点及Invoice Correction四项端点（合计5条相关新路径）、最新前端资源、入口`no-store`、数据库head/完整性/外键/53个Trigger精确合同和无恢复残留均通过。旧0.2.13已停止并整体移入Windows回收站；固定`release`、`backend/build`、`backend/FinancialFeeSystem.spec`、`frontend/dist`、候选/隔离预检和本批精确测试临时目录共31个目标、2549个文件、1132227932字节已永久清理，正式运行目录、真实数据根及完整备份不在清理范围内。
+- Windows一键构建的pytest临时根从深层`backend/test-tmp`移到项目所在盘根下的固定短路径；这避免长源码路径、退款凭证安全文件名和恢复事务子目录叠加触发Windows路径限制，构建仍必须完整重跑全部后端测试。pytest失败时脚本立即清理，完整构建成功时在脚本尾部清理；PyInstaller或组件校验等中后段失败时可能遗留，须按该固定路径精确清理。
 - 本批不修改已确认Excel母版，不读取或输出真实客户业务内容，也不调用Luna处理真实文件。
 
 ## 0.2.13 - 2026-08-31（Windows运行版）
@@ -61,7 +65,7 @@
 - 候选EXE在8001端口和F盘纯合成数据根完成0.2.13闭环验收：陈旧Draft Finalize返回409、正确Settlement Service Fee为40.00、Finalized期间资料改写返回409、误建Draft删除返回200、同轮备份名称唯一且严格校验通过、恢复排队后自动安全退出；重启后pending marker和事务临时目录均收敛，数据库为Alembic head `9d2f6a8c4b13`、`integrity_check=ok`、外键违规0且35个Trigger齐全。候选最后通过安全退出并释放8001端口。
 - 正式切换前由0.2.12系统接口创建`financial_system_backup_20260831_205840.zip`，共1,513,851字节，SHA-256为`526C6DB77950F21F7B8C397BD98C8F379A3C91D8F7AB458C7AB1A44E877DA0B5`；API下载副本与正式备份哈希一致。新恢复服务在F盘隔离副本上严格验证归档、Manifest、路径全集、逐文件哈希和系统数据库身份，再由0.2.13候选把副本从`c4b7f1d92e60`安全迁移到`9d2f6a8c4b13`；完整性、外键和35个Trigger均通过后才允许停旧版。
 - 0.2.13已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem`接管8000端口及既有独立数据根。正式健康检查返回0.2.13且仅监听127.0.0.1；实际进程路径、45条OpenAPI路径、Settlement Draft DELETE、前端资源`index-Do53jYCv.js`、入口`no-store, max-age=0`、EXE版本/哈希、数据库head/完整性/外键及35个Trigger均通过，pending restore和恢复事务残留均为0。
-- 旧0.2.12正式目录已移入Windows回收站。固定`release`候选、PyInstaller/前端构建产物、F盘合成验收和预检副本、精确测试临时目录及本批误落C盘的13个测试目录已永久清理；共清理77个临时/缓存目标、4,374个文件、971,230,064字节。本机活动运行目录只保留0.2.13正式版，独立业务数据及正式完整备份继续保留。
+- 旧0.2.12正式目录已移入Windows回收站。固定`release`候选、PyInstaller/前端构建产物、F盘合成验收和预检副本、精确测试临时目录及本批误落C盘的13个测试目录已永久清理；共清理77个临时/缓存目标、4,374个文件、971,230,064字节。0.2.13发布完成时本机活动运行目录只保留该正式版，独立业务数据及正式完整备份继续保留；0.2.13后来已被0.2.14替换并回收。
 - 本批未修改Excel母版；正式数据仅执行备份、迁移及数据库结构完整性检查，没有查询或输出客户业务行、打开客户文件，也未调用Luna处理真实资料。
 
 ## 0.2.12 - 2026-08-29（Windows运行版）

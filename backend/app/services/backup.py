@@ -40,6 +40,45 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "7f3c2a91b6e4",
     }
 )
+OLD_HEAD_TRIGGER_NAMES = frozenset(
+    {
+        "trg_transactions_block_finalized_period",
+        "trg_transactions_update_block_frozen_period",
+        "trg_transactions_delete_block_frozen_period",
+        "trg_snapshot_update_block_frozen_reference",
+        "trg_snapshot_delete_block_frozen_reference",
+        "trg_attachment_update_block_finalized_evidence",
+        "trg_attachment_delete_block_finalized_evidence",
+        "trg_statement_import_update_block_finalized_evidence",
+        "trg_statement_import_delete_block_finalized_evidence",
+        "trg_settlement_block_out_of_order_insert",
+        "trg_settlement_account_line_order",
+        "trg_settlement_account_line_update_order",
+        "trg_settlement_validate_finalize",
+        "trg_settlement_validate_void",
+        "trg_settlement_insert_draft_only",
+        "trg_settlement_lifecycle_transition",
+        "trg_settlement_delete_non_draft",
+        "trg_settlement_parent_financial_lock",
+        "trg_settlement_line_insert_draft_only",
+        "trg_settlement_line_update_draft_only",
+        "trg_settlement_line_delete_draft_only",
+        "trg_invoice_source_insert_draft_only",
+        "trg_invoice_source_update_draft_only",
+        "trg_invoice_source_delete_draft_only",
+        "trg_invoice_line_insert_draft_only",
+        "trg_invoice_line_update_draft_only",
+        "trg_invoice_line_delete_draft_only",
+        "trg_invoice_validate_issue",
+        "trg_invoice_financial_header_update_lock",
+        "trg_invoice_insert_draft_only",
+        "trg_invoice_lifecycle_transition",
+        "trg_invoice_issue_metadata_guard",
+        "trg_payment_validate_insert",
+        "trg_invoice_block_void_with_payment",
+        "trg_invoice_sources_deactivate_on_void",
+    }
+)
 NEW_HEAD_TRIGGER_NAMES = frozenset(
     {
         "trg_transactions_block_finalized_period",
@@ -1061,6 +1100,17 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         ("settlement_id",),
                         "active = 1",
                     )
+                if database_revision == "9d2f6a8c4b13":
+                    trigger_sql = {
+                        str(row[0]): str(row[1] or "")
+                        for row in connection.execute(
+                            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+                        ).fetchall()
+                    }
+                    if set(trigger_sql) != OLD_HEAD_TRIGGER_NAMES or any(
+                        not trigger_sql[name].strip() for name in OLD_HEAD_TRIGGER_NAMES
+                    ):
+                        raise ValueError("备份数据库结构不兼容")
                 if database_revision == "7f3c2a91b6e4":
                     settlement_columns = {
                         row[1]

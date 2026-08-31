@@ -923,6 +923,37 @@ def test_restore_accepts_complete_supported_9d_database(
     assert staged.marker.is_file()
 
 
+def test_restore_rejects_9d_head_with_incomplete_trigger_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup_path = _valid_backup()
+    legacy_settings = Settings(data_root=tmp_path / "legacy-9d-missing-trigger-data")
+    legacy_settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: legacy_settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", legacy_settings.database_url)
+    command.upgrade(alembic_config, "9d2f6a8c4b13")
+    with sqlite3.connect(legacy_settings.database_path) as connection:
+        connection.execute("DROP TRIGGER trg_settlement_validate_finalize")
+
+    def replace_with_incomplete_9d_database(files: dict[str, bytes], manifest: dict) -> None:
+        database_record = next(
+            record for record in manifest["files"] if record["path"].startswith("database/")
+        )
+        content = legacy_settings.database_path.read_bytes()
+        files[database_record["path"]] = content
+        database_record["sha256"] = hashlib.sha256(content).hexdigest()
+
+    invalid_backup = _write_variant(
+        backup_path,
+        tmp_path / "missing-9d-trigger.zip",
+        replace_with_incomplete_9d_database,
+    )
+    _assert_restore_rejected(invalid_backup)
+
+
 def test_restore_accepts_recognizable_unversioned_legacy_database(tmp_path: Path) -> None:
     backup_path = _valid_backup()
 

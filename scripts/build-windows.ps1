@@ -8,7 +8,8 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
-$TestTempRoot = Join-Path $ProjectRoot "backend\test-tmp"
+$ProjectDriveRoot = [System.IO.Path]::GetPathRoot($ProjectRoot)
+$TestTempRoot = Join-Path $ProjectDriveRoot ".financial-fee-system-build-tmp"
 $ConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "backend\app\config.py")
 $VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"')
 if (-not $VersionMatch.Success) {

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { Calculator, CheckCircle2, Download, FileText } from "lucide-react";
-import { download, postJson } from "../api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Calculator, CheckCircle2, Download, FileText, Trash2 } from "lucide-react";
+import { api, download, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, StatusBadge } from "../components";
 import { quarterDates, useApiList } from "../hooks";
 import type { Account, BalanceSnapshot, Client, FeePlan, Platform, Settlement } from "../types";
@@ -38,11 +38,18 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const [result, setResult] = useState<Settlement | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const calculateBusyRef = useRef(false);
+  const finalizeBusyRef = useRef(false);
+  const deleteBusyRef = useRef(false);
+  const resultRevisionRef = useRef(0);
   const [exportYear, setExportYear] = useState(currentYear);
   const [exportQuarter, setExportQuarter] = useState("");
   const [exportClientId, setExportClientId] = useState("");
   const [selectedExportIds, setSelectedExportIds] = useState<number[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
+  const settlementMutationBusy = busy || finalizeBusy || deleteBusy;
 
   const accountById = useMemo(() => new Map(accounts.data.map((account) => [account.id, account])), [accounts.data]);
   const groupAccounts = useMemo(() => accounts.data.filter((account) =>
@@ -104,13 +111,24 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
     });
   }, [groupAccounts, year, quarter]);
 
+  function invalidateResult() {
+    resultRevisionRef.current += 1;
+    setResult(null);
+  }
+
   function updateLine(accountId: number, patch: Partial<LineState[number]>) {
+    invalidateResult();
     setLines((current) => ({ ...current, [accountId]: { ...current[accountId], ...patch } }));
   }
 
   async function calculate() {
+    if (calculateBusyRef.current || finalizeBusyRef.current || deleteBusyRef.current) return;
+    calculateBusyRef.current = true;
     setBusy(true);
     setError("");
+    const requestRevision = resultRevisionRef.current + 1;
+    resultRevisionRef.current = requestRevision;
+    setResult(null);
     try {
       const accountLines = groupAccounts
         .filter((account) => lines[account.id]?.enabled)
@@ -135,25 +153,72 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         quarter,
         account_lines: accountLines,
       });
-      setResult(response);
+      if (resultRevisionRef.current === requestRevision) {
+        setResult(response);
+      }
       await settlements.reload();
       notify("账户级HWM已计算并保存为Draft");
     } catch (err) {
       setError(err instanceof Error ? err.message : "计算失败");
     } finally {
+      calculateBusyRef.current = false;
       setBusy(false);
     }
   }
 
   async function finalize(id: number) {
+    if (finalizeBusyRef.current || calculateBusyRef.current || deleteBusyRef.current) return;
+    finalizeBusyRef.current = true;
+    setFinalizeBusy(true);
+    setError("");
+    const requestRevision = resultRevisionRef.current;
     try {
       const response = await postJson<Settlement>(`/api/settlements/${id}/finalize`, {});
-      setResult(response);
+      if (resultRevisionRef.current === requestRevision) {
+        setResult(response);
+      }
       await settlements.reload();
       notify("Settlement已Finalized并锁定");
     } catch (err) {
       setError(err instanceof Error ? err.message : "确认失败");
+    } finally {
+      finalizeBusyRef.current = false;
+      setFinalizeBusy(false);
     }
+  }
+
+  async function deleteDraft(item: Settlement) {
+    if (
+      item.status !== "DRAFT"
+      || deleteBusyRef.current
+      || calculateBusyRef.current
+      || finalizeBusyRef.current
+      || !window.confirm(
+        `确认删除 ${item.year} Q${item.quarter} 的 Draft Settlement？\n\n只会删除尚未锁定的Draft及其账户明细，并保留审计记录；Finalized或Void记录不能删除。`,
+      )
+    ) return;
+    deleteBusyRef.current = true;
+    setDeleteBusy(true);
+    setError("");
+    try {
+      await api<{ status: string; id: number }>(`/api/settlements/${item.id}`, { method: "DELETE" });
+      resultRevisionRef.current += 1;
+      setResult(null);
+      await settlements.reload();
+      notify("Draft Settlement已删除，审计记录已保留");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Draft Settlement删除失败");
+    } finally {
+      deleteBusyRef.current = false;
+      setDeleteBusy(false);
+    }
+  }
+
+  function showHistoricalResult(item: Settlement) {
+    if (calculateBusyRef.current || finalizeBusyRef.current || deleteBusyRef.current) return;
+    resultRevisionRef.current += 1;
+    setError("");
+    setResult(item);
   }
 
   function toggleExportSettlement(id: number) {
@@ -195,11 +260,11 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       {error || settlements.error ? <ErrorBanner message={error || settlements.error} /> : null}
       <Panel title="建立结算组合" subtitle="首次账户需选择Beginning Snapshot并输入自己的Original HWM；账单导入只生成Snapshot，不会自动计算或Finalize">
         <div className="settlement-controls">
-          <Field label="Client"><select value={clientId} onChange={(e) => setClientId(e.target.value)}><option value="">请选择</option>{clients.data.filter((x) => x.status === "ACTIVE").map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-          <Field label="Platform"><select value={platformId} onChange={(e) => setPlatformId(e.target.value)}><option value="">请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-          <Field label="Fee Plan"><select value={planId} onChange={(e) => setPlanId(e.target.value)}><option value="">请选择</option>{plans.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-          <Field label="Year"><input type="number" min="2000" max="2200" value={year} onChange={(e) => setYear(Number(e.target.value))} /></Field>
-          <Field label="Quarter"><select value={quarter} onChange={(e) => setQuarter(Number(e.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field>
+          <Field label="Client"><select disabled={settlementMutationBusy} value={clientId} onChange={(e) => { invalidateResult(); setClientId(e.target.value); }}><option value="">请选择</option>{clients.data.filter((x) => x.status === "ACTIVE").map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          <Field label="Platform"><select disabled={settlementMutationBusy} value={platformId} onChange={(e) => { invalidateResult(); setPlatformId(e.target.value); }}><option value="">请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          <Field label="Fee Plan"><select disabled={settlementMutationBusy} value={planId} onChange={(e) => { invalidateResult(); setPlanId(e.target.value); }}><option value="">请选择</option>{plans.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          <Field label="Year"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { invalidateResult(); setYear(Number(e.target.value)); }} /></Field>
+          <Field label="Quarter"><select disabled={settlementMutationBusy} value={quarter} onChange={(e) => { invalidateResult(); setQuarter(Number(e.target.value)); }}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field>
         </div>
         <div className="account-entry-table">
           <div className="account-entry header"><span>加入</span><span>Sub Account</span><span>Starting Date</span><span>Closing Date</span><span>Beginning Snapshot</span><span>Closing Snapshot</span><span>Original HWM</span></div>
@@ -211,23 +276,23 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
             const beginningOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.startDate);
             const closingOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.closingDate && snapshot.eligible_for_closing);
             return <div className="account-entry" key={account.id}>
-              <span><input type="checkbox" checked={lines[account.id]?.enabled ?? true} onChange={(e) => updateLine(account.id, { enabled: e.target.checked })} /></span>
+              <span><input type="checkbox" disabled={settlementMutationBusy} checked={lines[account.id]?.enabled ?? true} onChange={(e) => updateLine(account.id, { enabled: e.target.checked })} /></span>
               <span><strong>{account.account_number}</strong><small>{account.client_name} · {account.platform_name || "待确认Platform"}{account.scheme_name ? ` · ${account.scheme_name}` : ""}</small></span>
-              <span><input type="date" disabled={!line?.enabled} min={minimumStart} max={line?.closingDate || maximumClosing} value={line?.startDate || ""} onChange={(e) => updateLine(account.id, { startDate: e.target.value, beginningSnapshotId: "" })} /></span>
-              <span><input type="date" disabled={!line?.enabled} min={line?.startDate || minimumStart} max={maximumClosing} value={line?.closingDate || ""} onChange={(e) => updateLine(account.id, { closingDate: e.target.value, closingSnapshotId: "" })} /></span>
-              <span><select disabled={!lines[account.id]?.enabled} value={lines[account.id]?.beginningSnapshotId || ""} onChange={(e) => updateLine(account.id, { beginningSnapshotId: e.target.value })}><option value="">自动继承；首次请选择</option>{beginningOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
-              <span><select disabled={!lines[account.id]?.enabled} value={lines[account.id]?.closingSnapshotId || ""} onChange={(e) => updateLine(account.id, { closingSnapshotId: e.target.value })}><option value="">请选择Closing</option>{closingOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
-              <span><input type="number" min="0" step="0.01" placeholder="首次账户必填" disabled={!lines[account.id]?.enabled} value={lines[account.id]?.originalHwm || ""} onChange={(e) => updateLine(account.id, { originalHwm: e.target.value })} /></span>
+              <span><input type="date" disabled={settlementMutationBusy || !line?.enabled} min={minimumStart} max={line?.closingDate || maximumClosing} value={line?.startDate || ""} onChange={(e) => updateLine(account.id, { startDate: e.target.value, beginningSnapshotId: "" })} /></span>
+              <span><input type="date" disabled={settlementMutationBusy || !line?.enabled} min={line?.startDate || minimumStart} max={maximumClosing} value={line?.closingDate || ""} onChange={(e) => updateLine(account.id, { closingDate: e.target.value, closingSnapshotId: "" })} /></span>
+              <span><select disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.beginningSnapshotId || ""} onChange={(e) => updateLine(account.id, { beginningSnapshotId: e.target.value })}><option value="">自动继承；首次请选择</option>{beginningOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
+              <span><select disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.closingSnapshotId || ""} onChange={(e) => updateLine(account.id, { closingSnapshotId: e.target.value })}><option value="">请选择Closing</option>{closingOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
+              <span><input type="number" min="0" step="0.01" placeholder="首次账户必填" disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.originalHwm || ""} onChange={(e) => updateLine(account.id, { originalHwm: e.target.value })} /></span>
             </div>;
           }) : <EmptyState title="没有匹配账户" detail="选择完整的Client、Platform和Fee Plan后，系统只显示同组且已填写开始管理日期的Active账户。" />}
         </div>
-        <div className="form-actions"><button className="primary" disabled={busy || !clientId || !platformId || !planId || !groupAccounts.length} onClick={() => void calculate()}><Calculator size={17} />{busy ? "计算中..." : "计算并保存Draft"}</button></div>
+        <div className="form-actions"><button className="primary" disabled={settlementMutationBusy || !clientId || !platformId || !planId || !groupAccounts.length} onClick={() => void calculate()}><Calculator size={17} />{busy ? "计算中..." : "计算并保存Draft"}</button></div>
       </Panel>
 
       {result ? <Panel title="计算结果" subtitle={`${result.calculation_mode === "ACCOUNT_HWM" ? "账户级HWM" : "历史组合HWM"} · Formula ${result.formula_version} · ${result.status === "DRAFT" ? "尚未锁定" : "已锁定"}`}>
         <div className="calculation-grid"><span><small>Beginning</small><Money value={result.beginning} /></span><span><small>Net Contribution</small><Money value={result.net_contribution} /></span><span><small>Closing</small><Money value={result.closing} /></span><span><small>Gain / Loss</small><Money value={result.gain_loss} /></span><span><small>Period Rate</small><strong>{result.period_rate == null ? "N/A" : `${(result.period_rate * 100).toFixed(2)}%`}</strong></span><span><small>Days（仅展示）</small><strong>{result.days}</strong></span><span><small>Adjusted HWM合计</small><Money value={result.adjusted_hwm} /></span><span><small>各账户Above HWM合计</small><Money value={result.chargeable_above_hwm} /></span><span className="highlight"><small>各账户Service Fee合计</small><Money value={result.service_fee} emphasis /></span><span><small>Next HWM合计</small><Money value={result.next_hwm} /></span></div>
         {result.account_lines.length ? <div className="table-wrap settlement-line-results"><table><thead><tr><th>Sub Account</th><th>账户期间</th><th>Beginning</th><th>Net Contribution</th><th>Closing</th><th>Original HWM</th><th>Above HWM</th><th>Service Fee</th><th>凭证</th></tr></thead><tbody>{result.account_lines.map((line) => { const account = accountById.get(line.account_id); return <tr key={line.id}><td><strong>{line.account_number}</strong><small className="cell-note">{account ? [account.client_name, account.platform_name || "待确认Platform", account.scheme_name].filter(Boolean).join(" · ") : `${result.client_name} · ${result.platform_name}`}</small></td><td>{line.start_date} 至 {line.closing_date}<small className="cell-note">{line.days}天</small></td><td><Money value={line.beginning} /></td><td><Money value={line.net_contribution || "0.00"} /></td><td><Money value={line.closing} /></td><td><Money value={line.original_hwm || "0.00"} /></td><td><Money value={line.chargeable_above_hwm || "0.00"} /></td><td><Money value={line.service_fee || "0.00"} /></td><td>{(line.beginning_evidence_count || 0) > 0 && (line.closing_evidence_count || 0) > 0 ? "完整" : "待补"}</td></tr>; })}</tbody></table></div> : null}
-        <div className="form-actions">{result.status === "DRAFT" ? <button className="primary" onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />Finalized并锁定</button> : <><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=zh`, `settlement_${result.id}_zh.pdf`, { method: "POST" })}><FileText size={17} />中文结算PDF</button><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=en`, `settlement_${result.id}_en.pdf`, { method: "POST" })}><FileText size={17} />English PDF</button><button className="ghost" onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button></>}</div>
+        <div className="form-actions">{result.status === "DRAFT" ? <><button className="primary" disabled={settlementMutationBusy} onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />{finalizeBusy ? "Finalized处理中..." : "Finalized并锁定"}</button><button className="danger" disabled={settlementMutationBusy} onClick={() => void deleteDraft(result)}><Trash2 size={17} />{deleteBusy ? "删除中..." : "删除Draft"}</button></> : <><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=zh`, `settlement_${result.id}_zh.pdf`, { method: "POST" })}><FileText size={17} />中文结算PDF</button><button className="secondary" onClick={() => void download(`/api/exports/pdf?settlement_id=${result.id}&language=en`, `settlement_${result.id}_en.pdf`, { method: "POST" })}><FileText size={17} />English PDF</button><button className="ghost" onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button></>}</div>
       </Panel> : null}
 
       <Panel title="公司内部财务Excel" subtitle="筛选并选择Finalized Settlement；系统按公司原Excel模板批量导出，逐Sub Account保留独立HWM与Service Fee">
@@ -247,7 +312,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         </> : <EmptyState title="没有可导出的结算" detail="当前筛选条件下没有Finalized Settlement。Draft和Void不会进入内部财务Excel。" />}
       </Panel>
 
-      <Panel title="历史Settlement">{settlements.data.length ? <div className="table-wrap"><table><thead><tr><th>Period</th><th>Client</th><th>Platform / Plan</th><th>Sub Account / Scheme</th><th>口径</th><th>Closing</th><th>Service Fee</th><th>Status</th></tr></thead><tbody>{settlements.data.map((item) => <tr key={item.id} onClick={() => setResult(item)} className="clickable"><td>{item.year} Q{item.quarter}</td><td>{item.client_name}</td><td>{item.platform_name}<small className="cell-note">{item.fee_plan_name}</small></td><td><SettlementAccountList item={item} accountById={accountById} /></td><td>{item.calculation_mode === "ACCOUNT_HWM" ? "账户级" : "历史组合"}</td><td><Money value={item.closing} /></td><td><Money value={item.service_fee} /></td><td><StatusBadge value={item.status} /></td></tr>)}</tbody></table></div> : <EmptyState title="暂无结算" detail="上方建立第一份季度Settlement。" />}</Panel>
+      <Panel title="历史Settlement">{settlements.data.length ? <div className="table-wrap"><table><thead><tr><th>Period</th><th>Client</th><th>Platform / Plan</th><th>Sub Account / Scheme</th><th>口径</th><th>Closing</th><th>Service Fee</th><th>Status</th></tr></thead><tbody>{settlements.data.map((item) => <tr key={item.id} onClick={() => showHistoricalResult(item)} className={settlementMutationBusy ? "" : "clickable"}><td>{item.year} Q{item.quarter}</td><td>{item.client_name}</td><td>{item.platform_name}<small className="cell-note">{item.fee_plan_name}</small></td><td><SettlementAccountList item={item} accountById={accountById} /></td><td>{item.calculation_mode === "ACCOUNT_HWM" ? "账户级" : "历史组合"}</td><td><Money value={item.closing} /></td><td><Money value={item.service_fee} /></td><td><StatusBadge value={item.status} /></td></tr>)}</tbody></table></div> : <EmptyState title="暂无结算" detail="上方建立第一份季度Settlement。" />}</Panel>
     </>
   );
 }

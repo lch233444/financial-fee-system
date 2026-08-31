@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 from datetime import date, datetime
 from pathlib import Path
+from threading import Lock
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
@@ -32,6 +33,7 @@ from ..services.shutdown import ShutdownCoordinator, get_shutdown_coordinator
 
 
 router = APIRouter(prefix="/api", tags=["system"])
+_restore_request_lock = Lock()
 
 
 def _require_local_shutdown_request(request: Request) -> None:
@@ -297,19 +299,55 @@ def make_backup() -> FileResponse:
 
 
 @router.post("/backups/restore")
-async def restore_backup(file: UploadFile = File(...)) -> dict:
+async def restore_backup(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    coordinator: ShutdownCoordinator = Depends(get_shutdown_coordinator),
+) -> dict:
     if Path(file.filename or "").suffix.lower() != ".zip":
         raise HTTPException(status_code=415, detail="只支持系统生成的ZIP备份")
-    data = await file.read(2 * 1024 * 1024 * 1024)
-    settings = get_settings()
-    backup_path, _ = store_bytes(
-        data=data,
-        original_name=file.filename or "restore.zip",
-        directory=settings.data_root / "tmp",
-        prefix="restore_",
-    )
+    if not _restore_request_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="另一份备份正在校验并安排恢复，请勿重复提交")
     try:
-        marker = stage_restore(backup_path)
-    except (ValueError, OSError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"staged": True, "restart_required": True, "marker": str(marker)}
+        data = await file.read(2 * 1024 * 1024 * 1024)
+        settings = get_settings()
+        backup_path, _ = store_bytes(
+            data=data,
+            original_name=file.filename or "restore.zip",
+            directory=settings.data_root / "tmp",
+            prefix="restore_",
+        )
+        try:
+            staged = stage_restore(backup_path)
+        except (ValueError, OSError) as exc:
+            try:
+                backup_path.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{exc}；临时上传文件清理失败：{cleanup_exc}",
+                ) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        upload_cleanup_warning = None
+        try:
+            backup_path.unlink(missing_ok=True)
+        except OSError as exc:
+            upload_cleanup_warning = f"临时上传文件清理失败：{backup_path}（{exc}）"
+        cleanup_warning = "；".join(
+            warning for warning in (staged.cleanup_warning, upload_cleanup_warning) if warning
+        ) or None
+
+        shutdown_scheduled = coordinator.request()
+        if shutdown_scheduled:
+            # Complete the HTTP response first, then stop the server through
+            # the same graceful path as the explicit safe-shutdown endpoint.
+            background_tasks.add_task(coordinator.execute)
+        return {
+            "staged": True,
+            "restart_required": True,
+            "shutdown_scheduled": shutdown_scheduled,
+            "marker": str(staged.marker),
+            "cleanup_warning": cleanup_warning,
+        }
+    finally:
+        _restore_request_lock.release()

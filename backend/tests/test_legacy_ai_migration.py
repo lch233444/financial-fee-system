@@ -51,12 +51,13 @@ def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, mon
                  withdrawal_cents, net_contribution_cents, closing_cents, gain_loss_cents,
                  period_rate_ppm, original_hwm_cents, adjusted_hwm_cents,
                  watermark_difference_cents, chargeable_above_hwm_cents, service_fee_cents,
-                 next_hwm_cents, fee_rate_bps, formula_version, status, created_at, updated_at)
+                 next_hwm_cents, fee_rate_bps, formula_version, status, finalized_at,
+                 created_at, updated_at)
             VALUES
                 (1, 1, 1, 1, 1, 1, 2025, 4, '2025-10-01', '2025-12-31', 92,
                  100000, 0, 0, 0, 110000, 10000, 100000, 100000, 100000,
                  10000, 10000, 2000, 110000, 2000, 'HWM-1.0', 'FINALIZED',
-                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
             INSERT INTO settlement_account_lines
                 (id, settlement_id, account_id, beginning_cents, closing_cents, created_at, updated_at)
             VALUES (1, 1, 1, 100000, 110000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
@@ -76,7 +77,7 @@ def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, mon
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert settlement == ("LEGACY_GROUP_HWM", 2000, 110000)
     assert line == (100000, 110000, None, None, "2025-10-01", "2025-12-31", 92)
-    assert revision == "c4b7f1d92e60"
+    assert revision == "9d2f6a8c4b13"
 
 
 def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
@@ -155,7 +156,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
         assert "24681357" in row.extracted_json
         assert row.ai_recognition_json is None
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "c4b7f1d92e60"
+        assert revision == "9d2f6a8c4b13"
 
     settlement_columns = {
         column["name"] for column in inspect(legacy_engine).get_columns("quarterly_settlements")
@@ -214,7 +215,7 @@ def test_unstamped_current_shape_database_gains_missing_financial_triggers(
                 text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             )
         }
-        assert revision == "c4b7f1d92e60"
+        assert revision == "9d2f6a8c4b13"
     assert {
         "trg_transactions_block_finalized_period",
         "trg_settlement_block_out_of_order_insert",

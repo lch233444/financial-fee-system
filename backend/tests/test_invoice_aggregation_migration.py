@@ -16,7 +16,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "c4b7f1d92e60"
+HEAD_REVISION = "9d2f6a8c4b13"
 PREVIOUS_REVISION = "a6d1f4c28b73"
 
 
@@ -107,6 +107,38 @@ def _seed_0_2_8_invoice_states(database_path: Path) -> None:
                 (3, 2, 1, 1, 'MIG-002-A', 'HKD', '2026-01-01', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
                 (4, 3, 1, 1, 'MIG-003-A', 'HKD', '2026-01-01', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
                 (5, 4, 1, 1, 'MIG-004-A', 'HKD', '2026-01-01', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO balance_snapshots
+                (id, account_id, as_of_date, total_balance_cents, currency, source_type,
+                 eligible_for_closing, created_at, updated_at)
+            VALUES
+                (1, 1, '2026-01-01', 50000, 'HKD', 'MANUAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (2, 1, '2026-03-31', 60000, 'HKD', 'MANUAL', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (3, 2, '2026-01-01', 50000, 'HKD', 'MANUAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (4, 2, '2026-03-31', 55000, 'HKD', 'MANUAL', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (5, 3, '2026-01-01', 100000, 'HKD', 'MANUAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (6, 3, '2026-03-31', 120000, 'HKD', 'MANUAL', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO attachments
+                (id, entity_type, entity_id, original_name, stored_path, sha256,
+                 mime_type, size_bytes, created_at, updated_at)
+            VALUES
+                (1, 'SNAPSHOT', 1, 's1.pdf', 'F:/synthetic/migration-s1.pdf',
+                 '1111111111111111111111111111111111111111111111111111111111111111',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (2, 'SNAPSHOT', 2, 's2.pdf', 'F:/synthetic/migration-s2.pdf',
+                 '2222222222222222222222222222222222222222222222222222222222222222',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (3, 'SNAPSHOT', 3, 's3.pdf', 'F:/synthetic/migration-s3.pdf',
+                 '3333333333333333333333333333333333333333333333333333333333333333',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (4, 'SNAPSHOT', 4, 's4.pdf', 'F:/synthetic/migration-s4.pdf',
+                 '4444444444444444444444444444444444444444444444444444444444444444',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (5, 'SNAPSHOT', 5, 's5.pdf', 'F:/synthetic/migration-s5.pdf',
+                 '5555555555555555555555555555555555555555555555555555555555555555',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (6, 'SNAPSHOT', 6, 's6.pdf', 'F:/synthetic/migration-s6.pdf',
+                 '6666666666666666666666666666666666666666666666666666666666666666',
+                 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
             INSERT INTO quarterly_settlements
                 (id, client_id, platform_id, fee_plan_id, company_id, fc_id,
                  year, quarter, start_date, closing_date, days,
@@ -135,25 +167,26 @@ def _seed_0_2_8_invoice_states(database_path: Path) -> None:
                  'LEGACY_GROUP_HWM', 'FINALIZED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
             INSERT INTO settlement_account_lines
                 (id, settlement_id, account_id, start_date, closing_date, days,
+                 beginning_snapshot_id, closing_snapshot_id,
                  beginning_cents, closing_cents, contribution_cents, withdrawal_cents,
                  net_contribution_cents, gain_loss_cents, period_rate_ppm,
                  original_hwm_cents, adjusted_hwm_cents, watermark_difference_cents,
                  chargeable_above_hwm_cents, service_fee_cents, next_hwm_cents,
                  fee_rate_bps, formula_version, created_at, updated_at)
             VALUES
-                (1, 1, 1, '2026-01-01', '2026-03-31', 90,
+                (1, 1, 1, '2026-01-01', '2026-03-31', 90, 1, 2,
                  50000, 60000, 0, 0, 0, 10000, 200000, 50000, 50000, 10000,
-                 10000, 1000, 60000, 2000, 'HWM-2.0-ACCOUNT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (2, 1, 2, '2026-01-01', '2026-03-31', 90,
+                 10000, 2000, 60000, 2000, 'HWM-2.0-ACCOUNT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (2, 1, 2, '2026-01-01', '2026-03-31', 90, 3, 4,
                  50000, 55000, 0, 0, 0, 5000, 100000, 50000, 50000, 5000,
-                 5000, 2000, 55000, 2000, 'HWM-2.0-ACCOUNT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (3, 2, 3, '2026-01-01', '2026-03-31', 90,
+                 5000, 1000, 55000, 2000, 'HWM-2.0-ACCOUNT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (3, 2, 3, '2026-01-01', '2026-03-31', 90, 5, 6,
                  100000, 120000, 0, 0, 0, 20000, 200000, 100000, 100000, 20000,
                  20000, 4000, 120000, 2000, 'HWM-2.0-ACCOUNT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (4, 3, 4, '2026-01-01', '2026-03-31', 90,
+                (4, 3, 4, '2026-01-01', '2026-03-31', 90, NULL, NULL,
                  100000, 125000, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                  NULL, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (5, 4, 5, '2026-01-01', '2026-03-31', 90,
+                (5, 4, 5, '2026-01-01', '2026-03-31', 90, NULL, NULL,
                  100000, 130000, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                  NULL, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
             INSERT INTO invoices
@@ -244,8 +277,8 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
             (4, 4, 6000, 0),
         ]
         assert line_rows == [
-            (1, 1, "Migration Test Platform", "MIG-001-A", "2026-01-01", "2026-03-31", 1000, 0),
-            (1, 2, "Migration Test Platform", "MIG-001-B", "2026-01-01", "2026-03-31", 2000, 1),
+            (1, 1, "Migration Test Platform", "MIG-001-A", "2026-01-01", "2026-03-31", 2000, 0),
+            (1, 2, "Migration Test Platform", "MIG-001-B", "2026-01-01", "2026-03-31", 1000, 1),
             (2, 3, "Migration Test Platform", "MIG-002-A", "2026-01-01", "2026-03-31", 4000, 0),
             (3, None, "Migration Test Platform", "LEGACY_GROUP_HWM", "2026-01-01", "2026-03-31", 5000, 0),
             (4, None, "Migration Test Platform", "LEGACY_GROUP_HWM", "2026-01-01", "2026-03-31", 6000, 0),
@@ -257,8 +290,8 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
         ]
         assert payment_row == (1, 3, 1234, "BANK", "Legacy partial payment")
 
-        # A newly-finalized same-group Settlement cannot race past the route's
-        # source-set comparison and be omitted from the Invoice.
+        # The new ledger guard refuses a direct legacy Finalize; stale Drafts
+        # must be recalculated through the current account-level route.
         connection.execute(
             """
             INSERT INTO platforms
@@ -281,25 +314,25 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
                 6, 1, 2, 1, 1, 1, 2026, 1, '2026-01-01', '2026-03-31', 90,
                 100000, 0, 0, 0, 105000, 5000, 50000, 100000, 100000,
                 5000, 5000, 1000, 105000, 2000, 'HWM-1.0',
-                'LEGACY_GROUP_HWM', 'FINALIZED', CURRENT_TIMESTAMP,
+                'LEGACY_GROUP_HWM', 'DRAFT', NULL,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
         )
-        with pytest.raises(sqlite3.IntegrityError, match="invoice_source_set_incomplete"):
+        with pytest.raises(sqlite3.IntegrityError, match="legacy_draft_requires_recalculation"):
             connection.execute(
                 """
-                UPDATE invoices
-                SET invoice_number = 'MTC-MTF-202401-010',
-                    issue_date = '2026-04-01', due_date = '2026-04-15',
-                    lifecycle_status = 'ISSUING'
-                WHERE id = 1
+                UPDATE quarterly_settlements
+                SET status = 'FINALIZED', finalized_at = CURRENT_TIMESTAMP
+                WHERE id = 6
                 """
             )
-        connection.execute("UPDATE quarterly_settlements SET status = 'VOID' WHERE id = 6")
+        connection.execute("DELETE FROM quarterly_settlements WHERE id = 6")
 
-        # NULL frozen ownership cannot pass the database Issue gate.
-        connection.execute("UPDATE quarterly_settlements SET company_id = NULL WHERE id = 1")
+        # Incomplete frozen source amounts cannot pass the database Issue gate.
+        connection.execute(
+            "UPDATE invoice_sources SET locked_amount_cents = 2999 WHERE invoice_id = 1"
+        )
         with pytest.raises(sqlite3.IntegrityError, match="invoice_source_mismatch"):
             connection.execute(
                 """
@@ -310,7 +343,9 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
                 WHERE id = 1
                 """
             )
-        connection.execute("UPDATE quarterly_settlements SET company_id = 1 WHERE id = 1")
+        connection.execute(
+            "UPDATE invoice_sources SET locked_amount_cents = 3000 WHERE invoice_id = 1"
+        )
 
         # Complete frozen data can issue, after which source and line values are immutable.
         connection.execute(
@@ -435,7 +470,9 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
                 """
             )
         with pytest.raises(sqlite3.IntegrityError, match="settlement_has_active_invoice"):
-            connection.execute("UPDATE quarterly_settlements SET status = 'VOID' WHERE id = 4")
+            connection.execute(
+                "UPDATE quarterly_settlements SET status = 'VOID', void_reason = 'Invoice dependency test' WHERE id = 4"
+            )
 
         # A second active source for the same Settlement is rejected independently.
         with pytest.raises(sqlite3.IntegrityError):
@@ -450,7 +487,9 @@ def test_0_2_8_invoices_backfill_sources_lines_attempts_and_keep_payments(
         # Removing the cross-source permits the old VOID Invoice's Settlement to void.
         connection.execute("DELETE FROM invoice_lines WHERE id = ?", (line_id,))
         connection.execute("DELETE FROM invoice_sources WHERE id = ?", (source_id,))
-        connection.execute("UPDATE quarterly_settlements SET status = 'VOID' WHERE id = 4")
+        connection.execute(
+            "UPDATE quarterly_settlements SET status = 'VOID', void_reason = 'Migration cleanup' WHERE id = 4"
+        )
         with pytest.raises(sqlite3.IntegrityError, match="invoice_source_missing"):
             connection.execute(
                 """

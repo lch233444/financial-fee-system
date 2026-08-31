@@ -27,6 +27,7 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
 
 
@@ -156,6 +157,23 @@ def init_db() -> None:
             "trg_settlement_validate_void",
             "trg_settlement_account_line_order",
         }
+        required_settlement_integrity_triggers = {
+            "trg_transactions_update_block_frozen_period",
+            "trg_transactions_delete_block_frozen_period",
+            "trg_snapshot_update_block_frozen_reference",
+            "trg_snapshot_delete_block_frozen_reference",
+            "trg_attachment_update_block_finalized_evidence",
+            "trg_attachment_delete_block_finalized_evidence",
+            "trg_statement_import_update_block_finalized_evidence",
+            "trg_statement_import_delete_block_finalized_evidence",
+            "trg_settlement_insert_draft_only",
+            "trg_settlement_lifecycle_transition",
+            "trg_settlement_delete_non_draft",
+            "trg_settlement_parent_financial_lock",
+            "trg_settlement_line_insert_draft_only",
+            "trg_settlement_line_update_draft_only",
+            "trg_settlement_line_delete_draft_only",
+        }
         required_invoice_triggers = {
             "trg_invoice_validate_issue",
             "trg_invoice_source_insert_draft_only",
@@ -200,6 +218,48 @@ def init_db() -> None:
             "uq_invoice_sources_active_settlement",
             "uq_invoices_active_client_period_plan",
         }.issubset(index_names)
+        settlement_integrity_sql_is_current = (
+            "legacy_draft_requires_recalculation"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "settlement_formula_version_invalid"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "abs(new.gain_loss_cents) * 1000000"
+            in " ".join(
+                trigger_sql.get("trg_settlement_validate_finalize", "")
+                .lower()
+                .split()
+            )
+            and "settlement_account_period_duplicate"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "settlement_account_period_duplicate"
+            in trigger_sql.get("trg_settlement_account_line_order", "").lower()
+            and "settlement_transaction_totals_changed"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "transaction_record.transaction_date > line.start_date"
+            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and "new.status = 'finalized' and new.void_reason is not null"
+            in " ".join(
+                trigger_sql.get("trg_settlement_lifecycle_transition", "")
+                .lower()
+                .split()
+            )
+            and "old.status = 'draft' and new.status = 'finalized'"
+            in " ".join(
+                trigger_sql.get("trg_settlement_lifecycle_transition", "")
+                .lower()
+                .split()
+            )
+            and "new.void_reason is not old.void_reason"
+            in " ".join(
+                trigger_sql.get("trg_settlement_parent_financial_lock", "")
+                .lower()
+                .split()
+            )
+            and "new.transaction_date >= line.start_date"
+            in trigger_sql.get("trg_transactions_block_finalized_period", "").lower()
+            and "settlement.status = 'finalized'"
+            in trigger_sql.get("trg_transactions_block_finalized_period", "").lower()
+        )
         if not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
             # directly at head would falsely mark missing columns as applied.
@@ -232,6 +292,12 @@ def init_db() -> None:
             # tables.  Always run the real revision unless every column,
             # critical index, and trigger body proves the 0.2.9 shape.
             command.stamp(alembic_config, "a6d1f4c28b73")
+            command.upgrade(alembic_config, "head")
+        elif (
+            not required_settlement_integrity_triggers.issubset(settlement_triggers)
+            or not settlement_integrity_sql_is_current
+        ):
+            command.stamp(alembic_config, "c4b7f1d92e60")
             command.upgrade(alembic_config, "head")
         else:
             command.stamp(alembic_config, "head")

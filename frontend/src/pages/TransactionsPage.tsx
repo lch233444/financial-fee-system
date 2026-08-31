@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel } from "../components";
 import { todayIso, useApiList } from "../hooks";
@@ -19,6 +19,10 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
   const [filterPlatformId, setFilterPlatformId] = useState("");
   const [filterAccountId, setFilterAccountId] = useState("");
   const [localError, setLocalError] = useState("");
+  const [transactionBusy, setTransactionBusy] = useState(false);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const transactionBusyRef = useRef(false);
+  const snapshotBusyRef = useRef(false);
   const error = localError || accounts.error || transactions.error || snapshots.error || attachments.error;
   const accountById = useMemo(() => new Map(accounts.data.map((item) => [item.id, item])), [accounts.data]);
   const clientOptions = useMemo(() => Array.from(new Map(accounts.data.map((item) => [item.client_id, item.client_name])).entries())
@@ -50,32 +54,50 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
 
   async function submitTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    if (transactionBusyRef.current) return;
+    transactionBusyRef.current = true;
+    setTransactionBusy(true);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     setLocalError("");
     try {
       await postJson("/api/transactions", {
         account_id: Number(data.get("account_id")), transaction_date: data.get("date"),
         transaction_type: data.get("type"), amount: data.get("amount"), remark: data.get("remark") || null,
       });
-      event.currentTarget.reset();
+      form.reset();
       await transactions.reload();
       notify("资金流水已保存；请补交该流水凭证后再Finalized");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "资金流水保存失败"); }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "资金流水保存失败");
+    } finally {
+      transactionBusyRef.current = false;
+      setTransactionBusy(false);
+    }
   }
 
   async function submitSnapshot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    if (snapshotBusyRef.current) return;
+    snapshotBusyRef.current = true;
+    setSnapshotBusy(true);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     setLocalError("");
     try {
       await postJson("/api/balance-snapshots", {
         account_id: Number(data.get("account_id")), as_of_date: data.get("date"), total_balance: data.get("balance"),
         eligible_for_closing: data.get("eligible") === "on", remark: data.get("remark") || null,
       });
-      event.currentTarget.reset();
+      form.reset();
       await snapshots.reload();
       notify("余额快照已保存；请补交快照凭证后再Finalized");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "余额快照保存失败"); }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "余额快照保存失败");
+    } finally {
+      snapshotBusyRef.current = false;
+      setSnapshotBusy(false);
+    }
   }
 
   async function submitAttachment(event: FormEvent<HTMLFormElement>) {
@@ -124,8 +146,8 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
       <PageHeader title="资金与余额" subtitle="Draft允许先保存；Beginning、Closing、Contribution和Withdrawal缺少凭证时不能Finalized" />
       {error ? <ErrorBanner message={error} /> : null}
       <div className="split-layout">
-        <Panel title="新增资金流水"><form className="form-grid" onSubmit={(e) => void submitTransaction(e)}><Field label="Sub Account"><select name="account_id" required defaultValue=""><option value="" disabled>请选择</option>{accounts.data.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="Date"><input name="date" type="date" defaultValue={todayIso()} required /></Field><Field label="Type"><select name="type" defaultValue="CONTRIBUTION"><option value="CONTRIBUTION">Contribution 加款</option><option value="WITHDRAWAL">Withdrawal 提款</option></select></Field><Field label="Amount (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required /></Field><Field label="Remark"><textarea name="remark" rows={2} /></Field><button className="primary" type="submit">保存流水</button></form></Panel>
-        <Panel title="手工余额快照" subtitle="非季末且非退出日不可作为Closing"><form className="form-grid" onSubmit={(e) => void submitSnapshot(e)}><Field label="Sub Account"><select name="account_id" required defaultValue=""><option value="" disabled>请选择</option>{accounts.data.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="As-of Date"><input name="date" type="date" defaultValue={todayIso()} required /></Field><Field label="Total Balance (HKD)"><input name="balance" type="number" min="0" step="0.01" required /></Field><label className="check-field"><input name="eligible" type="checkbox" /> 季末或实际退出日，可作为Closing</label><Field label="Remark"><textarea name="remark" rows={2} /></Field><button className="secondary" type="submit">保存快照</button></form></Panel>
+        <Panel title="新增资金流水"><form className="form-grid" onSubmit={(e) => void submitTransaction(e)}><Field label="Sub Account"><select name="account_id" required defaultValue="" disabled={transactionBusy}><option value="" disabled>请选择</option>{accounts.data.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="Date"><input name="date" type="date" defaultValue={todayIso()} required disabled={transactionBusy} /></Field><Field label="Type"><select name="type" defaultValue="CONTRIBUTION" disabled={transactionBusy}><option value="CONTRIBUTION">Contribution 加款</option><option value="WITHDRAWAL">Withdrawal 提款</option></select></Field><Field label="Amount (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={transactionBusy} /></Field><Field label="Remark"><textarea name="remark" rows={2} disabled={transactionBusy} /></Field><button className="primary" type="submit" disabled={transactionBusy}>{transactionBusy ? "保存处理中..." : "保存流水"}</button></form></Panel>
+        <Panel title="手工余额快照" subtitle="非季末且非退出日不可作为Closing"><form className="form-grid" onSubmit={(e) => void submitSnapshot(e)}><Field label="Sub Account"><select name="account_id" required defaultValue="" disabled={snapshotBusy}><option value="" disabled>请选择</option>{accounts.data.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="As-of Date"><input name="date" type="date" defaultValue={todayIso()} required disabled={snapshotBusy} /></Field><Field label="Total Balance (HKD)"><input name="balance" type="number" min="0" step="0.01" required disabled={snapshotBusy} /></Field><label className="check-field"><input name="eligible" type="checkbox" disabled={snapshotBusy} /> 季末或实际退出日，可作为Closing</label><Field label="Remark"><textarea name="remark" rows={2} disabled={snapshotBusy} /></Field><button className="secondary" type="submit" disabled={snapshotBusy}>{snapshotBusy ? "保存处理中..." : "保存快照"}</button></form></Panel>
       </div>
       <Panel title="账户数据筛选" subtitle="以下筛选同时作用于资金流水、余额快照及凭证关联记录">
         <div className="settlement-controls transaction-filters">

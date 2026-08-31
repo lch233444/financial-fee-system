@@ -2,7 +2,7 @@
 
 Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-luna` 进行一次辅助识别。
 
-当前源码版本为 **0.2.12**，当前正式Windows单机运行版同为0.2.12。正式版位于 `F:\财务系统\金融计划收费系统_Windows运行版_0.2.12_20260829\FinancialFeeSystem`，后端168/168、前端生产构建、Windows候选合成业务闭环、正式备份副本预检及8000端口正式切换均已通过，具体证据见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
+当前源码及正式Windows单机运行版均为 **0.2.13**。正式版位于 `F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem`，并继续使用独立数据根 `F:\财务系统\财务数据`；完整发布状态和证据见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)；它们共同保证不同电脑和不同开发代理可以延续同一套业务与安全边界。
 
 ## 工程接手入口
 
@@ -21,6 +21,8 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 用户在对话中确认的业务背景或规则必须在同一次任务中写回GitHub交接资料，不能依赖对话历史或Agent记忆继续传递。
 
 0.2.12按用户最新确认把Invoice编号第一段改为Company全名，格式为`Company全名-中介人名字缩写-Issue Date(YYYYMMDD)-连续号`；Company Code只作基础资料内部标识。连续号仍按同一Company+FC持续递增、不按日期重置，作废、失败或碰撞跳过的号码不复用，历史Invoice编号不改写。业务编号与Windows安全归档文件名分离：0.2.12新生成PDF统一使用确定性哈希归档名，旧版已记录路径及中断签发的安全原名仍可恢复。该批同时补强Sub Account可见性和账单入账追踪：人工确认余额账单后建立带StatementImport来源的BalanceSnapshot，资金页可按Client、Platform和Sub Account查看，季度结算的内部Excel候选及历史列表直接逐行显示Sub Account号码和Scheme，Invoice候选、已选组合和账户明细显示Fee Plan及`Scheme（当前资料）`；切换导入记录或凭证类型会清空旧选择。ACTIVE Sub Account必须有开始管理日期，Draft/Closed或缺少开始日期的账户不得结算；实际结束日期不得早于该账户任何未作废Settlement的Closing Date，其他变更仍会审计化重核未锁定Snapshot的Closing资格。系统不会把供款资料自动转成Contribution/Withdrawal，也不会自动Calculate或Finalize季度结算。Payment目前仍保留多笔/部分付款旧流程；二态Payment、凭证硬前置、差额、错单更正和退款留痕属于后续目标。
+
+0.2.13补强季度结算和备份恢复的完整性：Finalize在同一SQLite写锁内按当前资料重算并拒绝陈旧Draft，验证物理凭证哈希，并用迁移`9d2f6a8c4b13`冻结Finalized结果及其资金、余额和证据关系；误建Draft可受控删除并保留审计。备份改为唯一临时ZIP严格校验后原子公布，恢复采用独占写入门闩、同盘事务目录切换、失败回滚、断电续作和排队后自动安全退出。后端226/226、前端生产构建、Windows候选合成验收、正式备份副本迁移预检及8000端口正式切换均已通过。Settlement页面仍没有Void入口，且既有自然键使Void后尚不能重建同组合替代Settlement；Payment二态、凭证硬前置、错单更正和退款仍是下一批高优先级工作。
 
 ## 开发环境
 

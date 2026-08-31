@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArchiveRestore,
   BrainCircuit,
@@ -35,6 +35,10 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   const [assistantLoading, setAssistantLoading] = useState(true);
   const [assistantWorking, setAssistantWorking] = useState(false);
   const [loginPolling, setLoginPolling] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const backupBusyRef = useRef(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const restoreBusyRef = useRef(false);
   const [error, setError] = useState("");
 
   const refreshAssistant = useCallback(async (showError = false) => {
@@ -129,6 +133,10 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   }
 
   async function backup() {
+    if (backupBusyRef.current) return;
+    backupBusyRef.current = true;
+    setBackupBusy(true);
+    setError("");
     try {
       const response = await fetch("/api/backups", withFinancialSystemRequestHeader({ method: "POST" }));
       if (!response.ok) throw new Error("备份失败");
@@ -140,18 +148,34 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       anchor.click();
       URL.revokeObjectURL(url);
       notify("备份已生成并通过哈希校验");
-    } catch (err) { setError(err instanceof Error ? err.message : "备份失败"); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "备份失败");
+    } finally {
+      backupBusyRef.current = false;
+      setBackupBusy(false);
+    }
   }
 
   async function restore(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (restoreBusyRef.current) return;
+    restoreBusyRef.current = true;
+    setRestoreBusy(true);
     const form = event.currentTarget;
     const data = new FormData(form);
+    setError("");
     try {
-      const result = await api<{ staged: boolean; restart_required: boolean }>("/api/backups/restore", { method: "POST", body: data });
-      if (result.staged) notify("备份已校验并排队恢复，请关闭并重新启动系统");
+      const result = await api<{ staged: boolean; restart_required: boolean; shutdown_scheduled: boolean; cleanup_warning: string | null }>("/api/backups/restore", { method: "POST", body: data });
+      if (result.staged) {
+        notify(`备份已校验并排队恢复，系统正在安全退出；退出后请重新启动以完成恢复${result.cleanup_warning ? `；${result.cleanup_warning}` : ""}`);
+      }
       form.reset();
-    } catch (err) { setError(err instanceof Error ? err.message : "恢复失败"); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "恢复失败");
+    } finally {
+      restoreBusyRef.current = false;
+      setRestoreBusy(false);
+    }
   }
 
   if (!info && !error) return <Loading />;
@@ -186,8 +210,8 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       </Panel>
 
       <div className="split-layout">
-        <Panel title="建立完整备份" subtitle="包含数据库、账单原件、附件及导出文件"><div className="backup-action"><DatabaseBackup size={38} /><p>备份采用SQLite安全快照，并为每个文件写入SHA-256校验值。</p><button className="primary" onClick={() => void backup()}>生成并下载ZIP备份</button></div></Panel>
-        <Panel title="恢复备份" subtitle="先校验所有文件，重启后才正式替换数据"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><input name="file" type="file" accept=".zip" required /><button className="danger" type="submit">校验并安排恢复</button></form></Panel>
+        <Panel title="建立完整备份" subtitle="包含数据库、账单原件、附件及导出文件"><div className="backup-action"><DatabaseBackup size={38} /><p>备份采用SQLite安全快照，并为每个文件写入SHA-256校验值。</p><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成备份..." : "生成并下载ZIP备份"}</button></div></Panel>
+        <Panel title="恢复备份" subtitle="先校验所有文件，重启后才正式替换数据"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><input name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验备份..." : "校验并安排恢复"}</button></form></Panel>
       </div>
     </>
   );

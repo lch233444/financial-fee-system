@@ -1,5 +1,5 @@
-金融计划收费计算系统 MVP 0.2.12 Windows运行版构建清单
-基线日期：2026-08-29
+金融计划收费计算系统 MVP 0.2.13 Windows运行版构建清单
+基线日期：2026-08-31
 
 构建环境：
 - Python 3.12.13
@@ -17,6 +17,14 @@
 - codex-code-mode-host.exe: 8F98CC7AA079B51DBFBB16A8E655A468A9C37C1CD23E22422C10CDFD6CACE543
 - tesseract.exe: C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - 新收费计划计算纯净版模板.xlsx: 16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
+
+本次构建结果：
+- 构建时间：2026-08-31 20:45:42 +08:00
+- 主EXE SHA-256：6A6B88DDEAA185D31E2F86A12EC19E1F3AB352FFB25505B8F785D0C51AA15280
+- Windows ProductVersion/FileVersion：0.2.13/0.2.13.0
+- 写入`构建结果.txt`前399个文件、613409752字节；写入后400个文件、613410453字节。
+- 最终前端资源：index-Do53jYCv.js、index-Bi8r7y5B.css
+- 正式目录：F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem
 
 构建输出规则：
 - 每次只生成`release/FinancialFeeSystem`，构建开始时删除上一份`release`，不累计候选版本目录。

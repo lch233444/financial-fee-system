@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,44 @@ async def lifespan(_app: FastAPI):
 
 
 settings = get_settings()
+
+
+class _RestoreMutationGate:
+    """Allow normal concurrent writes, but make restore exclusive with all of them."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._active_mutations = 0
+        self._restore_active = False
+
+    def try_enter_mutation(self) -> bool:
+        with self._lock:
+            if self._restore_active:
+                return False
+            self._active_mutations += 1
+            return True
+
+    def leave_mutation(self) -> None:
+        with self._lock:
+            self._active_mutations -= 1
+            if self._active_mutations < 0:
+                raise RuntimeError("财务写入门闩计数无效")
+
+    def try_enter_restore(self) -> bool:
+        with self._lock:
+            if self._restore_active or self._active_mutations:
+                return False
+            self._restore_active = True
+            return True
+
+    def leave_restore(self) -> None:
+        with self._lock:
+            if not self._restore_active:
+                raise RuntimeError("恢复门闩状态无效")
+            self._restore_active = False
+
+
+_restore_mutation_gate = _RestoreMutationGate()
 app = FastAPI(
     title=settings.app_name,
     version=APP_VERSION,
@@ -51,12 +90,44 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
 async def require_financial_write_marker(request: Request, call_next):
     """Reject blind cross-site writes to every API mutation endpoint."""
 
-    if (
+    is_api_mutation = (
         request.url.path.startswith("/api/")
         and request.method.upper() not in {"GET", "HEAD", "OPTIONS"}
-        and request.headers.get(ai_assistant.FINANCIAL_REQUEST_HEADER) != "1"
-    ):
-        return JSONResponse(status_code=403, content={"detail": "缺少本地系统请求标记"})
+    )
+    if is_api_mutation:
+        if request.headers.get(ai_assistant.FINANCIAL_REQUEST_HEADER) != "1":
+            return JSONResponse(status_code=403, content={"detail": "缺少本地系统请求标记"})
+        if request.url.path == "/api/shutdown":
+            return await call_next(request)
+
+        pending_restore_marker = get_settings().data_root / "pending_restore.json"
+        if pending_restore_marker.exists():
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "备份恢复已排队，系统正在安全退出；为避免恢复后丢失新数据，已停止接受财务写入"
+                },
+            )
+
+        is_restore_request = request.url.path == "/api/backups/restore"
+        if is_restore_request:
+            if not _restore_mutation_gate.try_enter_restore():
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": "系统仍有财务写入或另一份恢复正在处理，请稍后重试"},
+                )
+        elif not _restore_mutation_gate.try_enter_mutation():
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "备份恢复正在校验，已暂停新的财务写入"},
+            )
+        try:
+            return await call_next(request)
+        finally:
+            if is_restore_request:
+                _restore_mutation_gate.leave_restore()
+            else:
+                _restore_mutation_gate.leave_mutation()
     return await call_next(request)
 
 app.include_router(master.router)

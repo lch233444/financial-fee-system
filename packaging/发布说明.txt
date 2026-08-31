@@ -1,7 +1,12 @@
-金融计划收费计算系统 MVP 0.2.12
-构建日期：2026-08-29
+金融计划收费计算系统 MVP 0.2.13
+构建日期：2026-08-31
 
 本版主要更新：
+- Settlement Finalize取得SQLite写锁后按当前Client/账户状态、Company/FC、Fee Plan费率、Snapshot、Transaction、凭证及前序HWM重新计算；任何Draft陈旧或来源改变都会返回409并要求重新Calculate，不再直接锁定旧结果。
+- 新迁移`9d2f6a8c4b13`把Finalized Settlement、账户行、引用流水/Snapshot及其证据关系的不可变约束下沉到SQLite；升级前会检查外键、账户HWM链、核心整数公式、期间收益率、同账户同季度重复和存量凭证关系，异常时停止而不猜测修复。SQLite精确收益率校验要求Beginning、Net Contribution和Gain/Loss三项各自绝对值均不超过HKD 90bn，任一项超过即要求专门高精度迁移，并非业务额度。
+- 同一Sub Account同一年度季度不得跨Platform或Fee Plan重复Finalize；仅Draft Settlement可由财务确认删除并保留审计，Finalized/VOID不可删除。VOID后重建同自然键Settlement仍需独立高风险迁移，季度结算页面也尚无Settlement Void入口；本版不声称普通用户已具备完整纠错闭环，禁止直接改库代替受控操作。
+- Finalize要求凭证数据库关系与磁盘原文件同时存在、非空且SHA-256一致；物理缺失或篡改会明确阻止正式结算。资金流水、快照、Calculate、Finalize、Draft删除、备份生成和恢复均增加前端防重复提交及请求期间输入锁定；恢复成功时清除旧错误提示。
+- 备份创建使用唯一临时ZIP，完成严格恢复级自校验后才在同一备份目录原子公布，避免同秒并发覆盖或下载半成品。恢复从上传读取前即独占，严格核对Manifest结构、路径全集、逐文件哈希、系统数据库身份、Alembic版本、SQLite完整性和外键；成功排队后立即阻止新增财务写入并自动安全退出。下次启动采用同盘预制、事务日志、目录原子切换、失败回滚和断电后重试，避免新数据库与旧附件混用。旧暂存目录及上传ZIP清理失败会显式告警并在后续启动安全重试。
 - Invoice编号第一段改为Company全名，完整格式为`Company全名-中介人名字缩写-Issue Date(YYYYMMDD)-连续号`；Company Code仅作基础资料内部标识。连续号仍按同一Company+FC持续递增，不按日期重置，作废、失败及碰撞号码不复用，历史编号不改写。
 - 业务编号与磁盘归档名解耦：PDF正文和系统记录保留完整账单编号；0.2.12新签发及旧Issued缺档补建统一使用确定性哈希归档名，避免Windows大小写碰撞，旧版已登记路径及遗留ISSUING安全原名继续兼容。下载文件名另作Windows安全处理并包含记录ID。
 - 中英文Invoice都能完整显示中文Company全名及业务编号。
@@ -22,10 +27,16 @@
 - FC服务统计精简为当前管理客户数、期间收费客户数和Finalized Service Fee，不再把Company已收/未收列作FC指标；Dashboard可选择Year和Quarter。
 - Payment仍保留现有多笔/部分付款界面，但新增提交防双击及数据库兜底：只能向Issued Invoice登记正数付款，累计不得超额，有Payment时不得Void。
 - 财务日期默认值改用Windows本地日历日期，避免北京时间凌晨被UTC换算成前一天。
-- 继续沿用0.2.9的数据迁移：保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。金额不一致、重复活动组/来源或残缺新结构会安全停止并要求人工检查；0.2.12没有新增数据库迁移。
+- 继续沿用0.2.9的Invoice迁移口径：保留旧Invoice编号、金额、PDF字段和Payment；历史组合HWM只保留一行汇总，不虚构账户拆分。0.2.13新增Settlement Finalize完整性迁移；任何存量外键、公式、HWM链、同账户同季度或关键证据关系不一致都会安全停止并要求备份后人工检查。
 - Windows构建同时校验后端、前端、字符串版号和数值FileVersion，并固定验证Excel母版及Tesseract版本/SHA-256，防止发布信息漂移。
 - 公司Excel母版内容未修改，按用户确认改名为“新收费计划计算纯净版模板.xlsx”，SHA-256仍为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
 - 本版本仍不包含二态Payment、付款凭证硬前置、公司承担差额、错误Invoice更正/退款、Defer延付利息、自动邮件、用户权限及服务器部署。
+
+正式发布状态：
+- 后端完整回归226/226、前端TypeScript及生产构建通过；候选包在8001端口和F盘纯合成数据根完成Settlement、备份恢复、自停机与重启收敛验收。
+- 正式切换前完整备份`financial_system_backup_20260831_205840.zip`及其API副本哈希一致，F盘隔离副本完成严格校验和`c4b7f1d92e60 → 9d2f6a8c4b13`迁移预检。
+- 正式版位于`F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem`，已接管8000端口；健康检查、进程路径、45条OpenAPI路径、最新前端、入口禁缓存、数据库完整性/外键及35个Trigger均通过。
+- 未读取或输出真实客户业务内容，未调用Luna处理真实文件；旧0.2.12运行目录已移入回收站，候选、构建和测试临时目标已清理。
 
 启动方式：
 1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。

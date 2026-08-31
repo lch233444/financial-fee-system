@@ -2,6 +2,34 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.13 - 2026-08-31（Windows运行版）
+
+### Settlement Finalize与数据库完整性
+
+- Calculate与Finalize改用同一套当前数据库计算服务。Finalize的第一条SQL取得SQLite `BEGIN IMMEDIATE`写锁，再重查Client/账户状态、Company/FC、Fee Plan费率、Snapshot、Transaction、前序HWM及同账户同季度冲突；与Draft任一字段不一致即409要求重新Calculate，不在Finalize中静默更新。
+- 同一Sub Account同一年度季度不得跨Platform或Fee Plan重复出现在非VOID Settlement；应用、迁移预检及SQLite Trigger共同保护。DRAFT误建可由财务确认删除，账户行同事务级联清理，审计以`entity_id=NULL`并在details记录原Settlement ID及组合字段，避免SQLite复用物理ID后审计混淆；FINALIZED/VOID仍不可删除。
+- Finalize逐项验证StatementImport/Attachment物理文件仍在受控数据根、为非空普通文件且SHA-256（及Attachment大小）一致；Finalized引用的Transaction、Snapshot及其Attachment/StatementImport关键证据关系由Trigger冻结，VOID后才允许纠正。
+- 新Alembic revision `9d2f6a8c4b13`在升级前拒绝外键破损、同账户同季度重复、错误前序HWM链、核心整数公式、父子合计、收益率、公式版本或关键证据关系，再建立新的生命周期与不可变Trigger。新ACCOUNT_HWM强制`HWM-2.0-ACCOUNT`；收益率以纯整数`ROUND_HALF_UP`等价规则核对。Beginning、Net Contribution或Gain/Loss任一绝对值超过`9,000,000,000,000` cents（HKD 90bn）时，为避免SQLite 64位整数校验溢出而安全停止；这是技术上限而非业务额度。
+- 起始日流水继续不重复计入Net Contribution（计算范围`> start && <= closing`），但因其应已进入Beginning Snapshot，冻结范围保持`>= start && <= closing`，Finalize后不得增删改。
+- 当前VOID历史仍占用`Client + Platform + Fee Plan + 年度 + 季度`自然键；VOID后可以纠正底层资料，但尚不能直接建立同组合替代Settlement。移除该限制需要重建带自引用及多重Invoice外键的核心表并定义替代Invoice关系，本版不宣称完成纠错闭环。
+
+### 备份恢复与前端并发保护
+
+- 备份Manifest改为严格字段、唯一JSON键、受控路径、精确文件全集和逐文件SHA-256；数据库副本必须通过系统核心表/列、已知Alembic版本、`integrity_check`及`foreign_key_check`，无关或未来版本SQLite即使自身可打开也拒绝。创建侧拒绝数据库及业务文件树中的symlink/junction，并使用唯一临时ZIP完整自校验后在备份目录原子改名，避免同秒并发请求覆盖或下载半成品。
+- 恢复在数据根同一卷预制并再次校验`database/attachments/statement_imports/output`，以`preparing/applying/rolling_back/committed`事务journal和同盘目录原子替换提交。普通错误逆序回滚，进程中断下次启动先恢复一致状态；committed后的marker、pending、旧目录及上传ZIP清理由幂等收尾重试，后排队marker不会被旧事务误删。
+- 所有API财务写入进入进程级恢复读写门闩：普通写入仍可按既有并发契约运行并计数，恢复只有在活动写入为0时才能独占进入，进入后拒绝新的财务写入；恢复API另从读取上传前取得专用互斥。因此恢复校验期间不会有已越过检查的并发财务写入，同一时刻也只接受一份恢复请求。校验成功写入pending marker后，全局中间件立即拒绝除安全退出外的所有财务写入，并在响应送达后自动执行与“安全退出系统”相同的优雅停机；避免等待人工重启期间的新数据被旧备份覆盖。旧暂存或上传ZIP清理失败作为明确warning返回，前端直接展示；启动会收敛未被当前marker/journal引用的安全前缀临时副本。
+- 资金流水、手工Snapshot、Calculate、Finalize、Draft删除、备份生成和备份恢复提交增加即时ref级防双击；对应请求期间锁定输入。Settlement输入变化会使旧结果失效，恢复成功会清除旧错误提示，避免后台处理旧选择而页面显示新参数或成功/失败并存。
+- 本批不修改Excel母版，不读取真实客户资料，不调用Luna处理真实文件。二态Payment、付款凭证硬前置、差额、Invoice更正/退款、Settlement VOID替代版本及其前端作废入口仍属后续范围；现有受保护Void后端接口不等于普通用户已具备完整更正闭环。
+
+### 验收与发布状态
+
+- 源码最终完整回归226/226通过，前端TypeScript及生产构建通过；备份/恢复与既有Invoice并发专项最终68/68通过。构建脚本于2026-08-31 20:45:42 +08:00生成候选包：写入`构建结果.txt`前399个文件、613,409,752字节，写入后400个文件、613,410,453字节。主EXE SHA-256为`6A6B88DDEAA185D31E2F86A12EC19E1F3AB352FFB25505B8F785D0C51AA15280`，ProductVersion/FileVersion为0.2.13/0.2.13.0；最终前端资源为`index-Do53jYCv.js`与`index-Bi8r7y5B.css`，Excel母版SHA-256保持不变。
+- 候选EXE在8001端口和F盘纯合成数据根完成0.2.13闭环验收：陈旧Draft Finalize返回409、正确Settlement Service Fee为40.00、Finalized期间资料改写返回409、误建Draft删除返回200、同轮备份名称唯一且严格校验通过、恢复排队后自动安全退出；重启后pending marker和事务临时目录均收敛，数据库为Alembic head `9d2f6a8c4b13`、`integrity_check=ok`、外键违规0且35个Trigger齐全。候选最后通过安全退出并释放8001端口。
+- 正式切换前由0.2.12系统接口创建`financial_system_backup_20260831_205840.zip`，共1,513,851字节，SHA-256为`526C6DB77950F21F7B8C397BD98C8F379A3C91D8F7AB458C7AB1A44E877DA0B5`；API下载副本与正式备份哈希一致。新恢复服务在F盘隔离副本上严格验证归档、Manifest、路径全集、逐文件哈希和系统数据库身份，再由0.2.13候选把副本从`c4b7f1d92e60`安全迁移到`9d2f6a8c4b13`；完整性、外键和35个Trigger均通过后才允许停旧版。
+- 0.2.13已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.13_20260831\FinancialFeeSystem`接管8000端口及既有独立数据根。正式健康检查返回0.2.13且仅监听127.0.0.1；实际进程路径、45条OpenAPI路径、Settlement Draft DELETE、前端资源`index-Do53jYCv.js`、入口`no-store, max-age=0`、EXE版本/哈希、数据库head/完整性/外键及35个Trigger均通过，pending restore和恢复事务残留均为0。
+- 旧0.2.12正式目录已移入Windows回收站。固定`release`候选、PyInstaller/前端构建产物、F盘合成验收和预检副本、精确测试临时目录及本批误落C盘的13个测试目录已永久清理；共清理77个临时/缓存目标、4,374个文件、971,230,064字节。本机活动运行目录只保留0.2.13正式版，独立业务数据及正式完整备份继续保留。
+- 本批未修改Excel母版；正式数据仅执行备份、迁移及数据库结构完整性检查，没有查询或输出客户业务行、打开客户文件，也未调用Luna处理真实资料。
+
 ## 0.2.12 - 2026-08-29（Windows运行版）
 
 ### Invoice编号与安全归档

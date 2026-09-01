@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
   CheckCircle2,
@@ -270,12 +270,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [selected, setSelected] = useState<StatementImport | null>(null);
   const [uploading, setUploading] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [localError, setLocalError] = useState("");
   const [assistant, setAssistant] = useState<AiAssistantStatus | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(true);
   const [conflictsAcknowledged, setConflictsAcknowledged] = useState(false);
   const [lunaDocumentTypeReviewed, setLunaDocumentTypeReviewed] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const deleteBusyRef = useRef(false);
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
@@ -295,6 +297,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const confirmedSnapshot = snapshots.data.find((item) => item.id === selected?.confirmed_snapshot_id);
   const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId));
   const confirmedHoldings = (confirmedSnapshot?.holdings as Holding[] | undefined) || [];
+  const statementWriteBusy = uploading || recognizing || reviewing || deletingId !== null;
 
   useEffect(() => {
     getAiAssistantStatus()
@@ -326,16 +329,24 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (recognizing || reviewing || deletingId !== null) return;
     setUploading(true);
     setLocalError("");
     try {
       const data = new FormData(event.currentTarget);
-      const result = await api<StatementImport & { duplicate: boolean }>("/api/statement-imports", { method: "POST", body: data });
+      const result = await api<StatementImport & { duplicate: boolean; upload_recovery_pending?: boolean }>("/api/statement-imports", { method: "POST", body: data });
       await imports.reload();
       setSelected(result);
       setReviewValues(initialReviewValues(result));
       setHoldingsSource("ocr");
-      notify(result.duplicate ? "该文件已经上传，已打开原记录" : "本地OCR已完成，可选择Luna辅助识别后复核");
+      if (result.upload_recovery_pending) {
+        setLocalError("账单记录已安全处理，但上传对账标记仍待系统清理；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录");
+        notify(result.duplicate
+          ? "已打开原记录；上传对账标记待重启清理"
+          : "本地OCR已完成；上传对账标记待重启清理");
+      } else {
+        notify(result.duplicate ? "该文件已经上传，已打开原记录" : "本地OCR已完成，可选择Luna辅助识别后复核");
+      }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "上传失败");
     } finally {
@@ -344,7 +355,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   }
 
   async function reparse() {
-    if (!selected || selected.ai_recognition) return;
+    if (!selected || selected.ai_recognition || uploading || recognizing || reviewing || deletingId !== null) return;
+    setReviewing(true);
     setLocalError("");
     try {
       const result = await postJson<StatementImport>(`/api/statement-imports/${selected.id}/reparse`, {});
@@ -356,11 +368,13 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       notify(result.ai_recognition ? "本地OCR已重新执行；将继续与原Luna结果比较，不会再次调用模型" : "本地OCR已重新执行，可运行一次Luna辅助识别");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "重新识别失败");
+    } finally {
+      setReviewing(false);
     }
   }
 
   async function runLuna() {
-    if (!selected || !assistantReady || selected.ai_recognition) return;
+    if (!selected || !assistantReady || selected.ai_recognition || uploading || reviewing || deletingId !== null) return;
     setRecognizing(true);
     setLocalError("");
     setConflictsAcknowledged(false);
@@ -383,28 +397,73 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   }
 
   async function deleteImport(record: StatementImport) {
-    if (record.status === "CONFIRMED") {
-      setLocalError("已确认入账的导入记录不能删除。");
-      return;
-    }
-    if (!window.confirm(`确定删除导入记录 #${record.id}？原始文件及OCR/Luna结果也会删除，且不能撤销。`)) return;
+    if (deleteBusyRef.current || uploading || recognizing || reviewing) return;
+    const confirmed = record.status === "CONFIRMED";
+    let reason = "";
+    if (confirmed) {
+      const enteredReason = window.prompt(
+        `请输入撤销并删除误入账记录 #${record.id} 的原因（2至500个字符）：`,
+      );
+      if (enteredReason === null) return;
+      reason = enteredReason.trim();
+      if (reason.length < 2 || reason.length > 500) {
+        setLocalError("删除原因必须为2至500个字符");
+        return;
+      }
+      if (!window.confirm(
+        `最终确认撤销并删除已入账记录 #${record.id}？\n\n` +
+        "系统将删除这次入账生成且未被后续业务引用的Balance Snapshot、持仓明细、原始文件及OCR/Luna结果，但不会删除Client或Sub Account。只有尚未用于Settlement且没有其他受保护引用时才允许删除；审计记录会保留，此操作不可撤销。",
+      )) return;
+    } else if (!window.confirm(
+      `确定删除导入记录 #${record.id}？原始文件及OCR/Luna结果也会删除，审计记录会保留，此操作不可撤销。`,
+    )) return;
+
+    deleteBusyRef.current = true;
     setDeletingId(record.id);
     setLocalError("");
     try {
-      await api<{ deleted: boolean }>(`/api/statement-imports/${record.id}`, { method: "DELETE" });
+      const result = await api<{
+        deleted: boolean;
+        source_file_deleted: boolean;
+        source_file_cleanup_pending?: boolean;
+        cleanup_audit_failed?: boolean;
+      }>(`/api/statement-imports/${record.id}`, {
+        method: "DELETE",
+        ...(confirmed ? { body: JSON.stringify({ reason }) } : {}),
+      });
       if (selected?.id === record.id) setSelected(null);
-      await imports.reload();
-      notify("未确认导入记录及其原始文件已删除");
+      const refreshResults = await Promise.all([imports.reload(), accounts.reload(), snapshots.reload()]);
+      const refreshFailed = refreshResults.some((refreshed) => !refreshed);
+      if (result.source_file_cleanup_pending) {
+        let message = result.cleanup_audit_failed
+          ? "导入记录已删除，但原始文件仍待系统清理，且补充清理记录未能写入；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录"
+          : "导入记录已删除，但原始文件仍待系统清理；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录";
+        if (refreshFailed) message += "；页面资料刷新也失败，请重新载入页面确认最新状态";
+        setLocalError(message);
+        notify(result.cleanup_audit_failed
+          ? "导入记录已删除；原始文件和补充清理记录需要系统启动时核对"
+          : "导入记录已删除，原始文件待清理");
+      } else if (refreshFailed) {
+        setLocalError("导入记录已删除，但页面资料刷新失败，请重新载入页面确认最新状态");
+        notify("导入记录已删除，但清单刷新失败");
+      } else {
+        notify(confirmed
+          ? "误入账记录、未使用Snapshot、持仓及原件已删除；Client和Sub Account未删除"
+          : result.source_file_deleted
+            ? "未确认导入记录及其原始文件已删除"
+            : "未确认导入记录及OCR/Luna结果已删除；原始文件原本不存在");
+      }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "删除导入记录失败");
     } finally {
+      deleteBusyRef.current = false;
       setDeletingId(null);
     }
   }
 
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || uploading || recognizing || reviewing || deletingId !== null) return;
     if (reviewIssueCount > 0 && !conflictsAcknowledged) {
       setLocalError("Luna与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
       return;
@@ -413,6 +472,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       setLocalError("请查看原件并勾选已确认采用Luna的余额页分类。");
       return;
     }
+    setReviewing(true);
     setLocalError("");
     try {
       const result = await postJson<{
@@ -438,6 +498,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       notify(result.created_draft ? "已入账并创建待确认客户/账户档案" : "余额快照已正式入账");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "确认入账失败");
+    } finally {
+      setReviewing(false);
     }
   }
 
@@ -454,7 +516,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
           <UploadCloud size={32} />
           <div><strong>选择客人账单、余额页面或供款凭证</strong><span>先在本机分类并执行OCR；非余额文件不会生成余额快照</span></div>
           <input name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required />
-          <button className="primary" type="submit" disabled={uploading}>{uploading ? "正在执行本地OCR..." : "上传并本地识别"}</button>
+          <button className="primary" type="submit" disabled={statementWriteBusy}>{uploading ? "正在执行本地OCR..." : "上传并本地识别"}</button>
         </form>
       </Panel>
 
@@ -466,7 +528,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             <span>{assistantLoading ? "正在检查ChatGPT登录状态..." : assistantReady ? "ChatGPT订阅已登录 · Luna可用" : assistant?.message || "尚未登录或Luna当前不可用，请到“数据与系统”处理"}</span>
           </div>
           <StatusBadge value={assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} />
-          <button className="secondary" type="button" disabled={!selected || !assistantReady || recognizing || Boolean(selected?.ai_recognition) || selected?.status === "CONFIRMED"} onClick={() => void runLuna()}>
+          <button className="secondary" type="button" disabled={!selected || !assistantReady || statementWriteBusy || Boolean(selected?.ai_recognition) || selected?.status === "CONFIRMED"} onClick={() => void runLuna()}>
             <Sparkles size={15} />{recognizing ? "Luna识别中..." : selected?.ai_recognition ? "Luna识别已完成" : "运行Luna辅助识别"}
           </button>
         </div>
@@ -480,7 +542,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             const typeLabel = type === "unknown" && lunaType === "empf_account_page" ? "本地未知 · Luna余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
             return <div key={item.id} className={`import-list-item ${selected?.id === item.id ? "active" : ""}`}>
               <button className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
-              <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "已确认入账，不能删除" : "删除未确认导入记录"} disabled={item.status === "CONFIRMED" || deletingId === item.id} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
+              <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "撤销并删除误入账记录（须填写原因且未进入Settlement）" : "删除未确认导入记录"} aria-label={`删除导入记录 #${item.id}`} disabled={statementWriteBusy} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
             </div>;
           })}</div> : <EmptyState title="暂无导入记录" detail="上传第一份eMPF文件开始。" />}
         </Panel>
@@ -514,7 +576,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：Snapshot #{selected.confirmed_snapshot_id}</small> : null}
           </div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
             {usesLunaBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={lunaDocumentTypeReviewed} onChange={(event) => setLunaDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Luna的文档类型进入人工复核，Luna不会自动生成余额快照。</small></span></label> : null}
-            <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition)} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : "重新执行本地OCR"}</button></div>
+            <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition) || statementWriteBusy} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : reviewing ? "处理中..." : "重新执行本地OCR"}</button></div>
             {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
             {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Luna：{warning}</p>)}</div> : null}
             {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Luna识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不再升级模型，请直接人工复核。</span></div> : null}
@@ -577,7 +639,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div>
             </div> : null}
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={usesLunaBalanceClassification && !lunaDocumentTypeReviewed}>{reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            <button className="primary" type="submit" disabled={statementWriteBusy || (usesLunaBalanceClassification && !lunaDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

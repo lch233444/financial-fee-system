@@ -1,5 +1,6 @@
-import { FormEvent, useState } from "react";
-import { patchJson, postJson } from "../api";
+import { FormEvent, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
+import { api, patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
 import { accountIdentityLabel } from "../types";
@@ -18,6 +19,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
   const [localError, setLocalError] = useState("");
+  const [deletingKey, setDeletingKey] = useState("");
+  const deleteBusyRef = useRef(false);
   const error = localError || clients.error || accounts.error || companies.error || fcs.error || platforms.error || plans.error;
   const selectedAccountClient = clients.data.find((item) => item.id === Number(accountClientId));
   const selectedDraftClient = clients.data.find((item) => item.id === Number(draftClientId));
@@ -92,6 +95,59 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       await accounts.reload();
       notify("待确认Sub Account已补全并激活");
     } catch (err) { setLocalError(err instanceof Error ? err.message : "Sub Account补全失败"); }
+  }
+
+  async function deleteProfile(kind: "Client" | "Sub Account", path: string, id: number, label: string) {
+    if (deleteBusyRef.current) return;
+    const warning = kind === "Client"
+      ? `确认删除Client“${label}”？\n\n仅误建或确认不再需要、且没有任何Sub Account、Settlement、Invoice、附件或导出记录引用的Client可以删除；系统不会级联删除其他数据，此操作不可撤销。`
+      : `确认删除Sub Account“${label}”？\n\n仅误建或确认不再需要、且没有账单入账、余额快照、资金流水、凭证、导出记录或Settlement引用的账户可以删除；系统不会级联删除其他数据，此操作不可撤销。\n\n若账户由误入账记录建立，请先在“账单导入”撤销并删除对应记录。`;
+    if (!window.confirm(warning)) return;
+
+    const key = `${path}:${id}`;
+    deleteBusyRef.current = true;
+    setDeletingKey(key);
+    setLocalError("");
+    try {
+      await api<Record<string, unknown>>(`${path}/${id}`, { method: "DELETE" });
+      if (kind === "Client") {
+        if (draftClientId === String(id)) {
+          setDraftClientId("");
+          setDraftClientCompanyId("");
+        }
+        if (accountClientId === String(id)) setAccountClientId("");
+      } else if (draftAccountId === String(id)) {
+        setDraftAccountId("");
+      }
+      const refreshResults = await Promise.all([clients.reload(), accounts.reload()]);
+      if (refreshResults.some((refreshed) => !refreshed)) {
+        setLocalError(`${kind}已删除，但页面资料刷新失败，请重新载入页面确认最新状态`);
+        notify(`${kind}已删除，但清单刷新失败`);
+      } else {
+        notify(`${kind}已删除`);
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : `${kind}删除失败`);
+    } finally {
+      deleteBusyRef.current = false;
+      setDeletingKey("");
+    }
+  }
+
+  function deleteButton(kind: "Client" | "Sub Account", path: string, id: number, label: string) {
+    const key = `${path}:${id}`;
+    const deleting = deletingKey === key;
+    return <button
+      className="danger master-delete-button"
+      type="button"
+      title={`删除${kind}`}
+      aria-label={`删除${kind} ${label}`}
+      disabled={Boolean(deletingKey)}
+      onClick={() => void deleteProfile(kind, path, id, label)}
+    >
+      <Trash2 size={14} />
+      {deleting ? "删除中..." : "删除"}
+    </button>;
   }
 
   return (
@@ -175,8 +231,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             {clients.data.map((client) => {
               const rows = accounts.data.filter((account) => account.client_id === client.id);
               return <article className="client-card" key={client.id}>
-                <header><div><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><StatusBadge value={client.status} /></header>
-                {rows.length ? <div className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
+                <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
+                {rows.length ? <div className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
               </article>;
             })}
           </div>

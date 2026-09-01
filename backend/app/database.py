@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import application_root, get_settings
@@ -221,6 +221,19 @@ def init_db() -> None:
                     "SELECT name FROM sqlite_master WHERE type = 'index'"
                 )
             }
+            invoice_adjustment_payment_unique = any(
+                bool(index_row[2])
+                and tuple(
+                    str(column_row[2])
+                    for column_row in connection.exec_driver_sql(
+                        f'PRAGMA index_info("{str(index_row[1])}")'
+                    ).fetchall()
+                )
+                == ("payment_id",)
+                for index_row in connection.exec_driver_sql(
+                    'PRAGMA index_list("invoice_adjustments")'
+                ).fetchall()
+            )
         settlement_triggers = set(trigger_sql)
         required_settlement_triggers = {
             "trg_transactions_block_finalized_period",
@@ -360,12 +373,31 @@ def init_db() -> None:
             "trg_attachment_update_block_payment_evidence",
             "trg_attachment_delete_block_payment_evidence",
         }
-        expected_new_head_triggers = (
+        required_delete_guard_triggers = {
+            "trg_client_delete_no_cascade",
+            "trg_account_delete_no_cascade",
+            "trg_statement_import_delete_no_snapshot",
+            "trg_snapshot_delete_no_confirmed_import",
+        }
+        expected_0_2_14_head_triggers = (
             required_settlement_triggers
             | required_settlement_integrity_triggers
             | {"trg_settlement_account_line_update_order"}
             | required_invoice_triggers
             | required_correction_triggers
+        )
+        expected_current_head_triggers = (
+            expected_0_2_14_head_triggers | required_delete_guard_triggers
+        )
+        from .services.delete_guard_contract import (
+            delete_guard_trigger_sql_is_current as _delete_guard_sql_is_current,
+        )
+
+        delete_guard_trigger_sql_is_current = _delete_guard_sql_is_current(trigger_sql)
+        trigger_shape_is_0_2_14 = settlement_triggers == expected_0_2_14_head_triggers
+        trigger_shape_is_current = (
+            settlement_triggers == expected_current_head_triggers
+            and delete_guard_trigger_sql_is_current
         )
         settlement_version_shape_complete = (
             settlement_version_columns.issubset(settlement_columns)
@@ -373,10 +405,10 @@ def init_db() -> None:
             and payments_columns.get("proof_attachment_id", {}).get("nullable") is False
             and payments_columns.get("company_difference_cents", {}).get("nullable") is False
             and "difference_reason" in payments_columns
-            and "uq_invoice_adjustment_payment" in index_names
+            and invoice_adjustment_payment_unique
             and "uq_settlement_group_period_active" in index_names
             and required_correction_triggers.issubset(settlement_triggers)
-            and settlement_triggers == expected_new_head_triggers
+            and (trigger_shape_is_0_2_14 or trigger_shape_is_current)
             and "settlement_replacement_invalid"
             in trigger_sql.get("trg_settlement_insert_draft_only", "").lower()
             and "settlement_replacement_identity_immutable"
@@ -428,7 +460,29 @@ def init_db() -> None:
                 "已停止启动，请使用已验证备份并人工检查"
             )
         if settlement_version_shape_complete:
-            command.stamp(alembic_config, "head")
+            if trigger_shape_is_current:
+                from .services.entity_ids import (
+                    EntityIdAllocationError,
+                    seed_missing_entity_id_high_water_settings,
+                )
+
+                with Session(bind=engine) as bootstrap_session:
+                    try:
+                        bootstrap_session.execute(text("BEGIN IMMEDIATE"))
+                        seed_missing_entity_id_high_water_settings(bootstrap_session)
+                        bootstrap_session.commit()
+                    except EntityIdAllocationError as exc:
+                        bootstrap_session.rollback()
+                        raise RuntimeError(
+                            "未版本化数据库的ID高水位证据异常；已停止启动，请人工检查"
+                        ) from exc
+                command.stamp(alembic_config, "head")
+            else:
+                # A complete unversioned 0.2.14 schema has exactly the 53
+                # payment-ledger triggers.  Stamp its proven revision first so
+                # the 0.2.15 delete guards are created by the real migration.
+                command.stamp(alembic_config, "7f3c2a91b6e4")
+                command.upgrade(alembic_config, "head")
         elif not ai_columns.issubset(statement_columns):
             # The original MVP schema predates the AI migration. Stamping it
             # directly at head would falsely mark missing columns as applied.
@@ -478,3 +532,44 @@ def init_db() -> None:
             )
     else:
         command.upgrade(alembic_config, "head")
+
+    # The current head physically deletes a small set of auditable entities.
+    # Their IDs must therefore remain above both live rows and historical
+    # deletion audits, otherwise a later insert could make an old audit appear
+    # to belong to a new record.
+    from .services.entity_ids import (
+        EntityIdAllocationError,
+        validate_entity_id_high_water_settings,
+    )
+
+    with Session(bind=engine) as validation_session:
+        try:
+            validate_entity_id_high_water_settings(validation_session)
+        except EntityIdAllocationError as exc:
+            raise RuntimeError(
+                "数据库ID高水位完整性校验失败；系统已停止启动，请使用已验证备份并人工检查"
+            ) from exc
+
+    from .services.delete_guard_contract import (
+        delete_guard_trigger_sql_is_current as _delete_guard_sql_is_current,
+    )
+
+    with engine.connect() as validation_connection:
+        current_delete_guard_sql = {
+            str(row[0]): str(row[1] or "")
+            for row in validation_connection.exec_driver_sql(
+                """
+                SELECT name, sql FROM sqlite_master
+                WHERE type = 'trigger' AND name IN (
+                    'trg_client_delete_no_cascade',
+                    'trg_account_delete_no_cascade',
+                    'trg_statement_import_delete_no_snapshot',
+                    'trg_snapshot_delete_no_confirmed_import'
+                )
+                """
+            ).fetchall()
+        }
+    if not _delete_guard_sql_is_current(current_delete_guard_sql):
+        raise RuntimeError(
+            "数据库受控删除Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查"
+        )

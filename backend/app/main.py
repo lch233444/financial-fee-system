@@ -15,12 +15,14 @@ from .database import init_db
 from .routes import ai_assistant, attachments, invoices, master, settlements, statements, system
 from .services.backup import apply_pending_restore
 from .services.codex_app_server import get_codex_app_server
+from .services.statement_delete_recovery import reconcile_statement_delete_pending_files
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     apply_pending_restore()
     init_db()
+    reconcile_statement_delete_pending_files()
     try:
         yield
     finally:

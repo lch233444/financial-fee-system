@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models import (
     Attachment,
     AuditEvent,
@@ -21,11 +21,13 @@ from ..models import (
     Platform,
     QuarterlySettlement,
     SettlementAccountLine,
+    StatementImport,
     SubAccount,
     TransactionRecord,
 )
 from ..money import money_string, to_cents
 from ..services.calculation import is_quarter_end
+from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
 from ..schemas import (
     AccountCreate,
     AccountUpdate,
@@ -49,6 +51,180 @@ def _commit(db: Session, message: str = "资料重复或关联不正确") -> Non
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=message) from exc
+
+
+def _is_sqlite_busy(exc: OperationalError) -> bool:
+    message = str(exc.orig).casefold()
+    return (
+        "database is locked" in message
+        or "database table is locked" in message
+        or "database is busy" in message
+    )
+
+
+def _begin_immediate(db: Session) -> None:
+    try:
+        db.execute(text("BEGIN IMMEDIATE"))
+    except OperationalError as exc:
+        db.rollback()
+        if _is_sqlite_busy(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="数据库正在处理另一笔财务写入，请稍后重试",
+            ) from exc
+        raise
+
+
+def _next_entity_id(db: Session, model: type) -> int:
+    try:
+        return allocate_entity_id(db, model)
+    except EntityIdAllocationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="系统ID序号记录异常，已停止新增，请联系管理员检查数据库",
+        ) from exc
+
+
+def _normalized_entity_type(model):
+    return func.replace(
+        func.replace(func.upper(func.trim(model.entity_type)), "-", "_"),
+        " ",
+        "_",
+    )
+
+
+def _logical_reference_labels(
+    db: Session,
+    *,
+    entity_id: int,
+    entity_types: tuple[str, ...],
+) -> list[str]:
+    references: list[str] = []
+    for label, model in (("附件记录", Attachment), ("导出记录", ExportRecord)):
+        if db.scalar(
+            select(model.id)
+            .where(
+                _normalized_entity_type(model).in_(entity_types),
+                model.entity_id == entity_id,
+            )
+            .limit(1)
+        ) is not None:
+            references.append(label)
+    return references
+
+
+def _controlled_delete_commit_outcome(
+    *,
+    model,
+    item_id: int,
+    deleted_entity_type: str,
+) -> str:
+    """Prove whether an uncertain master-data delete commit took effect.
+
+    A database driver can report an error after SQLite has already committed.
+    Use a fresh read transaction so the API never reports a completed delete as
+    failed, while ambiguous or conflicting evidence remains fail-closed.
+    """
+
+    try:
+        with SessionLocal() as check_db:
+            check_db.execute(text("BEGIN"))
+            row_exists = check_db.get(model, item_id) is not None
+            matching_audits = []
+            for audit in check_db.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "MASTER_DATA_DELETED",
+                    AuditEvent.entity_type == "MASTER_DATA",
+                    AuditEvent.entity_id.is_(None),
+                )
+            ).all():
+                details = audit.details_json
+                if not isinstance(details, dict):
+                    continue
+                if (
+                    details.get("deleted_entity_type") == deleted_entity_type
+                    and type(details.get("deleted_entity_id")) is int
+                    and details.get("deleted_entity_id") == item_id
+                ):
+                    matching_audits.append(audit)
+            check_db.rollback()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"{deleted_entity_type}删除提交结果无法自动确认，"
+                "请停止操作并检查数据库"
+            ),
+        ) from exc
+
+    if not row_exists and len(matching_audits) == 1:
+        return "COMMITTED"
+    if row_exists and not matching_audits:
+        return "NOT_COMMITTED"
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            f"{deleted_entity_type}删除提交结果存在冲突证据，"
+            "请停止操作并检查数据库"
+        ),
+    )
+
+
+def _commit_controlled_delete(
+    db: Session,
+    *,
+    model,
+    item_id: int,
+    entity_name: str,
+    deleted_entity_type: str,
+) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        try:
+            db.rollback()
+        except Exception:
+            # The fresh-session proof below is authoritative for the persisted
+            # outcome even when the request Session cannot roll back cleanly.
+            pass
+        outcome = _controlled_delete_commit_outcome(
+            model=model,
+            item_id=item_id,
+            deleted_entity_type=deleted_entity_type,
+        )
+        if outcome == "COMMITTED":
+            return
+        if isinstance(exc, IntegrityError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{entity_name}已被其他资料引用，不能删除",
+            ) from exc
+        if isinstance(exc, OperationalError) and _is_sqlite_busy(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="数据库正在处理另一笔财务写入，请稍后重试",
+            ) from exc
+        raise
+
+
+def _execute_controlled_delete(db: Session, *, model, item_id: int, entity_name: str):
+    try:
+        return db.execute(delete(model).where(model.id == item_id))
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"{entity_name}已被其他资料引用，不能删除",
+        ) from exc
+    except OperationalError as exc:
+        db.rollback()
+        if _is_sqlite_busy(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="数据库正在处理另一笔财务写入，请稍后重试",
+            ) from exc
+        raise
 
 
 def _delete_master_data(
@@ -374,6 +550,7 @@ def list_clients(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/clients", status_code=201)
 def create_client(payload: ClientCreate, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     if payload.company_id and not db.get(Company, payload.company_id):
         raise HTTPException(status_code=404, detail="Company不存在")
     if payload.fc_id:
@@ -384,9 +561,9 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db)) -> dict:
         not payload.company_id or not payload.fc_id or not payload.management_start_date
     ):
         raise HTTPException(status_code=400, detail="Active Client必须补全Company、FC和Management Start Date")
-    item = Client(**payload.model_dump())
+    item = Client(id=_next_entity_id(db, Client), **payload.model_dump())
     db.add(item)
-    db.commit()
+    _commit(db)
     db.refresh(item)
     return {"id": item.id, **payload.model_dump(mode="json")}
 
@@ -411,6 +588,76 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         setattr(item, key, value)
     db.commit()
     return {"id": item.id, **payload.model_dump(exclude_unset=True, mode="json")}
+
+
+@router.delete("/clients/{client_id}")
+def delete_client(client_id: int, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
+    item = db.get(Client, client_id)
+    if not item:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Client不存在")
+
+    references = [
+        label
+        for label, query in (
+            ("Sub Account", select(SubAccount.id).where(SubAccount.client_id == client_id).limit(1)),
+            (
+                "Settlement",
+                select(QuarterlySettlement.id)
+                .where(QuarterlySettlement.client_id == client_id)
+                .limit(1),
+            ),
+            ("Invoice", select(Invoice.id).where(Invoice.client_id == client_id).limit(1)),
+        )
+        if db.scalar(query) is not None
+    ]
+    references.extend(
+        _logical_reference_labels(
+            db,
+            entity_id=client_id,
+            entity_types=("CLIENT",),
+        )
+    )
+    if references:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Client已被以下资料引用，不能删除：{'、'.join(references)}",
+        )
+
+    item_name = item.name
+    item_status = item.status
+    result = _execute_controlled_delete(
+        db,
+        model=Client,
+        item_id=client_id,
+        entity_name="Client",
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Client不存在")
+    db.add(
+        AuditEvent(
+            action="MASTER_DATA_DELETED",
+            entity_type="MASTER_DATA",
+            entity_id=None,
+            details_json={
+                "deleted_entity_type": "CLIENT",
+                "deleted_entity_id": client_id,
+                "name": item_name,
+                "previous_status": item_status,
+            },
+        )
+    )
+    _commit_controlled_delete(
+        db,
+        model=Client,
+        item_id=client_id,
+        entity_name="Client",
+        deleted_entity_type="CLIENT",
+    )
+    return {"status": "deleted", "id": client_id}
 
 
 @router.get("/accounts")
@@ -442,6 +689,7 @@ def list_accounts(client_id: int | None = None, db: Session = Depends(get_db)) -
 
 @router.post("/accounts", status_code=201)
 def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     client = db.get(Client, payload.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client不存在")
@@ -463,7 +711,11 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
         raise HTTPException(status_code=400, detail="Client必须先补全并设为Active")
     if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="账户结束日期不能早于开始日期")
-    item = SubAccount(**payload.model_dump(), currency="HKD")
+    item = SubAccount(
+        id=_next_entity_id(db, SubAccount),
+        **payload.model_dump(),
+        currency="HKD",
+    )
     db.add(item)
     _commit(db, "同一Platform下的Account Number必须唯一")
     db.refresh(item)
@@ -606,6 +858,96 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
     return {"id": item.id, **payload.model_dump(exclude_unset=True, mode="json")}
 
 
+@router.delete("/accounts/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
+    item = db.get(SubAccount, account_id)
+    if not item:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Sub Account不存在")
+
+    references = [
+        label
+        for label, query in (
+            (
+                "资金流水",
+                select(TransactionRecord.id)
+                .where(TransactionRecord.account_id == account_id)
+                .limit(1),
+            ),
+            (
+                "余额快照",
+                select(BalanceSnapshot.id)
+                .where(BalanceSnapshot.account_id == account_id)
+                .limit(1),
+            ),
+            (
+                "已确认账单导入",
+                select(StatementImport.id)
+                .where(
+                    StatementImport.confirmed_account_id == account_id,
+                )
+                .limit(1),
+            ),
+            (
+                "Settlement账户明细",
+                select(SettlementAccountLine.id)
+                .where(SettlementAccountLine.account_id == account_id)
+                .limit(1),
+            ),
+        )
+        if db.scalar(query) is not None
+    ]
+    references.extend(
+        _logical_reference_labels(
+            db,
+            entity_id=account_id,
+            entity_types=("ACCOUNT", "SUB_ACCOUNT"),
+        )
+    )
+    if references:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sub Account已被以下资料引用，不能删除：{'、'.join(references)}",
+        )
+
+    audit_details = {
+        "deleted_entity_type": "SUB_ACCOUNT",
+        "deleted_entity_id": account_id,
+        "client_id": item.client_id,
+        "platform_id": item.platform_id,
+        "fee_plan_id": item.fee_plan_id,
+        "account_number": item.account_number,
+        "previous_status": item.status,
+    }
+    result = _execute_controlled_delete(
+        db,
+        model=SubAccount,
+        item_id=account_id,
+        entity_name="Sub Account",
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Sub Account不存在")
+    db.add(
+        AuditEvent(
+            action="MASTER_DATA_DELETED",
+            entity_type="MASTER_DATA",
+            entity_id=None,
+            details_json=audit_details,
+        )
+    )
+    _commit_controlled_delete(
+        db,
+        model=SubAccount,
+        item_id=account_id,
+        entity_name="Sub Account",
+        deleted_entity_type="SUB_ACCOUNT",
+    )
+    return {"status": "deleted", "id": account_id}
+
+
 @router.get("/transactions")
 def list_transactions(account_id: int | None = None, db: Session = Depends(get_db)) -> list[dict]:
     query = select(TransactionRecord).order_by(TransactionRecord.transaction_date.desc(), TransactionRecord.id.desc())
@@ -724,6 +1066,7 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
 
 @router.post("/balance-snapshots", status_code=201)
 def create_balance_snapshot(payload: BalanceSnapshotCreate, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     account = db.get(SubAccount, payload.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Sub Account不存在")
@@ -731,6 +1074,7 @@ def create_balance_snapshot(payload: BalanceSnapshotCreate, db: Session = Depend
     if payload.eligible_for_closing and not closing_eligible:
         raise HTTPException(status_code=400, detail="非季末且非实际退出日的余额只能保存为普通快照")
     item = BalanceSnapshot(
+        id=_next_entity_id(db, BalanceSnapshot),
         account_id=payload.account_id,
         as_of_date=payload.as_of_date,
         total_balance_cents=to_cents(payload.total_balance),

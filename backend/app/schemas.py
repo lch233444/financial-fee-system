@@ -380,6 +380,15 @@ class StatementHoldingInput(BaseModel):
         return value
 
 
+class StatementDeleteRequest(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
+
 class StatementConfirmRequest(BaseModel):
     client_name: str = Field(min_length=1)
     account_number: str = Field(min_length=1)

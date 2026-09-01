@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ..config import get_settings
+from .delete_guard_contract import delete_guard_trigger_sql_is_current
 from .storage import sha256_file
 
 
@@ -38,6 +39,7 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "c4b7f1d92e60",
         "9d2f6a8c4b13",
         "7f3c2a91b6e4",
+        "c1a7d5e9b402",
     }
 )
 OLD_HEAD_TRIGGER_NAMES = frozenset(
@@ -136,6 +138,15 @@ NEW_HEAD_TRIGGER_NAMES = frozenset(
         "trg_attachment_delete_block_payment_evidence",
     }
 )
+DELETE_GUARD_TRIGGER_NAMES = frozenset(
+    {
+        "trg_client_delete_no_cascade",
+        "trg_account_delete_no_cascade",
+        "trg_statement_import_delete_no_snapshot",
+        "trg_snapshot_delete_no_confirmed_import",
+    }
+)
+LATEST_HEAD_TRIGGER_NAMES = NEW_HEAD_TRIGGER_NAMES | DELETE_GUARD_TRIGGER_NAMES
 REQUIRED_DATABASE_COLUMNS = {
     "companies": {"id", "name"},
     "clients": {"id", "company_id", "fc_id", "name"},
@@ -143,6 +154,20 @@ REQUIRED_DATABASE_COLUMNS = {
     "quarterly_settlements": {"id", "client_id", "platform_id", "fee_plan_id", "year", "quarter", "status"},
     "app_settings": {"key", "value"},
 }
+ID_HIGH_WATER_TABLES = (
+    ("id_high_water.clients", "clients"),
+    ("id_high_water.sub_accounts", "sub_accounts"),
+    ("id_high_water.statement_imports", "statement_imports"),
+    ("id_high_water.balance_snapshots", "balance_snapshots"),
+)
+_CANONICAL_NON_NEGATIVE_INTEGER = re.compile(r"^(0|[1-9][0-9]*)$")
+_SQLITE_MAX_ROW_ID = (1 << 63) - 1
+_LEGACY_REUSE_MARKER = "legacy_entity_id_reused_before_0_2_15"
+_LEGACY_REUSE_REVISION_FIELD = "legacy_reuse_disambiguation_revision"
+_LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
+_LEGACY_REUSE_REVISION = "c1a7d5e9b402"
+_LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
+_LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
 
 
 def _normalized_index_where(sql: str) -> str:
@@ -211,7 +236,7 @@ def _require_nonpartial_unique_columns(
         raise ValueError("备份数据库结构不兼容")
 
 
-def _stored_path_parts(stored_path: str) -> tuple[str, ...]:
+def _stored_path_parts(stored_path: str, label: str = "付款凭证") -> tuple[str, ...]:
     windows_path = PureWindowsPath(stored_path)
     posix_path = PurePosixPath(stored_path)
     if windows_path.is_absolute() or windows_path.drive:
@@ -219,9 +244,9 @@ def _stored_path_parts(stored_path: str) -> tuple[str, ...]:
     elif posix_path.is_absolute():
         parts = posix_path.parts
     else:
-        raise ValueError("备份中的付款凭证路径无效")
+        raise ValueError(f"备份中的{label}路径无效")
     if any(part in {"", ".", ".."} for part in parts):
-        raise ValueError("备份中的付款凭证路径无效")
+        raise ValueError(f"备份中的{label}路径无效")
     return tuple(str(part) for part in parts)
 
 
@@ -257,6 +282,113 @@ def _archived_attachment_path(
     if len(matches) != 1:
         raise ValueError("备份中的付款凭证路径无法唯一映射到attachments")
     return matches[0]
+
+
+def _archived_statement_path(
+    stored_path: str,
+    records: dict[str, str],
+    source_statement_root: Path | None,
+) -> str:
+    if source_statement_root is not None:
+        stored = Path(stored_path)
+        source_root = source_statement_root.resolve()
+        try:
+            relative = stored.resolve().relative_to(source_root)
+        except (OSError, ValueError) as exc:
+            raise ValueError("账单原件不在受控statement_imports目录") from exc
+        candidate = _validate_relative_path(
+            (PurePosixPath("statement_imports") / PurePosixPath(relative.as_posix())).as_posix(),
+            "账单原件",
+        )
+        if candidate not in records:
+            raise ValueError("备份缺少数据库引用的账单原件")
+        return candidate
+
+    stored_parts = tuple(
+        part.casefold() for part in _stored_path_parts(stored_path, "账单原件")
+    )
+    matches: list[str] = []
+    for relative_path in records:
+        archive_parts = PurePosixPath(relative_path).parts
+        if not archive_parts or archive_parts[0].casefold() != "statement_imports":
+            continue
+        folded = tuple(part.casefold() for part in archive_parts)
+        if len(stored_parts) >= len(folded) and stored_parts[-len(folded) :] == folded:
+            matches.append(relative_path)
+    if len(matches) != 1:
+        raise ValueError("备份中的账单原件路径无法唯一映射到statement_imports")
+    return matches[0]
+
+
+def _validate_statement_import_archive(
+    database_path: Path,
+    archive_root: Path,
+    records: dict[str, str],
+    *,
+    source_statement_root: Path | None = None,
+) -> None:
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
+    )
+    try:
+        table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'statement_imports'"
+        ).fetchone()
+        rows = (
+            connection.execute(
+                "SELECT id, stored_path, sha256 FROM statement_imports ORDER BY id"
+            ).fetchall()
+            if table_exists is not None
+            else []
+        )
+    finally:
+        connection.close()
+
+    archived_statement_paths = {
+        relative_path
+        for relative_path in records
+        if PurePosixPath(relative_path).parts
+        and PurePosixPath(relative_path).parts[0].casefold() == "statement_imports"
+    }
+    referenced_paths: set[str] = set()
+    for import_id, stored, sha in rows:
+        if (
+            not isinstance(import_id, int)
+            or not isinstance(stored, str)
+            or not isinstance(sha, str)
+            or SHA256_PATTERN.fullmatch(sha.casefold()) is None
+        ):
+            raise ValueError("备份中的账单原件关系或哈希元数据无效")
+        relative_path = _archived_statement_path(
+            stored,
+            records,
+            source_statement_root,
+        )
+        if relative_path in referenced_paths:
+            raise ValueError("备份中的多条账单记录共用同一原件路径")
+        referenced_paths.add(relative_path)
+        archived_path = archive_root.joinpath(*PurePosixPath(relative_path).parts)
+        _require_within_root(archived_path, archive_root, "账单原件")
+        if (
+            archived_path.is_symlink()
+            or archived_path.is_junction()
+            or not archived_path.is_file()
+        ):
+            raise ValueError("备份缺少有效的账单原件文件")
+        try:
+            actual_size = archived_path.stat().st_size
+            actual_sha = sha256_file(archived_path)
+        except OSError as exc:
+            raise ValueError("备份中的账单原件无法读取") from exc
+        if (
+            actual_size <= 0
+            or actual_sha.casefold() != sha.casefold()
+            or records.get(relative_path, "").casefold() != sha.casefold()
+        ):
+            raise ValueError("备份中的账单原件校验失败")
+
+    if referenced_paths != archived_statement_paths:
+        raise ValueError("备份中的statement_imports文件与数据库记录不一致")
 
 
 def _validate_payment_proof_archive(
@@ -456,6 +588,12 @@ def create_backup() -> Path:
                 archive_records,
                 source_attachments_root=settings.data_root / "attachments",
             )
+            _validate_statement_import_archive(
+                db_copy,
+                tmp,
+                archive_records,
+                source_statement_root=settings.data_root / "statement_imports",
+            )
 
             manifest = {
                 "format": BACKUP_FORMAT,
@@ -620,6 +758,7 @@ def validate_backup_archive_root(root: Path) -> dict:
     database_path = root.joinpath(*PurePosixPath(database_relative_path).parts)
     _validate_sqlite_database(database_path)
     _validate_payment_proof_archive(database_path, root, records)
+    _validate_statement_import_archive(database_path, root, records)
     return manifest
 
 
@@ -1049,6 +1188,235 @@ def _validate_manifest(manifest: object) -> dict[str, str]:
     return records
 
 
+def _backup_deleted_id(value: object, *, context: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"备份数据库删除审计ID异常：{context}")
+    if value > _SQLITE_MAX_ROW_ID:
+        raise ValueError(f"备份数据库删除审计ID超出SQLite范围：{context}")
+    return value
+
+
+def _backup_audit_details(raw_value: object, *, audit_id: int) -> dict:
+    try:
+        details = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"备份数据库删除审计JSON异常：#{audit_id}") from exc
+    if not isinstance(details, dict):
+        raise ValueError(f"备份数据库删除审计JSON异常：#{audit_id}")
+    return details
+
+
+def _backup_statement_deleted_id(
+    *, audit_id: int, event_entity_id: object, details: dict
+) -> int:
+    detail_id = None
+    if "deleted_import_id" in details:
+        detail_id = _backup_deleted_id(
+            details.get("deleted_import_id"),
+            context=f"#{audit_id}.deleted_import_id",
+        )
+    legacy_id = None
+    if event_entity_id is not None:
+        legacy_id = _backup_deleted_id(
+            event_entity_id,
+            context=f"#{audit_id}.entity_id",
+        )
+    if detail_id is None and legacy_id is None:
+        raise ValueError(f"备份数据库账单删除审计缺少原ID：#{audit_id}")
+    if detail_id is not None and legacy_id is not None and detail_id != legacy_id:
+        raise ValueError(f"备份数据库账单删除审计原ID冲突：#{audit_id}")
+    return detail_id if detail_id is not None else int(legacy_id)
+
+
+def _backup_legacy_reuse_disambiguated(
+    connection: sqlite3.Connection,
+    *,
+    audit_id: int,
+    action: str,
+    event_entity_id: object,
+    details: dict,
+    deleted_id: int,
+) -> bool:
+    marker_present = any(
+        field in details
+        for field in (
+            _LEGACY_REUSE_MARKER,
+            _LEGACY_REUSE_REVISION_FIELD,
+            _LEGACY_REUSE_CORRECTION_FIELD,
+        )
+    )
+    if not marker_present:
+        return False
+    if (
+        action != "STATEMENT_IMPORT_DELETED"
+        or event_entity_id is not None
+        or details.get(_LEGACY_REUSE_MARKER) is not True
+        or details.get(_LEGACY_REUSE_REVISION_FIELD) != _LEGACY_REUSE_REVISION
+    ):
+        raise ValueError(f"备份数据库账单删除审计历史ID消歧标记异常：#{audit_id}")
+    correction_id = _backup_deleted_id(
+        details.get(_LEGACY_REUSE_CORRECTION_FIELD),
+        context=f"#{audit_id}.{_LEGACY_REUSE_CORRECTION_FIELD}",
+    )
+    correction_rows = connection.execute(
+        """
+        SELECT action, entity_type, entity_id, details_json
+        FROM audit_events
+        WHERE id = ?
+        """,
+        (correction_id,),
+    ).fetchall()
+    if len(correction_rows) != 1:
+        raise ValueError(f"备份数据库账单删除审计缺少历史ID消歧审计：#{audit_id}")
+    correction_action, correction_type, correction_entity_id, raw_correction_details = (
+        correction_rows[0]
+    )
+    correction_details = _backup_audit_details(
+        raw_correction_details,
+        audit_id=correction_id,
+    )
+    if (
+        correction_action != _LEGACY_REUSE_CORRECTION_ACTION
+        or correction_type != "AUDIT_EVENT"
+        or correction_entity_id != audit_id
+        or correction_details.get("migration_revision") != _LEGACY_REUSE_REVISION
+        or correction_details.get("proof") != _LEGACY_REUSE_PROOF
+        or correction_details.get("historical_deletion_audit_id") != audit_id
+        or correction_details.get("reused_statement_import_id") != deleted_id
+        or correction_details.get("original_audit_entity_id_cleared") is not True
+        or not isinstance(correction_details.get("historical_delete_created_at"), str)
+        or not correction_details.get("historical_delete_created_at")
+        or not isinstance(correction_details.get("reused_statement_created_at"), str)
+        or not correction_details.get("reused_statement_created_at")
+    ):
+        raise ValueError(f"备份数据库账单删除审计历史ID消歧证据异常：#{audit_id}")
+    return True
+
+
+def _backup_deleted_audit_id_sets(
+    connection: sqlite3.Connection,
+) -> tuple[dict[str, set[int]], dict[str, set[int]]]:
+    deleted_ids = {key: set() for key, _table_name in ID_HIGH_WATER_TABLES}
+    strict_deleted_ids = {key: set() for key, _table_name in ID_HIGH_WATER_TABLES}
+    rows = connection.execute(
+        """
+        SELECT id, action, entity_id, details_json
+        FROM audit_events
+        WHERE action IN (
+            'MASTER_DATA_DELETED',
+            'STATEMENT_IMPORT_DELETED',
+            'STATEMENT_IMPORT_CONFIRMATION_REVERSED_AND_DELETED'
+        )
+        ORDER BY id
+        """
+    ).fetchall()
+    for audit_id_raw, action, event_entity_id, raw_details in rows:
+        audit_id = int(audit_id_raw)
+        details = _backup_audit_details(raw_details, audit_id=audit_id)
+        if action == "MASTER_DATA_DELETED":
+            entity_type = details.get("deleted_entity_type")
+            if not isinstance(entity_type, str) or not entity_type.strip():
+                raise ValueError(f"备份数据库主数据删除审计缺少类型：#{audit_id}")
+            deleted_id = _backup_deleted_id(
+                details.get("deleted_entity_id"),
+                context=f"#{audit_id}.deleted_entity_id",
+            )
+            if event_entity_id is not None:
+                legacy_id = _backup_deleted_id(
+                    event_entity_id,
+                    context=f"#{audit_id}.entity_id",
+                )
+                if legacy_id != deleted_id:
+                    raise ValueError(f"备份数据库主数据删除审计原ID冲突：#{audit_id}")
+            normalized_type = entity_type.strip().upper().replace("-", "_").replace(" ", "_")
+            key = {
+                "CLIENT": "id_high_water.clients",
+                "SUB_ACCOUNT": "id_high_water.sub_accounts",
+            }.get(normalized_type)
+            if key is not None:
+                deleted_ids[key].add(deleted_id)
+                strict_deleted_ids[key].add(deleted_id)
+            continue
+
+        deleted_import_id = _backup_statement_deleted_id(
+            audit_id=audit_id,
+            event_entity_id=event_entity_id,
+            details=details,
+        )
+        statement_key = "id_high_water.statement_imports"
+        deleted_ids[statement_key].add(deleted_import_id)
+        if not _backup_legacy_reuse_disambiguated(
+            connection,
+            audit_id=audit_id,
+            action=str(action),
+            event_entity_id=event_entity_id,
+            details=details,
+            deleted_id=deleted_import_id,
+        ):
+            strict_deleted_ids[statement_key].add(deleted_import_id)
+        if action == "STATEMENT_IMPORT_CONFIRMATION_REVERSED_AND_DELETED":
+            deleted_snapshot_id = _backup_deleted_id(
+                details.get("deleted_snapshot_id"),
+                context=f"#{audit_id}.deleted_snapshot_id",
+            )
+            snapshot_key = "id_high_water.balance_snapshots"
+            deleted_ids[snapshot_key].add(deleted_snapshot_id)
+            strict_deleted_ids[snapshot_key].add(deleted_snapshot_id)
+    return deleted_ids, strict_deleted_ids
+
+
+def _backup_deleted_audit_high_waters(
+    connection: sqlite3.Connection,
+    deleted_ids: dict[str, set[int]] | None = None,
+) -> dict[str, int]:
+    ids_by_key = (
+        deleted_ids
+        if deleted_ids is not None
+        else _backup_deleted_audit_id_sets(connection)[0]
+    )
+    return {key: max(values, default=0) for key, values in ids_by_key.items()}
+
+
+def _validate_backup_id_high_water_settings(connection: sqlite3.Connection) -> None:
+    deleted_ids, strict_deleted_ids = _backup_deleted_audit_id_sets(connection)
+    audit_maxima = _backup_deleted_audit_high_waters(connection, deleted_ids)
+    for key, table_name in ID_HIGH_WATER_TABLES:
+        live_ids = {
+            int(row[0])
+            for row in connection.execute(
+                f'SELECT id FROM "{table_name}"'
+            ).fetchall()
+        }
+        reused_ids = live_ids & strict_deleted_ids[key]
+        if reused_ids:
+            raise ValueError(
+                "备份数据库现存记录ID与历史删除审计重复："
+                f"{key}，冲突数量={len(reused_ids)}"
+            )
+        rows = connection.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (key,),
+        ).fetchall()
+        if len(rows) != 1:
+            raise ValueError(f"备份数据库缺少ID高水位设置：{key}")
+        raw_value = rows[0][0]
+        if (
+            not isinstance(raw_value, str)
+            or _CANONICAL_NON_NEGATIVE_INTEGER.fullmatch(raw_value) is None
+        ):
+            raise ValueError(f"备份数据库ID高水位设置异常：{key}")
+        stored_max = int(raw_value)
+        if stored_max > _SQLITE_MAX_ROW_ID:
+            raise ValueError(f"备份数据库ID高水位设置超出SQLite范围：{key}")
+        table_max = int(
+            connection.execute(
+                f'SELECT COALESCE(MAX(id), 0) FROM "{table_name}"'
+            ).fetchone()[0]
+        )
+        if stored_max < max(table_max, audit_maxima[key]):
+            raise ValueError(f"备份数据库ID高水位低于可信历史最大ID：{key}")
+
+
 def _validate_sqlite_database(database_path: Path) -> None:
     try:
         # ``immutable=1`` prevents a WAL-mode backup from creating -wal/-shm
@@ -1085,6 +1453,7 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     "c4b7f1d92e60",
                     "9d2f6a8c4b13",
                     "7f3c2a91b6e4",
+                    "c1a7d5e9b402",
                 }:
                     _require_named_partial_unique_index(
                         connection,
@@ -1111,7 +1480,7 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         not trigger_sql[name].strip() for name in OLD_HEAD_TRIGGER_NAMES
                     ):
                         raise ValueError("备份数据库结构不兼容")
-                if database_revision == "7f3c2a91b6e4":
+                if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
                     settlement_columns = {
                         row[1]
                         for row in connection.execute(
@@ -1266,7 +1635,14 @@ def _validate_sqlite_database(database_path: Path) -> None:
                             "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
                         ).fetchall()
                     }
-                    if set(trigger_sql) != NEW_HEAD_TRIGGER_NAMES:
+                    expected_trigger_names = (
+                        NEW_HEAD_TRIGGER_NAMES
+                        if database_revision == "7f3c2a91b6e4"
+                        else LATEST_HEAD_TRIGGER_NAMES
+                    )
+                    if set(trigger_sql) != expected_trigger_names or any(
+                        not trigger_sql[name].strip() for name in expected_trigger_names
+                    ):
                         raise ValueError("备份数据库结构不兼容")
                     required_trigger_markers = {
                         "trg_settlement_validate_finalize": "settlement_container_previous_changed",
@@ -1319,6 +1695,10 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         "trg_invoice_block_void_with_payment", ""
                     ):
                         raise ValueError("备份数据库结构不兼容")
+                    if database_revision == "c1a7d5e9b402":
+                        _validate_backup_id_high_water_settings(connection)
+                        if not delete_guard_trigger_sql_is_current(trigger_sql):
+                            raise ValueError("备份数据库结构不兼容")
         finally:
             connection.close()
     except sqlite3.Error as exc:

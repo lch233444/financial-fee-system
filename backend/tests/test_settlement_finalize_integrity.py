@@ -9,7 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 
 import app.config as config_module
@@ -26,11 +26,12 @@ from app.models import (
 )
 from app.routes.settlements import finalize_settlement, void_settlement
 from app.schemas import VoidRequest
+from app.services.entity_ids import allocate_entity_id
 from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "7f3c2a91b6e4"
+HEAD_REVISION = "c1a7d5e9b402"
 
 
 def _master(client: TestClient, suffix: str) -> dict:
@@ -219,11 +220,15 @@ def test_attachment_file_hash_and_size_are_checked_before_finalize() -> None:
                 entity_type="SNAPSHOT", entity_id=beginning["id"]
             ).one()
             path = Path(attachment.stored_path)
+            original_bytes = path.read_bytes()
             path.write_bytes(b"X" * attachment.size_bytes)
 
-        blocked = client.post(f"/api/settlements/{settlement['id']}/finalize")
-        assert blocked.status_code == 400
-        assert "SHA-256" in blocked.json()["detail"]
+        try:
+            blocked = client.post(f"/api/settlements/{settlement['id']}/finalize")
+            assert blocked.status_code == 400
+            assert "SHA-256" in blocked.json()["detail"]
+        finally:
+            path.write_bytes(original_bytes)
 
 
 def test_statement_import_file_hash_is_checked_without_parsing_customer_content() -> None:
@@ -245,9 +250,11 @@ def test_statement_import_file_hash_is_checked_without_parsing_customer_content(
             directory=get_settings().data_root / "statement_imports",
         )
         with SessionLocal() as db:
+            db.execute(text("BEGIN IMMEDIATE"))
             snapshot = db.get(BalanceSnapshot, beginning["id"])
             assert snapshot is not None
             statement = StatementImport(
+                id=allocate_entity_id(db, StatementImport),
                 original_name="synthetic.pdf",
                 stored_path=str(statement_path),
                 sha256=digest,
@@ -263,9 +270,12 @@ def test_statement_import_file_hash_is_checked_without_parsing_customer_content(
         settlement = _calculate(client, data, beginning, closing)
         statement_path.write_bytes(b"Z" * len(statement_bytes))
 
-        blocked = client.post(f"/api/settlements/{settlement['id']}/finalize")
-        assert blocked.status_code == 400
-        assert "SHA-256" in blocked.json()["detail"]
+        try:
+            blocked = client.post(f"/api/settlements/{settlement['id']}/finalize")
+            assert blocked.status_code == 400
+            assert "SHA-256" in blocked.json()["detail"]
+        finally:
+            statement_path.write_bytes(statement_bytes)
 
 
 def test_finalized_statement_import_evidence_row_is_frozen_until_void() -> None:
@@ -287,9 +297,11 @@ def test_finalized_statement_import_evidence_row_is_frozen_until_void() -> None:
             directory=get_settings().data_root / "statement_imports",
         )
         with SessionLocal() as db:
+            db.execute(text("BEGIN IMMEDIATE"))
             snapshot = db.get(BalanceSnapshot, beginning["id"])
             assert snapshot is not None
             statement = StatementImport(
+                id=allocate_entity_id(db, StatementImport),
                 original_name="immutable.pdf",
                 stored_path=str(statement_path),
                 sha256=digest,
@@ -320,6 +332,15 @@ def test_finalized_statement_import_evidence_row_is_frozen_until_void() -> None:
                 ):
                     connection.execute(sql, (statement_id,))
 
+        with sqlite3.connect(database_path) as connection:
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match="snapshot_used_by_frozen_settlement",
+            ):
+                connection.execute(
+                    "DELETE FROM balance_snapshots WHERE id = ?", (beginning["id"],)
+                )
+
         voided = client.post(
             f"/api/settlements/{settlement['id']}/void",
             json={"reason": "Allow controlled evidence correction"},
@@ -327,12 +348,28 @@ def test_finalized_statement_import_evidence_row_is_frozen_until_void() -> None:
         assert voided.status_code == 200, voided.text
         with sqlite3.connect(database_path) as connection:
             connection.execute("PRAGMA foreign_keys=ON")
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match="statement_import_delete_has_snapshot",
+            ):
+                connection.execute(
+                    "DELETE FROM statement_imports WHERE id = ?", (statement_id,)
+                )
+            connection.execute(
+                "UPDATE statement_imports SET confirmed_snapshot_id = NULL WHERE id = ?",
+                (statement_id,),
+            )
+            connection.execute(
+                "UPDATE balance_snapshots SET statement_import_id = NULL WHERE id = ?",
+                (beginning["id"],),
+            )
             connection.execute("DELETE FROM statement_imports WHERE id = ?", (statement_id,))
             connection.commit()
             assert connection.execute(
                 "SELECT statement_import_id FROM balance_snapshots WHERE id = ?",
                 (beginning["id"],),
             ).fetchone()[0] is None
+        statement_path.unlink()
 
 
 def test_valid_generic_transaction_attachment_can_replace_damaged_direct_reference() -> None:

@@ -14,7 +14,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "7f3c2a91b6e4"
+HEAD_REVISION = "c1a7d5e9b402"
 
 
 def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, monkeypatch) -> None:
@@ -248,7 +248,7 @@ def test_unstamped_complete_9d_shape_runs_0_2_14_migration_instead_of_false_head
         )
         assert connection.execute(
             text("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
-        ).scalar_one() == 53
+        ).scalar_one() == 57
         settlement_columns = {
             row[1]
             for row in connection.exec_driver_sql(
@@ -256,4 +256,93 @@ def test_unstamped_complete_9d_shape_runs_0_2_14_migration_instead_of_false_head
             ).fetchall()
         }
         assert {"version_no", "replaces_settlement_id"}.issubset(settlement_columns)
+    legacy_engine.dispose()
+
+
+def test_unstamped_complete_0_2_14_shape_runs_delete_guard_migration(
+    tmp_path, monkeypatch
+) -> None:
+    settings = Settings(data_root=tmp_path / "unstamped-0-2-14-data")
+    settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_config, "7f3c2a91b6e4")
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+        ).fetchone() == (53,)
+        connection.execute("DROP TABLE alembic_version")
+        connection.commit()
+
+    legacy_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+
+    database_module.init_db()
+
+    with legacy_engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            HEAD_REVISION
+        )
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='trigger'")
+            )
+        }
+    assert len(triggers) == 57
+    assert {
+        "trg_client_delete_no_cascade",
+        "trg_account_delete_no_cascade",
+        "trg_statement_import_delete_no_snapshot",
+        "trg_snapshot_delete_no_confirmed_import",
+    }.issubset(triggers)
+    legacy_engine.dispose()
+
+
+def test_unstamped_partial_0_2_15_trigger_shape_stops_before_false_stamp(
+    tmp_path, monkeypatch
+) -> None:
+    settings = Settings(data_root=tmp_path / "unstamped-partial-0-2-15-data")
+    settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_config, "7f3c2a91b6e4")
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER trg_client_delete_no_cascade
+            BEFORE DELETE ON clients
+            BEGIN
+                SELECT RAISE(ABORT, 'half_migrated_delete_guard');
+            END
+            """
+        )
+        connection.execute("DROP TABLE alembic_version")
+        connection.commit()
+
+    legacy_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+
+    with pytest.raises(RuntimeError, match="不完整的Settlement版本"):
+        database_module.init_db()
+
+    with legacy_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE name = 'alembic_version'")
+        ).scalar_one() == 0
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
+        ).scalar_one() == 54
     legacy_engine.dispose()

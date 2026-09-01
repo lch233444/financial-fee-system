@@ -11,8 +11,10 @@ export function useApiList<T>(path: string, refreshKey = 0) {
     setError("");
     try {
       setData(await api<T[]>(path));
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "读取失败");
+      return false;
     } finally {
       setLoading(false);
     }

@@ -17,7 +17,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "7f3c2a91b6e4"
+HEAD_REVISION = "c1a7d5e9b402"
 PREVIOUS_REVISION = "a6d1f4c28b73"
 
 

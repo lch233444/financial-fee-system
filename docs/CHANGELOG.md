@@ -2,6 +2,36 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.15 - 2026-09-01（Windows运行版）
+
+### Client与Sub Account受控删除
+
+- “客户与账户”页面为Client和每个Sub Account增加删除按钮及不可撤销二次确认。系统不会判断某条资料是不是测试数据；删除仅用于财务人员确认误建或不再需要、且没有任何业务或历史引用的资料。
+- Client存在Sub Account、Settlement、Invoice、规范化附件或导出引用时返回409；Sub Account存在资金流水、Balance Snapshot、已确认Statement Import、任意Settlement账户行、规范化`ACCOUNT/SUB_ACCOUNT`附件或导出引用时返回409。删除在`BEGIN IMMEDIATE`内完成应用全引用检查和Core SQL `DELETE`，不调用ORM级联、不把业务外键置空；成功后以`entity_id=NULL`记录原ID和最小识别字段。
+- Client、Sub Account、Statement Import和Balance Snapshot的新建ID改由`app_settings`中的四项持久高水位分配；迁移会按现存记录及相关删除审计播种，手工Snapshot及账单确认Snapshot均显式取号。记录即使被删除，其ID也不会分配给以后新建资料，避免旧AuditEvent中的已删ID与新资料混淆。对升级前已发生的Statement ID复用，迁移只会自动消歧“一条`STATEMENT_IMPORT_DELETED`、实体类型为Statement Import、没有新版保留字段、同ID只有一个冲突，且删除审计时间严格早于当前账单建立时间”的组合。原审计details全部保留，旧ID改存`deleted_import_id`并清空`entity_id`，同时写入版本标记及独立`LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED`更正审计。迁移、既有head启动和备份均交叉验证该证据；任一数量、时序、类型或标记不可严格证明时仍停止。当前同ID账单后续按正常流程删除后会产生新的严格删除审计，该ID以后不得再复用。
+- 前端同一时间只允许一个Client/Sub Account删除请求，处理中锁定其他删除按钮；不存在返回404，引用冲突和数据库忙返回明确错误。
+
+### 未确认导入及已确认误入账更正
+
+- 未确认Statement Import继续允许受控删除；异常确认字段、异常Snapshot关系、`duplicate_of`后继、相同路径或同一物理文件被其他导入记录共用时拒绝。现存原件必须在受控目录中、为普通文件且SHA-256与数据库一致；未确认原件原本不存在时可删除数据库记录并明确返回文件未删除。
+- 已确认误入账删除要求填写去除首尾空格后2至500字符原因并二次确认。只有Statement Import与唯一Balance Snapshot的`confirmed_account_id/confirmed_snapshot_id/statement_import_id/source_type/account_id`双向关系完整一致、该Snapshot未被任意Settlement账户行使用、Statement Import/Snapshot没有规范化Attachment/ExportRecord引用、没有`duplicate_of`后继，且确认原件存在、非空、为受控普通文件、SHA-256一致时才放行。
+- 放行后在同一写事务删除该Statement Import、由它生成的Balance Snapshot及持仓，并删除原件和OCR/Luna结果；Client与Sub Account继续保留。审计使用`entity_id=NULL`并保存删除原因、原ID、Snapshot摘要和文件校验信息，不复制持仓内容或OCR/Luna文本。
+- 原件先在同目录原子改名为唯一`.delete-pending`暂存文件，数据库提交成功后才清理；事务失败恢复原件，提交后清理失败则明确返回待清理状态并追加审计。应用启动会按数据库引用和已提交删除审计恢复或清理待删除文件；根目录、路径、哈希或证明关系不明确时停止启动，不猜测覆盖或删除。
+- 上传/OCR、reparse、Luna、confirm和delete共享进程锁；异步上传的文件保存、重复检查、OCR与数据库提交在线程worker中完整持锁。原件在OCR前及OCR结束、取得数据库写锁后各校验一次普通文件身份和SHA-256，识别期间被外部替换时不会写入旧哈希记录。新上传原件先建立唯一小型`.upload-pending`旁证；写锁持续繁忙、提交结果不确定、二次校验失败或标记清理失败时保留旁证并明确提示安全重启，启动按数据库精确路径/同一物理文件及SHA-256清理无引用原件或确认已入库原件，不把“同SHA但不同路径”的旧记录误当作当前文件引用。前端同步禁止上传、Luna和删除相互交错，并防止重复点击。
+
+### 迁移、备份与发布状态
+
+- 新Alembic revision `c1a7d5e9b402`从精确`7f3c2a91b6e4`升级，增加Client/Account防级联和Statement/Snapshot防孤儿四个SQLite Trigger，总数从53增至57。应用层先给出具体引用原因；Trigger再独立检查核心外键、规范化Attachment/ExportRecord及Statement Import的`duplicate_of`后继，阻止绕过API和并发窗口。迁移前后核对完整Trigger集合、外键及SQLite完整性，原地downgrade明确拒绝。
+- 备份创建和恢复校验新增Statement Import数据库-归档交叉检查：数据库`stored_path`必须唯一映射到`statement_imports/**`普通文件，数据库SHA-256、Manifest SHA-256和实际内容一致，且数据库引用集合与归档文件集合完全相等。缺失、篡改、孤儿、`.delete-pending`/`.upload-pending`文件及数据库副本/文件复制竞态均拒绝；结构校验同时支持正式`7f3c2a91b6e4`和目标`c1a7d5e9b402`。
+- Windows构建测试临时根缩短为项目所在盘根下的`.ffsys-build-tmp`，避免备份复验目录与较长付款凭证安全文件名叠加后触发Windows路径上限；构建内352项回归仍全部执行，不以跳过测试规避路径问题。
+- 文件SHA-256改用固定64KiB复用缓冲区流式计算，不改变哈希结果；在机器可用内存较低时，备份创建、恢复验证及凭证核验不再为每个读取块反复申请1MiB内存。
+- 后端352/352完整回归与前端TypeScript/Vite 7.3.6生产构建通过，最终资源为`index-CKCifoas.js`和`index-BoYfTAme.css`。Windows候选于23:26:35 +08:00构建，写入结果文件前403个文件、613852656字节，写入后404个文件、613853357字节；主EXE SHA-256为`42442BFCF26693E5BEFD722BB146C697B6734A071BA6618A1E297B2DA847DC51`，ProductVersion/FileVersion为0.2.15/0.2.15.0。
+- 8001纯合成HTTP及浏览器验收通过Client/Sub Account和未确认/已确认账单删除、200/404/409/422、跨删除ID递增、Snapshot与文件清理、严格备份、57个Trigger、页面无横向溢出及控制台无告警；候选已安全退出并清理合成数据。
+- 正式切换前由0.2.14创建`financial_system_backup_20260901_233123_452757_tvghcclt.zip`，978172字节，SHA-256为`121D882F259F619C5095B8B4D7B1CB53E5C6FBB937E736CF99D7D83703F88519`，API副本一致。最终Windows候选在F盘隔离副本完成`7f3c2a91b6e4 → c1a7d5e9b402`，且仅消歧到用户确认的2条可严格证明历史重号；两条当前账单均通过受控DELETE删除，删除后严格备份通过，才允许停止旧0.2.14。
+- 0.2.15已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.15_20260901\FinancialFeeSystem`接管`127.0.0.1:8000`及既有数据根。用户授权的2条历史测试误导入账单已在正式库受控删除；目标记录为0、新删除审计恰好2条、pending为0。正式验收通过版本、进程路径、49条OpenAPI路径、三类DELETE、最新前端资源、`no-store`、head `c1a7d5e9b402`、完整性、外键0、57个Trigger及无恢复/文件pending。删除后又创建并严格验证`financial_system_backup_20260901_233658_829621_tnoatd06.zip`，55272字节，SHA-256为`854706D90A7D7569CDFF220B1CB10142C5E82E2C9948FA1F2BA14567DD4FB842`。旧0.2.14目录共403个文件、613708412字节，正式验收通过后已整体移入Windows回收站，可恢复；活动运行目录只保留0.2.15。
+- 固定`release`候选、`backend/build`、`backend/FinancialFeeSystem.spec`、`frontend/dist`、纯合成验收与本批精确测试临时目标共12个位置、2152个文件、941778417字节已永久清理。源码、0.2.15正式运行目录、正式数据根和完整备份不在清理范围。
+- 本批不修改已确认Excel母版，不读取或输出真实客户业务内容，也不调用Luna处理真实文件。
+
 ## 0.2.14 - 2026-09-01（Windows运行版）
 
 ### Settlement版本与受控作废

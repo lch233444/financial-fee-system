@@ -4,12 +4,13 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, StatementImport, SubAccount
+from app.services.entity_ids import allocate_entity_id
 from app.services.storage import store_bytes
 
 
@@ -30,7 +31,9 @@ def _create_statement_record(*, token: str, extracted: dict) -> tuple[int, bytes
         directory=get_settings().data_root / "statement_imports",
     )
     with SessionLocal() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         statement = StatementImport(
+            id=allocate_entity_id(db, StatementImport),
             original_name=f"synthetic-{token}.png",
             stored_path=str(stored_path),
             sha256=digest,

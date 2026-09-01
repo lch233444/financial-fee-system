@@ -25,9 +25,14 @@ def detect_statement_format(data: bytes) -> tuple[str, str] | None:
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
+    buffer = bytearray(64 * 1024)
+    view = memoryview(buffer)
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
+        while True:
+            size = stream.readinto(buffer)
+            if not size:
+                break
+            digest.update(view[:size])
     return digest.hexdigest()
 
 

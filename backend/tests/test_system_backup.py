@@ -15,7 +15,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 import app.config as config_module
 from app.config import Settings, get_settings
@@ -36,10 +36,12 @@ from app.models import (
     PaymentRefund,
     Platform,
     QuarterlySettlement,
+    StatementImport,
 )
 from app.routes import system as system_routes
 from app.services import backup as backup_service
 from app.services.backup import apply_pending_restore, create_backup, stage_restore, validate_backup_archive_root
+from app.services.entity_ids import allocate_entity_id
 from app.services.shutdown import get_shutdown_coordinator
 from app.services.storage import sha256_file
 
@@ -123,6 +125,32 @@ def _assert_restore_rejected(backup_path: Path) -> None:
     assert not list((settings.data_root / "tmp").glob("pending_restore*"))
 
 
+def _seed_statement_import() -> tuple[StatementImport, Path, bytes]:
+    init_db()
+    settings = get_settings()
+    token = uuid4().hex[:12]
+    content = b"\xff\xd8\xffsynthetic-backup-statement-" + token.encode("ascii")
+    source_path = settings.data_root / "statement_imports" / f"statement-{token}.jpg"
+    source_path.write_bytes(content)
+    with SessionLocal() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        item = StatementImport(
+            id=allocate_entity_id(db, StatementImport),
+            original_name=source_path.name,
+            stored_path=str(source_path),
+            sha256=hashlib.sha256(content).hexdigest(),
+            mime_type="image/jpeg",
+            parser_name="TEST",
+            parser_version="1.1",
+            status="NEEDS_REVIEW",
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        db.expunge(item)
+    return item, source_path, content
+
+
 def _seed_payment_and_refund_proofs() -> dict[str, object]:
     init_db()
     settings = get_settings()
@@ -135,6 +163,7 @@ def _seed_payment_and_refund_proofs() -> dict[str, object]:
     refund_path.write_bytes(refund_bytes)
 
     with SessionLocal() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         company = Company(name=f"Backup Proof {token}", code=f"B{token}")
         db.add(company)
         db.flush()
@@ -144,6 +173,7 @@ def _seed_payment_and_refund_proofs() -> dict[str, object]:
         db.add_all([fc, plan, platform])
         db.flush()
         customer = Client(
+            id=allocate_entity_id(db, Client),
             company_id=company.id,
             fc_id=fc.id,
             name=f"Client {token}",
@@ -360,6 +390,102 @@ def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fai
     after = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
     assert after == before
     assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+
+
+def test_backup_round_trip_validates_every_statement_import_source() -> None:
+    item, source_path, content = _seed_statement_import()
+
+    backup_path = create_backup()
+
+    relative_path = f"statement_imports/{source_path.name}"
+    with zipfile.ZipFile(backup_path) as archive:
+        assert archive.read(relative_path) == content
+    extracted = backup_path.parent / f"validated-statement-{item.id}-{uuid4().hex}"
+    try:
+        backup_service.validate_backup(backup_path, extracted)
+    finally:
+        shutil.rmtree(extracted, ignore_errors=True)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "tampered", "orphan-pending"])
+def test_backup_creation_rejects_inconsistent_statement_import_files(mutation: str) -> None:
+    _item, source_path, content = _seed_statement_import()
+    settings = get_settings()
+    before = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    pending: Path | None = None
+
+    if mutation == "missing":
+        source_path.unlink()
+    elif mutation == "tampered":
+        source_path.write_bytes(content + b"tampered")
+    else:
+        pending = source_path.with_name(
+            f".{source_path.name}.{uuid4().hex}.delete-pending"
+        )
+        pending.write_bytes(b"orphan pending statement")
+
+    try:
+        with pytest.raises(ValueError, match="账单原件|statement_imports"):
+            create_backup()
+    finally:
+        source_path.write_bytes(content)
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+
+    assert set((settings.data_root / "backups").glob("financial_system_backup_*.zip")) == before
+    assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+
+
+def test_backup_creation_rejects_statement_delete_race_after_database_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _item, source_path, _content = _seed_statement_import()
+    pending_path = source_path.with_name(
+        f".{source_path.name}.{uuid4().hex}.delete-pending"
+    )
+    original_validate = backup_service._validate_sqlite_database
+    raced = False
+
+    def validate_then_stage(database_path: Path) -> None:
+        nonlocal raced
+        original_validate(database_path)
+        if not raced:
+            raced = True
+            source_path.replace(pending_path)
+
+    monkeypatch.setattr(backup_service, "_validate_sqlite_database", validate_then_stage)
+    try:
+        with pytest.raises(ValueError, match="账单原件|statement_imports"):
+            create_backup()
+    finally:
+        if pending_path.exists() and not source_path.exists():
+            pending_path.replace(source_path)
+
+    assert raced is True
+
+
+def test_restore_rejects_manifest_consistent_orphan_statement_pending_file(
+    tmp_path: Path,
+) -> None:
+    _item, source_path, content = _seed_statement_import()
+    valid = create_backup()
+    tampered = tmp_path / "statement-pending.zip"
+    relative_path = f"statement_imports/{source_path.name}"
+    pending_relative = (
+        f"statement_imports/.{source_path.name}.{uuid4().hex}.delete-pending"
+    )
+
+    def mutate(files: dict[str, bytes], manifest: dict) -> None:
+        files.pop(relative_path)
+        files[pending_relative] = content
+        for record in manifest["files"]:
+            if record["path"] == relative_path:
+                record["path"] = pending_relative
+                record["sha256"] = hashlib.sha256(content).hexdigest()
+                break
+
+    _write_variant(valid, tampered, mutate)
+    _assert_restore_rejected(tampered)
 
 
 @pytest.mark.parametrize(
@@ -807,7 +933,7 @@ def test_restore_rejects_new_head_with_incomplete_trigger_set(tmp_path: Path) ->
         database_copy.write_bytes(files[database_record["path"]])
         connection = sqlite3.connect(database_copy)
         try:
-            connection.execute("DROP TRIGGER trg_payment_refund_validate_insert")
+            connection.execute("DROP TRIGGER trg_client_delete_no_cascade")
             connection.commit()
         finally:
             connection.close()
@@ -913,11 +1039,66 @@ def test_restore_accepts_complete_supported_9d_database(
         content = legacy_settings.database_path.read_bytes()
         files[database_record["path"]] = content
         database_record["sha256"] = hashlib.sha256(content).hexdigest()
+        statement_paths = [
+            path for path in files if path.startswith("statement_imports/")
+        ]
+        for statement_path in statement_paths:
+            files.pop(statement_path)
+        manifest["files"] = [
+            record
+            for record in manifest["files"]
+            if not record["path"].startswith("statement_imports/")
+        ]
 
     legacy_backup = _write_variant(
         backup_path,
         tmp_path / "supported-9d-backup.zip",
         replace_with_9d_database,
+    )
+    staged = stage_restore(legacy_backup)
+    assert staged.marker.is_file()
+
+
+def test_restore_accepts_complete_supported_7f_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup_path = _valid_backup()
+    legacy_settings = Settings(data_root=tmp_path / "legacy-7f-data")
+    legacy_settings.ensure_directories()
+    monkeypatch.setattr(config_module, "get_settings", lambda: legacy_settings)
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", legacy_settings.database_url)
+    command.upgrade(alembic_config, "7f3c2a91b6e4")
+
+    with sqlite3.connect(legacy_settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchone() == (53,)
+
+    def replace_with_7f_database(files: dict[str, bytes], manifest: dict) -> None:
+        database_record = next(
+            record for record in manifest["files"] if record["path"].startswith("database/")
+        )
+        content = legacy_settings.database_path.read_bytes()
+        files[database_record["path"]] = content
+        database_record["sha256"] = hashlib.sha256(content).hexdigest()
+        statement_paths = [
+            path for path in files if path.startswith("statement_imports/")
+        ]
+        for statement_path in statement_paths:
+            files.pop(statement_path)
+        manifest["files"] = [
+            record
+            for record in manifest["files"]
+            if not record["path"].startswith("statement_imports/")
+        ]
+
+    legacy_backup = _write_variant(
+        backup_path,
+        tmp_path / "supported-7f-backup.zip",
+        replace_with_7f_database,
     )
     staged = stage_restore(legacy_backup)
     assert staged.marker.is_file()

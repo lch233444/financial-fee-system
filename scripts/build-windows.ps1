@@ -9,7 +9,7 @@ $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
 $ProjectDriveRoot = [System.IO.Path]::GetPathRoot($ProjectRoot)
-$TestTempRoot = Join-Path $ProjectDriveRoot ".financial-fee-system-build-tmp"
+$TestTempRoot = Join-Path $ProjectDriveRoot ".ffsys-build-tmp"
 $ConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "backend\app\config.py")
 $VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"')
 if (-not $VersionMatch.Success) {

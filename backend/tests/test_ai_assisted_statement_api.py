@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from collections.abc import Callable
@@ -9,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.config import get_settings
 from app.database import SessionLocal
@@ -25,6 +26,7 @@ from app.models import (
 )
 from app.routes import statements
 from app.routes.ai_assistant import FINANCIAL_REQUEST_HEADER
+from app.services.entity_ids import allocate_entity_id
 from app.services.codex_app_server import (
     FIXED_AI_MODEL,
     CodexAuthenticationError,
@@ -82,12 +84,15 @@ def _create_statement(*, status: str = "NEEDS_REVIEW") -> int:
     path = get_settings().data_root / "statement_imports" / f"ai-api-{token}.jpg"
     # The AI client is replaced by a deterministic fake in these API tests;
     # only a safe in-root source path is needed to exercise the route guard.
-    path.write_bytes(b"test statement image placeholder")
+    source_bytes = b"test statement image placeholder " + token.encode("ascii")
+    path.write_bytes(source_bytes)
     with SessionLocal() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         item = StatementImport(
+            id=allocate_entity_id(db, StatementImport),
             original_name=path.name,
             stored_path=str(path),
-            sha256=token * 2,
+            sha256=hashlib.sha256(source_bytes).hexdigest(),
             mime_type="image/jpeg",
             status=status,
             parser_version="1.1",
@@ -554,16 +559,21 @@ def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None
     with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
         import_id = _create_statement()
         with SessionLocal() as db:
+            db.execute(text("BEGIN IMMEDIATE"))
             item = db.get(StatementImport, import_id)
             assert item is not None
             source_path = Path(item.stored_path)
             item.ai_recognition_json = {"status": "CONFLICT", "values": _ai_values()}
             item.ai_status = "CONFLICT"
             dependent_token = uuid4().hex
+            dependent_bytes = f"semantic-{dependent_token}".encode()
+            dependent_path = source_path.parent / f"semantic-{dependent_token}.jpg"
+            dependent_path.write_bytes(dependent_bytes)
             dependent = StatementImport(
+                id=allocate_entity_id(db, StatementImport),
                 original_name=f"semantic-{dependent_token}.jpg",
-                stored_path=str(source_path.parent / f"semantic-{dependent_token}.jpg"),
-                sha256=dependent_token * 2,
+                stored_path=str(dependent_path),
+                sha256=hashlib.sha256(dependent_bytes).hexdigest(),
                 mime_type="image/jpeg",
                 status="NEEDS_REVIEW",
                 parser_version="1.1",
@@ -576,6 +586,12 @@ def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None
             dependent_id = dependent.id
         assert source_path.exists()
 
+        blocked = client.delete(f"/api/statement-imports/{import_id}")
+        assert blocked.status_code == 409
+        assert f"后继重复记录 #{dependent_id}" in blocked.json()["detail"]
+
+        dependent_deleted = client.delete(f"/api/statement-imports/{dependent_id}")
+        assert dependent_deleted.status_code == 200, dependent_deleted.text
         response = client.delete(f"/api/statement-imports/{import_id}")
 
         assert response.status_code == 200, response.text
@@ -587,12 +603,13 @@ def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None
         assert not source_path.exists()
         with SessionLocal() as db:
             assert db.get(StatementImport, import_id) is None
-            assert db.get(StatementImport, dependent_id).duplicate_of_id is None
+            assert db.get(StatementImport, dependent_id) is None
             audit = db.scalar(
                 select(AuditEvent)
                 .where(
                     AuditEvent.action == "STATEMENT_IMPORT_DELETED",
-                    AuditEvent.entity_id == import_id,
+                    AuditEvent.entity_id.is_(None),
+                    AuditEvent.details_json["deleted_import_id"].as_integer() == import_id,
                 )
                 .order_by(AuditEvent.id.desc())
             )
@@ -616,7 +633,7 @@ def test_import_delete_requires_local_write_marker_and_preserves_source() -> Non
         assert db.get(StatementImport, import_id) is not None
 
 
-def test_confirmed_import_delete_is_rejected_and_keeps_source() -> None:
+def test_confirmed_import_delete_without_reason_is_rejected_and_keeps_source() -> None:
     with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
         import_id = _create_statement(status="CONFIRMED")
         with SessionLocal() as db:
@@ -626,8 +643,8 @@ def test_confirmed_import_delete_is_rejected_and_keeps_source() -> None:
 
         response = client.delete(f"/api/statement-imports/{import_id}")
 
-        assert response.status_code == 409
-        assert "不能删除" in response.json()["detail"]
+        assert response.status_code == 422
+        assert "必须填写原因" in response.json()["detail"]
         assert source_path.exists()
         with SessionLocal() as db:
             assert db.get(StatementImport, import_id) is not None

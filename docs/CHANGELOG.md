@@ -2,6 +2,24 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.16 - 2026-09-03（Windows运行版）
+
+### 账单辅助识别固定切换至Sol
+
+- 用户主动触发的ChatGPT Pro辅助识别从固定`gpt-5.6-luna`切换为固定`gpt-5.6-sol`；模型可用性、Thread及Turn回执均继续按精确模型ID核对，任何改路由或第二模型调用仍立即停止并转人工复核。
+- 保持原有低推理档位、单次调用、严格结构化财务Schema、OCR独立结果、逐字段差异清单和人工最终确认。Sol结果仍只能保存为待复核候选，不能直接创建或修改Balance Snapshot、Transaction、Settlement、Invoice或Payment。
+- 后端、账单导入页、数据与系统页及安全退出提示统一显示Sol。新审计来源改为`SOL_SELECTED`和`SOL_HUMAN_CONFIRMED`；既有历史记录不改写。对外确认字段`luna_document_type_reviewed`、审计摘要键`luna_count`以及专用登录目录`LunaCodexHome`仅为兼容既有客户端、历史审计与现有登录继续保留，不再代表实际调用Luna。
+- 隐私受控的实时冒烟脚本新增`--summary-only`，仅输出模型、严格Schema是否通过及差异数量，不输出识别字段。用户明确授权的指定测试图片已由Sol完成一次识别并通过严格财务字段Schema；该过程未生成财务入账。
+- 本批不改数据库结构，因此Alembic head继续为`c1a7d5e9b402`，Trigger仍为57个；不修改已确认Excel母版。
+
+### 测试、备份与正式发布
+
+- 后端完整回归353/353及前端TypeScript/Vite生产构建通过，最终资源为`index-CfnBQxXk.js`和`index-BoYfTAme.css`。Windows包于2026-09-03 16:45:01 +08:00构建；写入`构建结果.txt`前403个文件、613863716字节，写入后404个文件、613864417字节。主EXE SHA-256为`CE12DBE8B7BAC8BA30D1257D8C1596D4215FFE5C3271660E8D02F42D58DDE5A7`，ProductVersion/FileVersion为0.2.16/0.2.16.0；Excel母版SHA-256仍为`16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145`。
+- 候选EXE在8001端口和F盘隔离数据根通过健康、49条OpenAPI路径、最终资源、禁缓存、Sol精确模型/登录/可用性及浏览器验收；“数据与系统”和“账单导入”只显示Sol，1280宽度无横向溢出，控制台无告警错误。候选数据库为head `c1a7d5e9b402`、`integrity_check=ok`、外键违规0、57个Trigger，严格备份创建及恢复验证通过。
+- 正式切换前由0.2.15创建`financial_system_backup_20260903_164924_726172_v0x_wd3d.zip`，554659字节，SHA-256为`3FF6B716D6599DFFBCD696A88F9F0B00E7FD84CA2C33E01CBFBBC32153D6109E`；API副本哈希一致。新代码严格验证归档后，在F盘隔离副本启动0.2.16，确认head、完整性、外键、57个Trigger及Sol状态均正常，才停止旧版。
+- 0.2.16已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.16_20260903\FinancialFeeSystem`接管`127.0.0.1:8000`和既有数据根。正式验收通过版本、进程路径、EXE版本/哈希、49条OpenAPI路径、最新前端资源、入口`no-store`、Sol精确模型且`ready`、数据库head/完整性/外键/57个Trigger及浏览器页面无溢出/无告警；旧0.2.15目录已整体移入Windows回收站，可恢复。
+- 云端识别仅使用用户明确授权的指定测试图片，且只验证Schema成功状态；没有输出识别字段或生成财务入账。未打开或输出其他客户业务内容，Excel母版未修改。
+
 ## 0.2.15 - 2026-09-01（Windows运行版）
 
 ### Client与Sub Account受控删除

@@ -27,8 +27,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from ..config import APP_VERSION, application_root, get_settings, installation_root
 
 
-FIXED_AI_MODEL = "gpt-5.6-luna"
-AI_PARSER_VERSION = "CODEX_APP_SERVER_EMPF_1.1"
+FIXED_AI_MODEL = "gpt-5.6-sol"
+AI_PARSER_VERSION = "CODEX_APP_SERVER_EMPF_1.2"
 CODEX_RECOGNITION_ROOT_MARKER = ".financial-luna-root"
 MAX_AI_PDF_PAGES = 20
 BUNDLED_CODEX_HASHES = {
@@ -121,7 +121,7 @@ class CodexWrongAuthenticationError(CodexAuthenticationError):
 
 
 class CodexModelUnavailableError(CodexIntegrationError):
-    code = "LUNA_UNAVAILABLE"
+    code = "SOL_UNAVAILABLE"
 
 
 class CodexQuotaExceededError(CodexIntegrationError):
@@ -137,7 +137,7 @@ class CodexRecognitionError(CodexIntegrationError):
 
 
 def _codex_subprocess_environment() -> dict[str, str]:
-    """Use the dedicated Luna login while removing API-key auth paths."""
+    """Use the dedicated statement-AI login while removing API-key auth paths."""
 
     scrubbed: dict[str, str] = {}
     extra_auth_names = {"AZURE_OPENAI_API_KEY", "CODEX_API_KEY", "CHATGPT_API_KEY"}
@@ -153,9 +153,9 @@ def _codex_subprocess_environment() -> dict[str, str]:
     # existing account/login/start flow. No credential is copied or linked.
     for key in [key for key in scrubbed if key.upper() == "CODEX_HOME"]:
         scrubbed.pop(key, None)
-    luna_home = get_settings().codex_home.resolve()
-    luna_home.mkdir(parents=True, exist_ok=True)
-    scrubbed["CODEX_HOME"] = str(luna_home)
+    ai_home = get_settings().codex_home.resolve()
+    ai_home.mkdir(parents=True, exist_ok=True)
+    scrubbed["CODEX_HOME"] = str(ai_home)
     return scrubbed
 
 
@@ -168,7 +168,7 @@ def _recognition_workspace() -> Path:
     try:
         marker.touch(exist_ok=True)
     except OSError as exc:
-        raise CodexUnavailableError("无法建立Luna隔离工作目录") from exc
+        raise CodexUnavailableError("无法建立Sol隔离工作目录") from exc
     return workspace
 
 
@@ -369,7 +369,7 @@ class AIHolding(BaseModel):
 
 
 class AIStatementExtraction(BaseModel):
-    """Strict, non-posting extraction returned by the fixed Luna model."""
+    """Strict, non-posting extraction returned by the fixed Sol model."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -715,7 +715,7 @@ def _images_for_codex(source: Path) -> Iterator[tuple[Path, ...]]:
                     raise CodexRecognitionError("PDF没有可识别页面")
                 if document.page_count > MAX_AI_PDF_PAGES:
                     raise CodexRecognitionError(
-                        f"PDF共{document.page_count}页，超过Luna单次最多{MAX_AI_PDF_PAGES}页，请拆分后识别"
+                        f"PDF共{document.page_count}页，超过Sol单次最多{MAX_AI_PDF_PAGES}页，请拆分后识别"
                     )
                 for page_index in range(document.page_count):
                     pixmap = document.load_page(page_index).get_pixmap(
@@ -1030,7 +1030,7 @@ class CodexAppServerClient:
         account = result.get("account")
         return account if isinstance(account, dict) else None
 
-    def _luna_model(self) -> dict[str, Any] | None:
+    def _fixed_model(self) -> dict[str, Any] | None:
         settings = get_settings()
         result = self._rpc(
             "model/list",
@@ -1118,7 +1118,7 @@ class CodexAppServerClient:
                 return {
                     **base,
                     "status": "signed_out",
-                    "message": "请为本系统专用Luna环境登录ChatGPT订阅账号",
+                    "message": "请为本系统专用Sol环境登录ChatGPT订阅账号",
                 }
             account_type = account.get("type")
             base["account_type"] = account_type
@@ -1130,13 +1130,13 @@ class CodexAppServerClient:
                     "message": "当前不是ChatGPT订阅登录；本系统不会使用API Key计费",
                 }
             base["authenticated"] = True
-            model = self._luna_model()
+            model = self._fixed_model()
             base["model_available"] = model is not None
             if model is None:
                 return {
                     **base,
                     "status": "model_unavailable",
-                    "message": "当前ChatGPT账号没有可用的gpt-5.6-luna图像模型",
+                    "message": "当前ChatGPT账号没有可用的gpt-5.6-sol图像模型",
                 }
             rate_limits, exhausted = self._rate_limits()
             base["rate_limits"] = rate_limits
@@ -1146,7 +1146,7 @@ class CodexAppServerClient:
                     "status": "quota_exhausted",
                     "message": "当前ChatGPT/Codex使用额度已到上限，请等待额度重置或转人工复核",
                 }
-            return {**base, "status": "ready", "message": "隔离的Luna辅助识别环境已就绪"}
+            return {**base, "status": "ready", "message": "隔离的Sol辅助识别环境已就绪"}
         except CodexIntegrationError as exc:
             return {**base, "status": "unavailable", "message": str(exc)}
 
@@ -1284,11 +1284,11 @@ class CodexAppServerClient:
         try:
             payload = json.loads(candidate)
         except json.JSONDecodeError as exc:
-            raise CodexRecognitionError("Luna没有返回有效的结构化识别结果") from exc
+            raise CodexRecognitionError("Sol没有返回有效的结构化识别结果") from exc
         try:
             return AIStatementExtraction.model_validate(payload)
         except ValidationError as exc:
-            raise CodexRecognitionError("Luna返回的识别结果不符合财务字段格式") from exc
+            raise CodexRecognitionError("Sol返回的识别结果不符合财务字段格式") from exc
 
     def recognize_statement(self, source: Path) -> dict[str, Any]:
         if not source.is_file():
@@ -1370,7 +1370,7 @@ class CodexAppServerClient:
                             self._reject_server_request_best_effort(event)
                             self._interrupt_best_effort(thread_id, turn_id)
                             raise CodexRecognitionError(
-                                "Luna识别尝试调用额外工具或请求授权，已停止并转人工复核"
+                                "Sol识别尝试调用额外工具或请求授权，已停止并转人工复核"
                             )
                         if method == "model/rerouted":
                             rerouted = True
@@ -1395,7 +1395,7 @@ class CodexAppServerClient:
                             }:
                                 self._interrupt_best_effort(thread_id, turn_id)
                                 raise CodexRecognitionError(
-                                    "Luna识别尝试调用额外工具，已停止并转人工复核"
+                                    "Sol识别尝试调用额外工具，已停止并转人工复核"
                                 )
                         if method != "turn/completed":
                             continue
@@ -1415,9 +1415,9 @@ class CodexAppServerClient:
                                 for marker in ("rate limit", "rate_limit", "quota", "usage_limit", "credits")
                             ):
                                 raise CodexQuotaExceededError(
-                                    "ChatGPT/Codex额度不足，未升级模型，请转人工复核"
+                                    "ChatGPT/Codex额度不足，未切换其他模型，请转人工复核"
                                 )
-                            raise CodexRecognitionError("Luna识别未完成，请转人工复核")
+                            raise CodexRecognitionError("Sol识别未完成，请转人工复核")
                         if not agent_text:
                             for item in completed_turn.get("items") or []:
                                 if isinstance(item, dict) and item.get("type") == "agentMessage":
@@ -1425,12 +1425,12 @@ class CodexAppServerClient:
                                     if isinstance(text_value, str):
                                         agent_text = text_value
                         if not agent_text:
-                            raise CodexRecognitionError("Luna识别完成但没有返回字段结果")
+                            raise CodexRecognitionError("Sol识别完成但没有返回字段结果")
                         extraction = self._parse_agent_json(agent_text)
                         return extraction.model_dump(mode="json")
 
                     self._interrupt_best_effort(thread_id, turn_id)
-                    raise CodexTimeoutError("Luna识别超时，未升级模型，请转人工复核")
+                    raise CodexTimeoutError("Sol识别超时，未切换其他模型，请转人工复核")
             finally:
                 if thread_id:
                     self._delete_thread_best_effort(thread_id)
@@ -1445,19 +1445,19 @@ def build_ai_review_result(ocr_values: dict[str, Any], ai_values: dict[str, Any]
     comparison = compare_ocr_and_ai(ocr_values, ai_values)
     warnings = list(ai_values.get("warnings") or [])
     if comparison["unsupported_document_type"]:
-        warnings.append("Luna未确认该文件为eMPF账户页面，必须人工确认")
+        warnings.append("Sol未确认该文件为eMPF账户页面，必须人工确认")
     if comparison["conflicts"]:
-        warnings.append("Luna与本地OCR存在字段冲突；系统不会升级模型，必须人工确认")
+        warnings.append("Sol与本地OCR存在字段冲突；系统不会切换其他模型，必须人工确认")
     if comparison["uncorroborated_critical_fields"]:
         warnings.append("关键字段仅由一个识别来源提供，必须人工确认")
     elif comparison["uncorroborated"]:
         warnings.append("部分字段仅由一个识别来源提供，必须人工确认")
     if comparison["missing_critical_fields"]:
-        warnings.append("关键字段在Luna和本地OCR中均缺失，确认前必须人工补充")
+        warnings.append("关键字段在Sol和本地OCR中均缺失，确认前必须人工补充")
     if comparison["uncertain_critical_fields"]:
-        warnings.append("Luna将关键字段标记为不确定，必须人工确认")
+        warnings.append("Sol将关键字段标记为不确定，必须人工确认")
     elif ai_values.get("uncertain_fields"):
-        warnings.append("Luna将部分字段标记为不确定，必须人工确认")
+        warnings.append("Sol将部分字段标记为不确定，必须人工确认")
 
     validations: list[dict[str, Any]] = []
     validation_failures: list[str] = []
@@ -1485,7 +1485,7 @@ def build_ai_review_result(ocr_values: dict[str, Any], ai_values: dict[str, Any]
         )
         if not passed:
             validation_failures.append("total_equals_lifetime_net_plus_gain_loss")
-            warnings.append("Luna识别值中，累计净供款加累计盈亏与总余额不一致，必须人工确认")
+            warnings.append("Sol识别值中，累计净供款加累计盈亏与总余额不一致，必须人工确认")
 
     holdings = ai_values.get("holdings") if isinstance(ai_values.get("holdings"), list) else []
     holding_values = [
@@ -1508,7 +1508,7 @@ def build_ai_review_result(ocr_values: dict[str, Any], ai_values: dict[str, Any]
         )
         if not passed:
             validation_failures.append("total_equals_sum_of_holding_market_values")
-            warnings.append("Luna识别值中，持仓市值合计与总余额不一致，必须人工确认")
+            warnings.append("Sol识别值中，持仓市值合计与总余额不一致，必须人工确认")
 
     if validation_failures:
         comparison["status"] = "CONFLICT"

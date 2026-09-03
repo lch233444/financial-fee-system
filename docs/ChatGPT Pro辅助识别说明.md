@@ -14,8 +14,8 @@
 上传账单
   -> 文档分类（余额页 / 供款记录 / 未知）
   -> 本地OCR或PDF原生文字提取
-  -> 用户主动点击Luna辅助识别
-  -> 固定gpt-5.6-luna识别一次
+  -> 用户主动点击Sol辅助识别
+  -> 固定gpt-5.6-sol识别一次
   -> 逐字段比较与格式校验
        一致：预填待确认值
        冲突/异常：标记人工复核
@@ -27,25 +27,25 @@
 
 系统不得：
 
-- 自动改用 Terra、Sol 或任何其他模型；
+- 自动改用Terra、Luna或任何其他模型；
 - 因模型目录提供升级建议而切换模型；
-- 在 Luna 失败后调用第二个模型；
+- 在Sol失败后调用第二个模型；
 - 让AI结果静默覆盖本地OCR或人工修订值；
 - 通过AI识别接口直接创建余额、流水、结算、Invoice或付款记录；
 - 对已经确认入账的Statement Import再次运行AI识别。
 
 ## 3. 登录和状态
 
-Luna使用应用专用的 `CODEX_HOME` 和独立ChatGPT登录。App Server进程、Thread和Turn统一使用该目录下带固定项目根标记的`recognition-workspace`，因此源码仓库中的`AGENTS.md`不会因Codex从项目根到cwd的指令发现机制而进入识别Turn。它也不会继承桌面Codex的全局插件、Hook或MCP配置；退出Luna登录不会退出Codex桌面应用。每次识别仍会检查安全配置和 `instructionSources`，隔离后若发现非空来源仍停止并转人工复核。
+Sol使用应用专用的 `CODEX_HOME` 和独立ChatGPT登录。为延续现有系统专用登录，默认目录仍保留历史名称`LunaCodexHome`；实际请求由代码精确固定为`gpt-5.6-sol`。App Server进程、Thread和Turn统一使用该目录下带固定项目根标记的`recognition-workspace`，因此源码仓库中的`AGENTS.md`不会因Codex从项目根到cwd的指令发现机制而进入识别Turn。它也不会继承桌面Codex的全局插件、Hook或MCP配置；退出Sol登录不会退出Codex桌面应用。每次识别仍会检查安全配置和 `instructionSources`，隔离后若发现非空来源仍停止并转人工复核。
 
-JPG/PNG会先转成删除EXIF/ICC的临时PNG。PDF会逐页渲染并按原顺序把全部页面作为独立`localImage`送给同一个Luna Turn，单次最多20页；超过20页明确提示拆分，不会再静默只识别第一页。临时图片在识别结束、失败或中断后都会删除。
+JPG/PNG会先转成删除EXIF/ICC的临时PNG。PDF会逐页渲染并按原顺序把全部页面作为独立`localImage`送给同一个Sol Turn，单次最多20页；超过20页明确提示拆分，不会再静默只识别第一页。临时图片在识别结束、失败或中断后都会删除。
 
 AI状态可能显示：
 
-- `ready`：ChatGPT已登录，且当前账号可使用 `gpt-5.6-luna`。
+- `ready`：ChatGPT已登录，且当前账号可使用 `gpt-5.6-sol`。
 - `signed_out`：尚未登录或登录已失效；点击登录并在浏览器完成授权。
 - `unavailable`：发布包中的Codex运行程序缺失、损坏或无法启动；本地OCR仍可用。
-- `model_unavailable`：账号当前模型列表没有精确的 `gpt-5.6-luna`；直接人工复核。
+- `model_unavailable`：账号当前模型列表没有精确的 `gpt-5.6-sol`；直接人工复核。
 - `quota_exhausted`：ChatGPT/Codex当前额度窗口已用完；不调用其他模型，直接人工复核或等待额度重置。
 - `wrong_auth`：当前为API Key等非ChatGPT管理登录；本模式拒绝使用，避免产生API账单。
 - `error`：协议、超时或其他错误；保留本地OCR并人工复核。
@@ -60,7 +60,7 @@ AI状态可能显示：
 
 - 原图；
 - 本地OCR原值和置信度；
-- Luna原值；
+- Sol原值；
 - 冲突原因；
 - 人工最终值；
 - 操作时间及解析器/模型版本。
@@ -70,7 +70,7 @@ AI状态可能显示：
 ## 5. 隐私说明
 
 - 仅使用本地OCR：账单图片留在用户选择的数据目录。
-- 点击“Luna辅助识别”：当前账单图片及识别提示会发送给OpenAI处理。
+- 点击“Sol辅助识别”：当前账单图片及识别提示会发送给OpenAI处理。
 - 数据库继续只监听和保存在本机，但这不代表AI识别过程完全离线。
 - 上传前应确认公司允许使用相应ChatGPT账号处理客户个人及财务资料。
 
@@ -89,6 +89,6 @@ Windows一键版内置启动 `codex app-server` 所需的原生程序，不要�
 ## 7. 官方资料
 
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)
-- [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+- [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
 
 这些能力、订阅额度和模型可用性可能变化，因此系统以运行时状态检查为准，不把文档中的示例账号或计划类型当作授权证明。

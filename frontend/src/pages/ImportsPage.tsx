@@ -13,12 +13,12 @@ import {
   api,
   getAiAssistantStatus,
   postJson,
-  recognizeStatementWithLuna,
+  recognizeStatementWithAi,
 } from "../api";
 import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
 import type { Account, AiAssistantStatus, BalanceSnapshot, StatementImport } from "../types";
-import { accountIdentityLabel, LUNA_MODEL_ID } from "../types";
+import { accountIdentityLabel, SOL_MODEL_ID } from "../types";
 
 type Holding = {
   fund_name?: string;
@@ -29,7 +29,7 @@ type Holding = {
   unit_price?: string;
 };
 
-type HoldingsSource = "ocr" | "luna";
+type HoldingsSource = "ocr" | "sol";
 
 type ReviewKey = "client_name" | "account_number" | "scheme_name" | "trustee" | "as_of_date" | "total_balance";
 
@@ -202,7 +202,7 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
     ...rawUncertain,
   ]);
   for (const field of uncertainCritical) {
-    addField(field, "Luna标记不确定", record?.extracted?.[field], aiValues[field]);
+    addField(field, "Sol标记不确定", record?.extracted?.[field], aiValues[field]);
   }
 
   for (const field of comparisonFields) {
@@ -229,7 +229,7 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
     issues.set("recognition:manual", {
       id: "recognition:manual",
       field: "recognition",
-      label: "Luna识别结果",
+      label: "Sol识别结果",
       reasons: ["服务端要求人工复核"],
       ocrValue: "请查看原图",
       aiValue: "请查看识别值",
@@ -250,14 +250,14 @@ function HoldingsSourceTable({ title, holdings, selected }: { title: string; hol
 
 function DocumentRoutingNotice({ record }: { record: StatementImport }) {
   const documentType = value(record, "document_type") || "unknown";
-  const lunaType = aiValue(record, "document_type");
+  const solType = aiValue(record, "document_type");
   const details = (record.extracted?.document_details as Record<string, unknown> | undefined) || {};
   return <div className="document-routing-notice">
     <TriangleAlert size={30} />
     <div>
       <strong>{documentTypeLabels[documentType] || documentTypeLabels.unknown}</strong>
       <p>这不是账户余额页面，系统已禁止生成余额快照。请保留原始凭证，并在“资金与余额”模块人工复核后登记交易。</p>
-      {lunaType ? <span>Luna分类：{documentTypeLabels[lunaType] || lunaType}</span> : null}
+      {solType ? <span>Sol分类：{documentTypeLabels[solType] || solType}</span> : null}
     </div>
     {Object.keys(details).length ? <div className="document-routing-details">{Object.entries(details).map(([key, raw]) => <span key={key}><small>{key}</small><b>{String(raw)}</b></span>)}</div> : null}
   </div>;
@@ -275,7 +275,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [assistant, setAssistant] = useState<AiAssistantStatus | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(true);
   const [conflictsAcknowledged, setConflictsAcknowledged] = useState(false);
-  const [lunaDocumentTypeReviewed, setLunaDocumentTypeReviewed] = useState(false);
+  const [solDocumentTypeReviewed, setSolDocumentTypeReviewed] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const deleteBusyRef = useRef(false);
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
@@ -290,9 +290,9 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const aiNeedsReview = reviewIssueCount > 0 || selected?.ai_recognition?.status?.toUpperCase() !== "AGREED";
   const assistantReady = assistant?.status === "ready";
   const localDocumentType = value(selected, "document_type") || "unknown";
-  const lunaDocumentType = aiValue(selected, "document_type");
-  const usesLunaBalanceClassification = localDocumentType === "unknown" && lunaDocumentType === "empf_account_page";
-  const canReviewAsBalancePage = localDocumentType === "empf_account_page" || usesLunaBalanceClassification;
+  const solDocumentType = aiValue(selected, "document_type");
+  const usesSolBalanceClassification = localDocumentType === "unknown" && solDocumentType === "empf_account_page";
+  const canReviewAsBalancePage = localDocumentType === "empf_account_page" || usesSolBalanceClassification;
   const confirmedAccount = accounts.data.find((item) => item.id === selected?.confirmed_account_id);
   const confirmedSnapshot = snapshots.data.find((item) => item.id === selected?.confirmed_snapshot_id);
   const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId));
@@ -306,7 +306,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         available: false,
         authenticated: false,
         status: "unavailable",
-        model: LUNA_MODEL_ID,
+        model: SOL_MODEL_ID,
         message: err.message,
       }))
       .finally(() => setAssistantLoading(false));
@@ -322,7 +322,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   useEffect(() => {
     setReviewValues(initialReviewValues(selected));
     setConflictsAcknowledged(false);
-    setLunaDocumentTypeReviewed(false);
+    setSolDocumentTypeReviewed(false);
     setHoldingsSource("ocr");
     setSelectedAccountId("");
   }, [selected?.id]);
@@ -345,7 +345,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
           ? "已打开原记录；上传对账标记待重启清理"
           : "本地OCR已完成；上传对账标记待重启清理");
       } else {
-        notify(result.duplicate ? "该文件已经上传，已打开原记录" : "本地OCR已完成，可选择Luna辅助识别后复核");
+        notify(result.duplicate ? "该文件已经上传，已打开原记录" : "本地OCR已完成，可选择Sol辅助识别后复核");
       }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "上传失败");
@@ -365,7 +365,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       setConflictsAcknowledged(false);
       setHoldingsSource("ocr");
       await imports.reload();
-      notify(result.ai_recognition ? "本地OCR已重新执行；将继续与原Luna结果比较，不会再次调用模型" : "本地OCR已重新执行，可运行一次Luna辅助识别");
+      notify(result.ai_recognition ? "本地OCR已重新执行；将继续与原Sol结果比较，不会再次调用模型" : "本地OCR已重新执行，可运行一次Sol辅助识别");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "重新识别失败");
     } finally {
@@ -373,20 +373,20 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     }
   }
 
-  async function runLuna() {
+  async function runSol() {
     if (!selected || !assistantReady || selected.ai_recognition || uploading || reviewing || deletingId !== null) return;
     setRecognizing(true);
     setLocalError("");
     setConflictsAcknowledged(false);
     try {
-      const result = await recognizeStatementWithLuna(selected.id);
+      const result = await recognizeStatementWithAi(selected.id);
       setSelected(result);
       setHoldingsSource("ocr");
       await imports.reload();
       const reviewIssueTotal = buildReviewIssues(result).length;
-      notify(reviewIssueTotal ? `Luna识别完成，有${reviewIssueTotal}项需人工复核` : "Luna与本地OCR结果一致，请财务最终复核");
+      notify(reviewIssueTotal ? `Sol识别完成，有${reviewIssueTotal}项需人工复核` : "Sol与本地OCR结果一致，请财务最终复核");
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "Luna识别失败，已转入人工复核");
+      setLocalError(err instanceof Error ? err.message : "Sol识别失败，已转入人工复核");
     } finally {
       setRecognizing(false);
     }
@@ -412,10 +412,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       }
       if (!window.confirm(
         `最终确认撤销并删除已入账记录 #${record.id}？\n\n` +
-        "系统将删除这次入账生成且未被后续业务引用的Balance Snapshot、持仓明细、原始文件及OCR/Luna结果，但不会删除Client或Sub Account。只有尚未用于Settlement且没有其他受保护引用时才允许删除；审计记录会保留，此操作不可撤销。",
+        "系统将删除这次入账生成且未被后续业务引用的Balance Snapshot、持仓明细、原始文件及OCR/Sol结果，但不会删除Client或Sub Account。只有尚未用于Settlement且没有其他受保护引用时才允许删除；审计记录会保留，此操作不可撤销。",
       )) return;
     } else if (!window.confirm(
-      `确定删除导入记录 #${record.id}？原始文件及OCR/Luna结果也会删除，审计记录会保留，此操作不可撤销。`,
+      `确定删除导入记录 #${record.id}？原始文件及OCR/Sol结果也会删除，审计记录会保留，此操作不可撤销。`,
     )) return;
 
     deleteBusyRef.current = true;
@@ -451,7 +451,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
           ? "误入账记录、未使用Snapshot、持仓及原件已删除；Client和Sub Account未删除"
           : result.source_file_deleted
             ? "未确认导入记录及其原始文件已删除"
-            : "未确认导入记录及OCR/Luna结果已删除；原始文件原本不存在");
+            : "未确认导入记录及OCR/Sol结果已删除；原始文件原本不存在");
       }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "删除导入记录失败");
@@ -465,11 +465,11 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     event.preventDefault();
     if (!selected || uploading || recognizing || reviewing || deletingId !== null) return;
     if (reviewIssueCount > 0 && !conflictsAcknowledged) {
-      setLocalError("Luna与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
+      setLocalError("Sol与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
       return;
     }
-    if (usesLunaBalanceClassification && !lunaDocumentTypeReviewed) {
-      setLocalError("请查看原件并勾选已确认采用Luna的余额页分类。");
+    if (usesSolBalanceClassification && !solDocumentTypeReviewed) {
+      setLocalError("请查看原件并勾选已确认采用Sol的余额页分类。");
       return;
     }
     setReviewing(true);
@@ -489,9 +489,9 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         total_balance: reviewValues.total_balance,
         account_id: selectedExistingAccount?.id ?? null,
         account_platform_id: selectedExistingAccount?.platform_id ?? null,
-        holdings: holdingsSource === "luna" ? aiHoldings : holdings,
+        holdings: holdingsSource === "sol" ? aiHoldings : holdings,
         ai_conflicts_reviewed: reviewIssueCount > 0 && conflictsAcknowledged,
-        luna_document_type_reviewed: usesLunaBalanceClassification && lunaDocumentTypeReviewed,
+        luna_document_type_reviewed: usesSolBalanceClassification && solDocumentTypeReviewed,
       });
       setSelected(result.statement_import);
       await Promise.all([imports.reload(), accounts.reload(), snapshots.reload()]);
@@ -507,7 +507,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     <>
       <PageHeader
         title="eMPF账单导入"
-        subtitle="本地OCR + Luna独立识别 · 冲突直接交由财务确认"
+        subtitle="本地OCR + Sol独立识别 · 冲突直接交由财务确认"
       />
       {(localError || imports.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || accounts.error || snapshots.error} /> : null}
 
@@ -520,16 +520,16 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         </form>
       </Panel>
 
-      <Panel title="ChatGPT Pro 辅助识别" subtitle={`固定使用 ${LUNA_MODEL_ID}；不升级模型，冲突或失败直接转人工`} className="ai-assistant-panel">
+      <Panel title="ChatGPT Pro 辅助识别" subtitle={`固定使用 ${SOL_MODEL_ID}；不切换其他模型，冲突或失败直接转人工`} className="ai-assistant-panel">
         <div className="ai-assistant-strip">
           <div className="ai-assistant-icon"><BrainCircuit /></div>
           <div className="ai-assistant-copy">
-            <strong>Luna 单模型复核</strong>
-            <span>{assistantLoading ? "正在检查ChatGPT登录状态..." : assistantReady ? "ChatGPT订阅已登录 · Luna可用" : assistant?.message || "尚未登录或Luna当前不可用，请到“数据与系统”处理"}</span>
+            <strong>Sol 单模型复核</strong>
+            <span>{assistantLoading ? "正在检查ChatGPT登录状态..." : assistantReady ? "ChatGPT订阅已登录 · Sol可用" : assistant?.message || "尚未登录或Sol当前不可用，请到“数据与系统”处理"}</span>
           </div>
           <StatusBadge value={assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} />
-          <button className="secondary" type="button" disabled={!selected || !assistantReady || statementWriteBusy || Boolean(selected?.ai_recognition) || selected?.status === "CONFIRMED"} onClick={() => void runLuna()}>
-            <Sparkles size={15} />{recognizing ? "Luna识别中..." : selected?.ai_recognition ? "Luna识别已完成" : "运行Luna辅助识别"}
+          <button className="secondary" type="button" disabled={!selected || !assistantReady || statementWriteBusy || Boolean(selected?.ai_recognition) || selected?.status === "CONFIRMED"} onClick={() => void runSol()}>
+            <Sparkles size={15} />{recognizing ? "Sol识别中..." : selected?.ai_recognition ? "Sol识别已完成" : "运行Sol辅助识别"}
           </button>
         </div>
       </Panel>
@@ -538,8 +538,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         <Panel title="导入记录" className="import-list-panel">
           {imports.loading ? <Loading /> : imports.data.length ? <div className="import-list">{imports.data.map((item) => {
             const type = String(item.extracted?.document_type || "unknown");
-            const lunaType = String(item.ai_recognition?.values?.document_type ?? item.ai_recognition?.extracted?.document_type ?? "");
-            const typeLabel = type === "unknown" && lunaType === "empf_account_page" ? "本地未知 · Luna余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
+            const solType = String(item.ai_recognition?.values?.document_type ?? item.ai_recognition?.extracted?.document_type ?? "");
+            const typeLabel = type === "unknown" && solType === "empf_account_page" ? "本地未知 · Sol余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
             return <div key={item.id} className={`import-list-item ${selected?.id === item.id ? "active" : ""}`}>
               <button className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
               <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "撤销并删除误入账记录（须填写原因且未进入Settlement）" : "删除未确认导入记录"} aria-label={`删除导入记录 #${item.id}`} disabled={statementWriteBusy} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
@@ -575,35 +575,35 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                 : "该Snapshot已在“资金与余额”可查；因不是季末或实际退出日，只作余额记录，不会出现在Closing选项。"}</p>
             {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：Snapshot #{selected.confirmed_snapshot_id}</small> : null}
           </div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
-            {usesLunaBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={lunaDocumentTypeReviewed} onChange={(event) => setLunaDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Luna的文档类型进入人工复核，Luna不会自动生成余额快照。</small></span></label> : null}
+            {usesSolBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={solDocumentTypeReviewed} onChange={(event) => setSolDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Sol的文档类型进入人工复核，Sol不会自动生成余额快照。</small></span></label> : null}
             <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition) || statementWriteBusy} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : reviewing ? "处理中..." : "重新执行本地OCR"}</button></div>
             {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
-            {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Luna：{warning}</p>)}</div> : null}
-            {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Luna识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不再升级模型，请直接人工复核。</span></div> : null}
+            {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Sol：{warning}</p>)}</div> : null}
+            {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Sol识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不会切换其他模型，请直接人工复核。</span></div> : null}
 
             {recognized ? <div className="ai-comparison">
               <div className="ai-comparison-heading">
-                <div><strong>本地OCR与Luna逐字段比较</strong><span>{reviewIssueCount ? `${reviewIssueCount}项差异或校验问题必须人工确认` : "当前字段全部一致，仍需财务最终确认"}</span></div>
+                <div><strong>本地OCR与Sol逐字段比较</strong><span>{reviewIssueCount ? `${reviewIssueCount}项差异或校验问题必须人工确认` : "当前字段全部一致，仍需财务最终确认"}</span></div>
                 <StatusBadge value={aiNeedsReview ? "NEEDS_REVIEW" : "MATCHED"} />
               </div>
               <div className="ai-comparison-table">
-                <div className="ai-comparison-row header"><span>字段</span><span>本地OCR</span><span>Luna</span><span>结果 / 选择</span></div>
+                <div className="ai-comparison-row header"><span>字段</span><span>本地OCR</span><span>Sol</span><span>结果 / 选择</span></div>
                 {comparisonRows.map(({ field, conflict }) => {
                   const local = value(selected, field.key);
-                  const luna = aiValue(selected, field.key);
-                  const bothMissing = !local && !luna;
+                  const sol = aiValue(selected, field.key);
+                  const bothMissing = !local && !sol;
                   return <div className={`ai-comparison-row ${conflict ? "conflict" : "match"}`} key={field.key}>
                     <strong>{field.label}</strong>
                     <span title={local}>{local || "未识别"}</span>
-                    <span title={luna}>{luna || "未识别"}</span>
-                    <div>{conflict ? <><b><TriangleAlert size={13} />冲突</b>{field.editable ? <span className="comparison-actions"><button type="button" onClick={() => chooseValue(field.editable!, "local")}>采用本地</button><button type="button" onClick={() => chooseValue(field.editable!, "ai")}>采用Luna</button></span> : null}</> : <b className={bothMissing ? "missing" : "agree"}>{bothMissing ? "均未识别" : "一致"}</b>}</div>
+                    <span title={sol}>{sol || "未识别"}</span>
+                    <div>{conflict ? <><b><TriangleAlert size={13} />冲突</b>{field.editable ? <span className="comparison-actions"><button type="button" onClick={() => chooseValue(field.editable!, "local")}>采用本地</button><button type="button" onClick={() => chooseValue(field.editable!, "ai")}>采用Sol</button></span> : null}</> : <b className={bothMissing ? "missing" : "agree"}>{bothMissing ? "均未识别" : "一致"}</b>}</div>
                   </div>;
                 })}
               </div>
-              {holdings.length || aiHoldings.length ? <p className="holdings-comparison">持仓项目数量：本地OCR {holdings.length} 项 · Luna {aiHoldings.length} 项。持仓只作凭证记录，不参与季度收费计算。</p> : null}
+              {holdings.length || aiHoldings.length ? <p className="holdings-comparison">持仓项目数量：本地OCR {holdings.length} 项 · Sol {aiHoldings.length} 项。持仓只作凭证记录，不参与季度收费计算。</p> : null}
               {reviewIssueCount ? <div className="ai-review-register">
                 <div className="ai-review-register-heading"><strong>完整人工复核清单</strong><span>{reviewIssueCount}项 · 包含持仓路径与数学校验</span></div>
-                <div className="ai-review-register-row header"><span>字段 / 检查</span><span>本地OCR</span><span>Luna</span><span>复核原因</span></div>
+                <div className="ai-review-register-row header"><span>字段 / 检查</span><span>本地OCR</span><span>Sol</span><span>复核原因</span></div>
                 {reviewIssues.map((issue) => {
                   const ocrText = issueDisplayValue(issue.ocrValue);
                   const aiText = issueDisplayValue(issue.aiValue);
@@ -615,7 +615,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                   </div>;
                 })}
               </div> : null}
-            </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Luna。本地OCR结果仍可由财务人工复核；运行Luna前请确认可以将此账单发送至OpenAI。</span></div>}
+            </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Sol。本地OCR结果仍可由财务人工复核；运行Sol前请确认可以将此账单发送至OpenAI。</span></div>}
 
             <Field label="匹配已有Sub Account" hint="每次切换导入记录都会清空选择；请按Client、Platform、Account Number及Scheme核对"><select name="account_id" value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}><option value="">自动匹配 / 创建草稿</option>{accounts.data.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
             <Field label="Client Name" hint={confidence(selected, "client_name")}><input name="client_name" required value={reviewValues.client_name} onChange={(event) => setReviewValues((current) => ({ ...current, client_name: event.target.value }))} /></Field>
@@ -627,19 +627,19 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             <div className="readonly-grid"><span><small>累计净供款（仅参考）</small><b>{value(selected, "lifetime_net_contributions") || "未识别"}</b></span><span><small>累计投资盈亏（仅参考）</small><b>{value(selected, "lifetime_gain_loss") || "未识别"}</b></span></div>
             {holdings.length || selected.ai_recognition ? <div className="holdings-source-review">
               <div className="holdings-source-toolbar">
-                <div><strong>选择正式保存的持仓来源</strong><span>默认采用本地OCR；系统绝不会自动采用Luna持仓。</span></div>
+                <div><strong>选择正式保存的持仓来源</strong><span>默认采用本地OCR；系统绝不会自动采用Sol持仓。</span></div>
                 <div className="holdings-source-buttons" role="group" aria-label="持仓入账来源">
                   <button type="button" className={holdingsSource === "ocr" ? "active" : ""} onClick={() => setHoldingsSource("ocr")}><CheckCircle2 size={13} />采用本地持仓</button>
-                  {selected.ai_recognition ? <button type="button" className={holdingsSource === "luna" ? "active" : ""} onClick={() => setHoldingsSource("luna")}><Sparkles size={13} />采用Luna持仓</button> : null}
+                  {selected.ai_recognition ? <button type="button" className={holdingsSource === "sol" ? "active" : ""} onClick={() => setHoldingsSource("sol")}><Sparkles size={13} />采用Sol持仓</button> : null}
                 </div>
               </div>
               <div className={selected.ai_recognition ? "holdings-source-grid" : "holdings-source-grid single"}>
                 <HoldingsSourceTable title="本地OCR持仓" holdings={holdings} selected={holdingsSource === "ocr"} />
-                {selected.ai_recognition ? <HoldingsSourceTable title="Luna持仓" holdings={aiHoldings} selected={holdingsSource === "luna"} /> : null}
+                {selected.ai_recognition ? <HoldingsSourceTable title="Sol持仓" holdings={aiHoldings} selected={holdingsSource === "sol"} /> : null}
               </div>
             </div> : null}
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={statementWriteBusy || (usesLunaBalanceClassification && !lunaDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            <button className="primary" type="submit" disabled={statementWriteBusy || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

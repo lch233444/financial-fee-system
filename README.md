@@ -1,8 +1,8 @@
 # 金融计划收费计算系统
 
-Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-luna` 进行一次辅助识别。
+Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、eMPF 文件分类及账单识别、余额与资金流水、季度高水位线结算、Excel/PDF 导出、Invoice/Payment 管理和本地备份。账单识别采用本地 Tesseract OCR，并可由用户主动调用本系统专用的 ChatGPT Pro/Codex 登录，以固定 `gpt-5.6-sol` 进行一次辅助识别。
 
-当前源码和正式Windows单机运行版均为 **0.2.15**。正式目录为 `F:\财务系统\金融计划收费系统_Windows运行版_0.2.15_20260901\FinancialFeeSystem`，使用独立数据根 `F:\财务系统\财务数据`并仅监听 `127.0.0.1:8000`。0.2.15后端352/352、前端生产构建、Windows候选删除闭环、最新正式备份隔离预检和正式切换均已通过。用户明确授权的2条历史测试误导入账单已在0.2.15受控删除；删除后记录缺席、审计恰好新增2条、完整性正常、外键违规0、共57个Trigger，且删除后完整备份已严格验证。完整状态和证据见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)。
+当前源码版本为 **0.2.16**；正式Windows单机运行版也为 **0.2.16**。正式版位于 `F:\财务系统\金融计划收费系统_Windows运行版_0.2.16_20260903\FinancialFeeSystem`，使用独立数据根 `F:\财务系统\财务数据`并仅监听 `127.0.0.1:8000`。0.2.16把用户主动触发的辅助识别模型从Luna精确切换为Sol，不改变数据库结构、Excel母版、单次调用、严格财务字段格式或人工最终确认边界。完整状态和证据见[项目说明书](docs/项目说明书.md)。开始开发前请先阅读项目说明书、[变更记录](docs/CHANGELOG.md)和[协作规则](AGENTS.md)。
 
 ## 工程接手入口
 
@@ -12,7 +12,7 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 - 运行架构、目录职责、领域模型和数据关系；
 - Settlement、Invoice、Payment及账单导入状态机；
 - HWM公式、金额类型、舍入和不可破坏的不变量；
-- OCR/Luna交叉核验、API地图、前端页面和配置项；
+- OCR/Sol交叉核验、API地图、前端页面和配置项；
 - 数据迁移、备份恢复、测试矩阵、Windows构建和故障定位；
 - 已知技术缺口、工程决策、Definition of Done和接手检查清单。
 
@@ -26,7 +26,9 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 
 0.2.14实现Settlement和Invoice的受控更正闭环：Settlement页面提供Finalized作废入口；同一自然键只允许一个非VOID活动版本，VOID历史按`version_no`和`replaces_settlement_id`形成不可覆盖的替代链。Payment业务状态收敛为`UNPAID/PAID`，逾期改为独立提示；一次付款确认必须上传可核验实体凭证，并满足“实际现金＋公司承担差额＝Invoice金额”，不再接受部分付款或重复付款。错单通过`OPEN → COMPLETED`的Invoice Correction处理：原Invoice、编号、PDF及现金事实永久保留，当前活动现金分配先以REVERSAL冲回，再按本轮可处置现金分配至完整Settlement替代链生成的新Invoice或登记有凭证退款；OPEN期间替代Invoice必须保持资金空白，连续更正须先完成上一轮，再按本轮REVERSAL和全链累计退款守恒处理，不会虚构新现金。迁移`7f3c2a91b6e4`会重建Settlement活动唯一约束、收紧Payment凭证外键并新增不可变分配/退款/差额/更正台账；旧Invoice仍未被Payment合计完整结清、缺少匹配付款凭证、共用凭证或存在半迁移结构时会在DDL前安全停止。历史上多笔Payment只有在合计恰好全额且每笔均有独立合规凭证时才无损保留，新版本不再允许新增多笔付款。
 
-0.2.15新增Client、Sub Account和账单导入的受控删除。系统不会判断一条资料是不是“测试数据”；财务人员只能删除自己确认误建或不再需要、且没有任何业务或历史引用的Client/Sub Account，任一引用存在都会拒绝且不会级联清理。未确认账单仍可删除；已确认误入账只有在其Statement Import与唯一Balance Snapshot双向关系完整、尚未进入任何Settlement、没有附件/导出或重复导入后继引用、原件完整且SHA-256一致时，才可填写原因后连同该Snapshot、持仓、原件及OCR/Luna结果一并删除，Client与Sub Account继续保留。Client、Sub Account、Statement Import和Balance Snapshot的ID使用持久高水位继续递增，删除过的ID不会分给以后新建资料，避免旧审计被误解为指向新记录。对升级前已经存在的历史重号，`c1a7d5e9b402`只在旧删除审计严格早于同ID存活账单、记录类型与数量唯一且无新版保留字段时自动消歧，并单独写入更正审计；任一证据不足仍停止升级。删除文件先在原目录原子暂存，数据库成功提交后才清理；新上传文件则先建立小型`.upload-pending`安全标记。备份同时对数据库Statement Import与归档原件做路径、文件全集和SHA-256交叉校验。
+0.2.15新增Client、Sub Account和账单导入的受控删除。系统不会判断一条资料是不是“测试数据”；财务人员只能删除自己确认误建或不再需要、且没有任何业务或历史引用的Client/Sub Account，任一引用存在都会拒绝且不会级联清理。未确认账单仍可删除；已确认误入账只有在其Statement Import与唯一Balance Snapshot双向关系完整、尚未进入任何Settlement、没有附件/导出或重复导入后继引用、原件完整且SHA-256一致时，才可填写原因后连同该Snapshot、持仓、原件及OCR/AI结果一并删除，Client与Sub Account继续保留。Client、Sub Account、Statement Import和Balance Snapshot的ID使用持久高水位继续递增，删除过的ID不会分给以后新建资料，避免旧审计被误解为指向新记录。对升级前已经存在的历史重号，`c1a7d5e9b402`只在旧删除审计严格早于同ID存活账单、记录类型与数量唯一且无新版保留字段时自动消歧，并单独写入更正审计；任一证据不足仍停止升级。删除文件先在原目录原子暂存，数据库成功提交后才清理；新上传文件则先建立小型`.upload-pending`安全标记。备份同时对数据库Statement Import与归档原件做路径、文件全集和SHA-256交叉校验。
+
+0.2.16把账单辅助识别固定切换为`gpt-5.6-sol`，继续使用低推理档位、一次调用、严格财务Schema、本地OCR独立结果和人工最终确认。用户明确授权的指定测试图片已通过Sol严格Schema检查，未输出识别字段、未自动入账。源码后端353/353、前端生产构建、Windows候选、正式备份严格验证、F盘隔离副本预检及正式运行版验收均通过；数据库继续为`c1a7d5e9b402`和57个Trigger，Excel母版SHA-256保持不变。
 
 2026-09-01最终Windows包通过8001端口纯合成HTTP及浏览器验收，实际完成Settlement v1/v2/v3的120.00/100.00/90.00收费链，以及原120.00现金经20.00和10.00两次有凭证退款后由最终Invoice保持PAID 90.00；原PDF哈希不变，400/409/422异常路径、严格备份、页面无横向溢出和无控制台告警均通过。正式切换前由0.2.13建立完整备份，新代码严格验证后在F盘隔离副本完成`9d2f6a8c4b13 → 7f3c2a91b6e4`迁移；正式0.2.14随后接管8000端口，数据库`integrity_check=ok`、外键违规0、53个Trigger及49条OpenAPI路径均通过。Excel母版未修改，验收未读取或输出真实客户业务内容、未打开真实客户文件，也未调用Luna处理真实资料。
 
@@ -39,7 +41,7 @@ Windows 本地运行的财务管理 Web 系统，覆盖客户与账户资料、e
 
 验收过的Windows/Python依赖精确版本记录在 `backend/requirements-dev-lock.txt`，Node依赖由 `frontend/pnpm-lock.yaml` 锁定。Codex和Tesseract二进制不进入Git；需要构建Windows一键版时，按 [本地构建工具说明](tools/README.md) 从受保护的交接介质恢复并校验签名及SHA-256。
 
-ChatGPT Pro 辅助识别不使用 OpenAI API Key。应用通过发布包内的 Codex App Server及本地 `stdio` 协议启动独立ChatGPT登录流程，并在每次识别前检查登录状态及模型可用性。Luna使用专用、干净的 `CODEX_HOME`，不会继承桌面Codex的全局AGENTS、插件、Hook或MCP配置，也不会复制桌面Codex登录凭据。用户首次使用时在浏览器为本系统单独完成本人ChatGPT账号授权；未登录、订阅额度不足或 Luna 不可用时，账单会直接进入人工复核，本地 OCR 和其他财务功能仍可使用。
+ChatGPT Pro 辅助识别不使用 OpenAI API Key。应用通过发布包内的 Codex App Server及本地 `stdio` 协议启动独立ChatGPT登录流程，并在每次识别前检查登录状态及模型可用性。Sol使用专用、干净的 `CODEX_HOME`，不会继承桌面Codex的全局AGENTS、插件、Hook或MCP配置，也不会复制桌面Codex登录凭据。为延续已经完成的系统专用登录，目录名仍保留历史兼容名`LunaCodexHome`，但实际请求模型只允许`gpt-5.6-sol`。用户首次使用时在浏览器为本系统单独完成本人ChatGPT账号授权；未登录、订阅额度不足或Sol不可用时，账单会直接进入人工复核，本地OCR和其他财务功能仍可使用。
 
 该接入当前定位为本地MVP预览功能。OpenAI官方仍将 `codex app-server` 命令标记为实验性能力，因此每次升级内置Codex版本后都必须重新完成登录、模型列表、样例识别及人工复核边界验收；未来迁移到公司服务器前应重新评估认证、数据治理和正式支持方案。
 
@@ -62,7 +64,7 @@ cd financial-fee-system
 
 构建完成后，运行 `release/FinancialFeeSystem/FinancialFeeSystem.exe`。首次启动会弹窗要求选择数据保存目录；开发或自动化验收时也可通过 `FINANCIAL_DATA_ROOT` 指定目录。
 
-日常关闭请点击左侧栏底部的“安全退出系统”。系统会先关闭自己启动的Luna识别进程，再停止本地服务；无需打开任务管理器。仅关闭浏览器标签不会停止后台服务。
+日常关闭请点击左侧栏底部的“安全退出系统”。系统会先关闭自己启动的Sol识别进程，再停止本地服务；无需打开任务管理器。仅关闭浏览器标签不会停止后台服务。
 
 ## 自动化测试
 
@@ -78,5 +80,5 @@ cd financial-fee-system
 
 - 服务只监听 `127.0.0.1`。
 - 客户账单、凭证、数据库及导出文件均存放在数据目录，不进入源码仓库。
-- 本地 OCR 不上传客户资料；只有用户主动点击“Luna辅助识别”时，该账单图片及识别提示才会发送给 OpenAI。
+- 本地 OCR 不上传客户资料；只有用户主动点击“Sol辅助识别”时，该账单图片及识别提示才会发送给 OpenAI。
 - AI 结果单独保存为待复核数据，不能直接生成余额快照、资金流水、季度结算或 Invoice。

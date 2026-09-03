@@ -386,7 +386,7 @@ def test_holding_conflict_requires_explicit_finance_acknowledgement_before_confi
             assert audit.details_json["ai_status"] == "CONFLICT"
             assert audit.details_json["ai_review_acknowledged"] is True
             assert audit.details_json["changes"]["holdings"] == {
-                "source": "LUNA_SELECTED",
+                "source": "SOL_SELECTED",
                 "recognized_count": 1,
                 "luna_count": 1,
                 "confirmed_count": 1,
@@ -491,13 +491,13 @@ def test_non_balance_document_cannot_create_balance_snapshot() -> None:
         assert _financial_counts() == before
 
 
-def test_unknown_local_type_can_use_luna_balance_type_only_after_explicit_review(
+def test_unknown_local_type_can_use_sol_balance_type_only_after_explicit_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
         import_id = _create_statement()
-        account_number = f"LUNA{uuid4().hex[:10]}"
-        scheme_name = f"Luna Type Review {uuid4().hex[:8]}"
+        account_number = f"SOL{uuid4().hex[:10]}"
+        scheme_name = f"Sol Type Review {uuid4().hex[:8]}"
         with SessionLocal() as db:
             item = db.get(StatementImport, import_id)
             assert item is not None
@@ -532,7 +532,7 @@ def test_unknown_local_type_can_use_luna_balance_type_only_after_explicit_review
         }
         rejected = client.post(f"/api/statement-imports/{import_id}/confirm", json=payload)
         assert rejected.status_code == 409
-        assert "采用Luna余额页分类" in rejected.json()["detail"]
+        assert "采用Sol余额页分类" in rejected.json()["detail"]
 
         accepted = client.post(
             f"/api/statement-imports/{import_id}/confirm",
@@ -552,7 +552,7 @@ def test_unknown_local_type_can_use_luna_balance_type_only_after_explicit_review
                 .order_by(AuditEvent.id.desc())
             )
             assert audit is not None
-            assert audit.details_json["document_type_source"] == "LUNA_HUMAN_CONFIRMED"
+            assert audit.details_json["document_type_source"] == "SOL_HUMAN_CONFIRMED"
 
 
 def test_unconfirmed_import_delete_removes_record_source_and_ai_result() -> None:
@@ -679,13 +679,13 @@ def test_confirmed_import_rejects_ai_before_any_model_call(
             503,
             "CODEX_UNSAFE_CONFIGURATION",
         ),
-        (lambda: CodexModelUnavailableError("Luna不可用"), 503, "LUNA_UNAVAILABLE"),
+        (lambda: CodexModelUnavailableError("Sol不可用"), 503, "SOL_UNAVAILABLE"),
         (
             lambda: CodexQuotaExceededError("ChatGPT额度已用完"),
             503,
             "CHATGPT_QUOTA_EXHAUSTED",
         ),
-        (lambda: CodexTimeoutError("Luna超时"), 504, "CODEX_TIMEOUT"),
+        (lambda: CodexTimeoutError("Sol超时"), 504, "CODEX_TIMEOUT"),
         (lambda: CodexProtocolError("协议错误"), 502, "CODEX_PROTOCOL_ERROR"),
         (
             lambda: CodexModelReroutedError("拒绝升级模型"),

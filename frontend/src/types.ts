@@ -92,13 +92,13 @@ export type StatementImport = {
   ai_recognized_at?: string | null;
 };
 
-export const LUNA_MODEL_ID = "gpt-5.6-luna" as const;
+export const SOL_MODEL_ID = "gpt-5.6-sol" as const;
 
 export type AiAssistantStatus = {
   available: boolean;
   authenticated: boolean;
   status: "ready" | "signed_out" | "auth_pending" | "unavailable" | "error" | string;
-  model: typeof LUNA_MODEL_ID | string;
+  model: typeof SOL_MODEL_ID | string;
   plan_type?: string | null;
   model_available?: boolean;
   message?: string | null;
@@ -122,7 +122,7 @@ export type AiValidationCheck = {
 
 export type AiStatementRecognition = {
   status: "AGREED" | "CONFLICT" | "INCOMPLETE" | string;
-  model: typeof LUNA_MODEL_ID | string;
+  model: typeof SOL_MODEL_ID | string;
   parser_version?: string;
   values: Record<string, unknown>;
   extracted?: Record<string, unknown>;

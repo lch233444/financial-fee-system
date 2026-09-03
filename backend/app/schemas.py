@@ -401,8 +401,9 @@ class StatementConfirmRequest(BaseModel):
     # Required only when a stored AI comparison contains a conflict,
     # uncertainty, failed validation, or uncorroborated value.
     ai_conflicts_reviewed: bool | None = None
-    # A local UNKNOWN classification may only be replaced by Luna's balance-page
-    # classification after a separate, explicit document-type review.
+    # A local UNKNOWN classification may only be replaced by the fixed AI
+    # model's balance-page classification after a separate, explicit review.
+    # The legacy field name remains for saved-client and audit compatibility.
     luna_document_type_reviewed: bool | None = None
     holdings: list[StatementHoldingInput] | None = Field(default=None, max_length=200)
 

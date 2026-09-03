@@ -74,7 +74,7 @@ export default function App() {
   async function shutdown() {
     if (shutdownState !== "idle") return;
     const confirmed = window.confirm(
-      "确定安全退出金融计划收费系统吗？\n\n系统会停止本地服务和本程序启动的Luna识别进程；尚未提交的表单内容将不会保存。",
+      "确定安全退出金融计划收费系统吗？\n\n系统会停止本地服务和本程序启动的Sol识别进程；尚未提交的表单内容将不会保存。",
     );
     if (!confirmed) return;
     setSidebarOpen(false);
@@ -84,7 +84,7 @@ export default function App() {
       setShutdownMessage(result.message);
       setShutdownState("exiting");
       const stopped = await waitForLocalServerToStop();
-      setShutdownMessage(stopped ? "本地服务与Luna识别进程已停止。" : "安全退出指令已执行，可以关闭此页面。");
+      setShutdownMessage(stopped ? "本地服务与Sol识别进程已停止。" : "安全退出指令已执行，可以关闭此页面。");
       setShutdownState("exited");
       window.setTimeout(() => window.close(), 500);
     } catch (error) {

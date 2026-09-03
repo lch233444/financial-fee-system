@@ -20,7 +20,7 @@ def _write_progress(output: Path, results: list[dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="通过隔离测试实例逐份执行本地OCR和一次Luna交叉核验。"
+        description="通过隔离测试实例逐份执行本地OCR和一次Sol交叉核验。"
     )
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--base-url", default="http://127.0.0.1:8011")
@@ -30,7 +30,7 @@ def main() -> int:
     results: list[dict] = []
     request_headers = {"X-Financial-System-Request": "1"}
     # Recognition intentionally has no retry transport. Each sample gets at
-    # most one non-idempotent Luna request in this evaluation run.
+    # most one non-idempotent Sol request in this evaluation run.
     transport = httpx.HTTPTransport(retries=0)
     with httpx.Client(
         base_url=args.base_url,
@@ -58,7 +58,7 @@ def main() -> int:
                     f"/api/statement-imports/{upload_payload['id']}/ai-recognize",
                     headers=request_headers,
                 )
-                result["luna_elapsed_seconds"] = round(
+                result["sol_elapsed_seconds"] = round(
                     time.perf_counter() - started, 2
                 )
                 recognized.raise_for_status()
@@ -75,7 +75,7 @@ def main() -> int:
                         "file": source.name,
                         "status": result["status"],
                         "import_id": result.get("import_id"),
-                        "luna_elapsed_seconds": result.get("luna_elapsed_seconds"),
+                        "sol_elapsed_seconds": result.get("sol_elapsed_seconds"),
                     },
                     ensure_ascii=False,
                 ),

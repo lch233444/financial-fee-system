@@ -795,7 +795,7 @@ def delete_statement_import(
 ) -> dict:
     """Delete an unconfirmed import or reverse an unused confirmed posting.
 
-    The shared recognition lock prevents a delete from racing OCR, Luna, or
+    The shared recognition lock prevents a delete from racing OCR, Sol, or
     confirmation.  BEGIN IMMEDIATE also serializes the reference checks against
     Settlement and other financial writes.
     """
@@ -1185,7 +1185,7 @@ def reparse_statement(import_id: int, db: Session = Depends(get_db)) -> dict:
         if item.ai_recognition_json is not None:
             raise HTTPException(
                 status_code=409,
-                detail="Luna已基于当前OCR结果完成比对；为保留审计基线，不能重新执行OCR",
+                detail="Sol已基于当前OCR结果完成比对；为保留审计基线，不能重新执行OCR",
             )
         parsed = parse_empf_statement(Path(item.stored_path))
         item.parser_name = f"LOCAL_OCR_{parsed.document_type.upper()}"
@@ -1204,7 +1204,7 @@ def recognize_statement_with_ai(
     db: Session = Depends(get_db),
     _request_guard: None = Depends(require_financial_system_request),
 ) -> dict:
-    """Create a separate Luna review candidate for an unconfirmed import.
+    """Create a separate Sol review candidate for an unconfirmed import.
 
     This route deliberately does not update OCR extraction, reviewed values,
     account data, balance snapshots, transactions, or settlements.
@@ -1295,7 +1295,7 @@ def confirm_statement(
     payload: StatementConfirmRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    # Confirmation, OCR reparse, and Luna recognition all share one critical
+    # Confirmation, OCR reparse, and Sol recognition all share one critical
     # section. A snapshot can therefore never be posted from a baseline that
     # changes while an independent recognition is still in flight.
     with _STATEMENT_RECOGNITION_LOCK:
@@ -1316,22 +1316,22 @@ def _confirm_statement_locked(
     document_type = extracted.get("document_type")
     ai_review = item.ai_recognition_json or {}
     ai_values = ai_review.get("values") or ai_review.get("extracted") or {}
-    luna_document_type = ai_values.get("document_type") if isinstance(ai_values, dict) else None
-    luna_balance_page_override = (
+    sol_document_type = ai_values.get("document_type") if isinstance(ai_values, dict) else None
+    sol_balance_page_override = (
         document_type == "unknown"
-        and luna_document_type == "empf_account_page"
+        and sol_document_type == "empf_account_page"
         and item.ai_status in {"AGREED", "CONFLICT", "INCOMPLETE"}
     )
-    if document_type != "empf_account_page" and not luna_balance_page_override:
+    if document_type != "empf_account_page" and not sol_balance_page_override:
         label = DOCUMENT_TYPE_LABELS.get(str(document_type), DOCUMENT_TYPE_LABELS["unknown"])
         raise HTTPException(
             status_code=409,
             detail=f"该文件被识别为“{label}”，不是账户余额页面，禁止生成余额快照",
         )
-    if luna_balance_page_override and payload.luna_document_type_reviewed is not True:
+    if sol_balance_page_override and payload.luna_document_type_reviewed is not True:
         raise HTTPException(
             status_code=409,
-            detail="本地OCR未能确认文档类型；财务必须查看原件并勾选已确认采用Luna余额页分类",
+            detail="本地OCR未能确认文档类型；财务必须查看原件并勾选已确认采用Sol余额页分类",
         )
 
     ai_requires_acknowledgement = bool(
@@ -1347,7 +1347,7 @@ def _confirm_statement_locked(
     if ai_requires_acknowledgement and payload.ai_conflicts_reviewed is not True:
         raise HTTPException(
             status_code=409,
-            detail="Luna识别存在冲突、不确定或校验异常；财务必须勾选已逐项人工核对后才能入账",
+            detail="Sol识别存在冲突、不确定或校验异常；财务必须勾选已逐项人工核对后才能入账",
         )
 
     account: SubAccount | None = None
@@ -1434,7 +1434,7 @@ def _confirm_statement_locked(
     elif submitted_holdings == recognized_holdings:
         holdings_source = "LOCAL_OCR_SELECTED"
     elif item.ai_recognition_json is not None and submitted_holdings == ai_holdings:
-        holdings_source = "LUNA_SELECTED"
+        holdings_source = "SOL_SELECTED"
     else:
         holdings_source = "FINANCE_EDITED"
 
@@ -1512,7 +1512,7 @@ def _confirm_statement_locked(
                 "ai_status": item.ai_status,
                 "ai_review_acknowledged": bool(payload.ai_conflicts_reviewed),
                 "document_type_source": (
-                    "LUNA_HUMAN_CONFIRMED" if luna_balance_page_override else "LOCAL_OCR"
+                    "SOL_HUMAN_CONFIRMED" if sol_balance_page_override else "LOCAL_OCR"
                 ),
             },
         )

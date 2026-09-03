@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "0.2.15"
+APP_VERSION = "0.2.16"
 
 
 def application_root() -> Path:
@@ -28,8 +28,8 @@ def installation_root() -> Path:
     return application_root()
 
 
-def default_luna_codex_home() -> Path:
-    """Return a private Codex home used only by Luna statement extraction.
+def default_ai_codex_home() -> Path:
+    """Return the private Codex home used only by statement extraction.
 
     The normal desktop/CLI Codex home may contain global AGENTS.md, plugins,
     hooks, and other user customizations.  Reusing it would make a financial
@@ -58,10 +58,10 @@ class Settings(BaseSettings):
     # Codex is intentionally authenticated through the user's managed
     # ChatGPT session.  This application never accepts or stores an API key.
     codex_cmd: str | None = os.getenv("FINANCIAL_CODEX_CMD")
-    # This must not default to the user's normal ~/.codex directory. The Luna
+    # This must not default to the user's normal ~/.codex directory. The AI
     # process has its own login so global AGENTS.md and desktop extensions can
     # never enter a statement extraction prompt.
-    codex_home: Path = Field(default_factory=default_luna_codex_home)
+    codex_home: Path = Field(default_factory=default_ai_codex_home)
     codex_status_timeout_seconds: float = 10.0
     codex_recognition_timeout_seconds: float = 120.0
     testing: bool = False
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
 
     @property
     def codex_recognition_workspace(self) -> Path:
-        """Project-isolated working directory for Luna extraction turns."""
+        """Project-isolated working directory for statement extraction turns."""
 
         return self.codex_home / "recognition-workspace"
 

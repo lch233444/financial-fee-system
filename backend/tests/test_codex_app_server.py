@@ -13,6 +13,7 @@ import app.services.codex_app_server as codex_app_server_module
 from app.config import get_settings
 
 from app.services.codex_app_server import (
+    AI_PARSER_VERSION,
     CODEX_EXTRACTION_CONFIG,
     CODEX_RECOGNITION_ROOT_MARKER,
     FIXED_AI_MODEL,
@@ -52,6 +53,11 @@ AI_VALUES = {
     "uncertain_fields": [],
     "warnings": [],
 }
+
+
+def test_fixed_sol_contract_and_parser_version() -> None:
+    assert FIXED_AI_MODEL == "gpt-5.6-sol"
+    assert AI_PARSER_VERSION == "CODEX_APP_SERVER_EMPF_1.2"
 
 
 def _write_test_jpeg(path: Path) -> None:
@@ -483,7 +489,7 @@ def test_uncertain_critical_and_arithmetic_mismatch_force_manual_review() -> Non
     }
 
 
-def test_status_accepts_nonliteral_pro_plan_when_chatgpt_and_luna_ready(monkeypatch) -> None:
+def test_status_accepts_nonliteral_pro_plan_when_chatgpt_and_sol_ready(monkeypatch) -> None:
     client = CodexAppServerClient()
     monkeypatch.setattr(client, "_ensure_started", lambda: None)
     monkeypatch.setattr(
@@ -493,7 +499,7 @@ def test_status_accepts_nonliteral_pro_plan_when_chatgpt_and_luna_ready(monkeypa
     )
     monkeypatch.setattr(
         client,
-        "_luna_model",
+        "_fixed_model",
         lambda: {"model": FIXED_AI_MODEL, "inputModalities": ["text", "image"]},
     )
     monkeypatch.setattr(client, "_rate_limits", lambda: ({"buckets": []}, False))
@@ -509,7 +515,7 @@ def test_status_marks_exhausted_quota_for_manual_review(monkeypatch) -> None:
     client = CodexAppServerClient()
     monkeypatch.setattr(client, "_ensure_started", lambda: None)
     monkeypatch.setattr(client, "_account", lambda: {"type": "chatgpt", "planType": "prolite"})
-    monkeypatch.setattr(client, "_luna_model", lambda: {"model": FIXED_AI_MODEL})
+    monkeypatch.setattr(client, "_fixed_model", lambda: {"model": FIXED_AI_MODEL})
     monkeypatch.setattr(
         client,
         "_rate_limits",
@@ -540,7 +546,7 @@ def test_model_availability_uses_visible_catalog_only(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(client, "_rpc", fake_rpc)
-    assert client._luna_model() is None
+    assert client._fixed_model() is None
     assert captured == {
         "method": "model/list",
         "params": {"limit": 100, "includeHidden": False},
@@ -572,7 +578,7 @@ def test_recognition_workspace_is_private_project_root() -> None:
     assert workspace != get_settings().data_root.resolve()
 
 
-def test_pdf_all_pages_are_reencoded_for_luna_and_removed(tmp_path: Path) -> None:
+def test_pdf_all_pages_are_reencoded_for_sol_and_removed(tmp_path: Path) -> None:
     source = tmp_path / "statement.pdf"
     with fitz.open() as document:
         for page_number in (1, 2):
@@ -696,7 +702,7 @@ class _FakeRecognitionClient(CodexAppServerClient):
         raise AssertionError(f"unexpected method: {method}")
 
 
-def test_recognition_uses_local_image_schema_and_fixed_luna_only(tmp_path: Path) -> None:
+def test_recognition_uses_local_image_schema_and_fixed_sol_only(tmp_path: Path) -> None:
     image = tmp_path / "statement.jpg"
     _write_test_jpeg(image)
     client = _FakeRecognitionClient()
@@ -707,6 +713,7 @@ def test_recognition_uses_local_image_schema_and_fixed_luna_only(tmp_path: Path)
     assert thread_params and thread_params["model"] == FIXED_AI_MODEL
     assert thread_params["sandbox"] == "read-only"
     assert turn_params and turn_params["model"] == FIXED_AI_MODEL
+    assert turn_params["effort"] == "low"
     assert turn_params["sandboxPolicy"] == {"type": "readOnly"}
     assert turn_params["outputSchema"]["additionalProperties"] is False
     transported_path = Path(turn_params["input"][1]["path"])

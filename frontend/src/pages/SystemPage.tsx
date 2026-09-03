@@ -18,7 +18,7 @@ import {
 } from "../api";
 import { ErrorBanner, Loading, PageHeader, Panel, StatusBadge } from "../components";
 import type { AiAssistantStatus } from "../types";
-import { LUNA_MODEL_ID } from "../types";
+import { SOL_MODEL_ID } from "../types";
 
 type SystemInfo = {
   app_name: string;
@@ -53,7 +53,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
         available: false,
         authenticated: false,
         status: "unavailable",
-        model: LUNA_MODEL_ID,
+        model: SOL_MODEL_ID,
         message: err instanceof Error ? err.message : "辅助识别服务不可用",
       });
       return null;
@@ -85,7 +85,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       setAssistant((current) => ({
         available: current?.available ?? true,
         authenticated: current?.authenticated ?? false,
-        model: LUNA_MODEL_ID,
+        model: SOL_MODEL_ID,
         ...current,
         ...result,
         ...(result.already_authenticated ? { authenticated: true } : {}),
@@ -109,7 +109,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   }
 
   async function logout() {
-    const confirmed = window.confirm("退出只会结束金融收费系统专用的Luna登录，不影响Codex桌面应用。之后如需Luna辅助识别，需要重新登录。确定继续吗？");
+    const confirmed = window.confirm("退出只会结束金融收费系统专用的Sol登录，不影响Codex桌面应用。之后如需Sol辅助识别，需要重新登录。确定继续吗？");
     if (!confirmed) return;
     setAssistantWorking(true);
     setError("");
@@ -118,7 +118,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       setLoginPolling(false);
       setAssistant((current) => ({
         available: current?.available ?? true,
-        model: LUNA_MODEL_ID,
+        model: SOL_MODEL_ID,
         ...current,
         ...result,
         authenticated: false,
@@ -191,15 +191,15 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
           <div className="assistant-settings-main">
             <div className="assistant-settings-icon"><BrainCircuit /></div>
             <div>
-              <div className="assistant-settings-title"><strong>Luna 单模型模式</strong><StatusBadge value={assistantLoading ? "CHECKING" : assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} /></div>
-              <p>{assistantLoading ? "正在检查系统专用登录状态..." : assistant?.message || (assistantReady ? "系统专用ChatGPT登录已就绪，可以在账单导入页运行Luna识别。" : "当前未连接，请为本系统单独登录ChatGPT。")}</p>
+              <div className="assistant-settings-title"><strong>Sol 单模型模式</strong><StatusBadge value={assistantLoading ? "CHECKING" : assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} /></div>
+              <p>{assistantLoading ? "正在检查系统专用登录状态..." : assistant?.message || (assistantReady ? "系统专用ChatGPT登录已就绪，可以在账单导入页运行Sol识别。" : "当前未连接，请为本系统单独登录ChatGPT。")}</p>
             </div>
           </div>
           <div className="assistant-facts">
-            <span><small>固定模型</small><strong>{LUNA_MODEL_ID}</strong></span>
+            <span><small>固定模型</small><strong>{SOL_MODEL_ID}</strong></span>
             <span><small>登录方式</small><strong>{assistant?.authenticated ? "ChatGPT订阅已登录" : "尚未登录"}</strong>{assistant?.plan_type ? <em>内部标识：{assistant.plan_type}</em> : null}</span>
             <span><small>登录状态</small><strong>{assistant?.authenticated ? "已登录" : "未登录"}</strong></span>
-            <span><small>Luna可用性</small><strong>{assistant?.model_available === false ? "不可用 · 转人工" : assistantReady ? "可用" : "等待连接"}</strong></span>
+            <span><small>Sol可用性</small><strong>{assistant?.model_available === false ? "不可用 · 转人工" : assistantReady ? "可用" : "等待连接"}</strong></span>
           </div>
           {assistant?.user_code ? <div className="device-code"><span>浏览器验证代码</span><strong>{assistant.user_code}</strong></div> : null}
           <div className="assistant-actions">

@@ -93,7 +93,7 @@ export function SystemExitScreen({ complete, message }: { complete: boolean; mes
         </div>
         <h1>{complete ? "系统已安全退出" : "正在安全退出系统"}</h1>
         <p>{message}</p>
-        <small>{complete ? "若页面没有自动关闭，现在可以直接关闭此页面。" : "正在停止本地服务与本程序启动的Luna识别进程，请稍候。"}</small>
+        <small>{complete ? "若页面没有自动关闭，现在可以直接关闭此页面。" : "正在停止本地服务与本程序启动的Sol识别进程，请稍候。"}</small>
       </section>
     </main>
   );

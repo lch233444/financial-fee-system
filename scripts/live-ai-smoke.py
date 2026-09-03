@@ -1,4 +1,4 @@
-"""Opt-in live acceptance check for the fixed Luna statement recognizer.
+"""Opt-in live acceptance check for the fixed Sol statement recognizer.
 
 This script sends the selected image to OpenAI through the current Windows
 user's ChatGPT-managed Codex login. It never accepts an API key and prints no
@@ -36,6 +36,11 @@ def main() -> int:
         "--controls-only",
         action="store_true",
         help="Check login and extraction-only controls without sending the image.",
+    )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Print only non-sensitive result status and counts, not extracted values.",
     )
     args = parser.parse_args()
     if not args.controls_only and not args.consent_cloud_upload:
@@ -96,13 +101,24 @@ def main() -> int:
         local_values = parse_empf_statement(source).extracted_dict()
         ai_values = client.recognize_statement(source)
         comparison = compare_ocr_and_ai(local_values, ai_values)
-        result = {
-            "model": FIXED_AI_MODEL,
-            "comparison_status": comparison["status"],
-            "conflicts": comparison["conflicts"],
-            "uncorroborated": comparison["uncorroborated"],
-            "ai_values": ai_values,
-        }
+        if args.summary_only:
+            result = {
+                "model": FIXED_AI_MODEL,
+                "schema_valid": True,
+                "comparison_status": comparison["status"],
+                "conflict_count": len(comparison["conflicts"]),
+                "uncorroborated_count": len(comparison["uncorroborated"]),
+                "holding_count": len(ai_values.get("holdings") or []),
+                "requires_human_review": comparison["recognition_requires_human_review"],
+            }
+        else:
+            result = {
+                "model": FIXED_AI_MODEL,
+                "comparison_status": comparison["status"],
+                "conflicts": comparison["conflicts"],
+                "uncorroborated": comparison["uncorroborated"],
+                "ai_values": ai_values,
+            }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if comparison["status"] == "AGREED" else 3
     finally:

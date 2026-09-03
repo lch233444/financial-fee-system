@@ -72,7 +72,7 @@ export function logoutAiAssistant(): Promise<Partial<AiAssistantStatus> & { stat
   return postJson<Partial<AiAssistantStatus> & { status: string; logged_out?: boolean }>("/api/ai-assistant/logout", {});
 }
 
-export function recognizeStatementWithLuna(importId: number): Promise<StatementImport> {
+export function recognizeStatementWithAi(importId: number): Promise<StatementImport> {
   return postJson<StatementImport>(`/api/statement-imports/${importId}/ai-recognize`, {});
 }
 

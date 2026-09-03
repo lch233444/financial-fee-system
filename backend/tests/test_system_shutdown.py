@@ -52,7 +52,7 @@ def test_shutdown_returns_success_and_runs_teardown_as_response_background_task(
             "status": "shutting_down",
             "accepted": True,
             "already_requested": False,
-            "message": "系统正在安全退出，本地服务与Luna识别进程将停止。",
+            "message": "系统正在安全退出，本地服务与Sol识别进程将停止。",
         }
         # TestClient waits for Starlette response background tasks.  Seeing
         # execute here verifies the endpoint registered (rather than called)

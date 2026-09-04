@@ -14,7 +14,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "c1a7d5e9b402"
+HEAD_REVISION = "d4f8a1c73b29"
 
 
 def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, monkeypatch) -> None:

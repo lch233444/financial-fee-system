@@ -2,6 +2,25 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.19 - 2026-09-04（Windows运行版）
+
+### 自然季度期初边界修正
+
+- Q1/Q2/Q3/Q4的Starting Date继续显示自然季度首日；首次账户结算在该日开始时，Beginning Snapshot除同日快照外，也可选择紧邻的上一季末快照。非季度首日开始管理的账户仍只接受Starting Date当天快照。
+- 资金流水计算和凭证检查改为以实际Beginning Snapshot日期为下边界。选择上一季末快照时，季度首日生效的Contribution/Withdrawal会进入本季；选择Starting Date当天快照时，当天资金视为已包含在Beginning中，不会重复计算。
+- Calculate、Finalize当前态重算、SQLite Finalize Trigger及Finalized凭证保护统一使用上述口径；新增Alembic revision `d4f8a1c73b29`，在不改变业务数据行的前提下替换3个相关Trigger，总数保持57。
+- “新增资金流水”把日期明确为“资金生效日期”，提示按公司确认的实际入账／基金分配口径填写，不要把供款所属月份截止日当成资金发生日。系统不会自动改写既有资金流水。
+- 新增首次自然季度及后续继承季度的边界回归，覆盖上一季末Beginning、季度首日资金、收费结果、Finalize和凭证冻结；迁移兼容已版本化及完整未版本化的0.2.18数据库。
+
+### 测试与发布
+
+- 季度边界针对性24/24、后端完整回归360/360及Windows构建内第二轮360/360通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为`index-BPfXgcpZ.js`和`index-DAkh9ICn.css`；项目文档检查通过。
+- Windows包于2026-09-04 15:10:58 +08:00构建；写入`构建结果.txt`前405个文件、614348825字节。主EXE SHA-256为`AF7F152FE59568EF36FBC51B314070B7CE3349895E0135C19DC2235F7980A865`，ProductVersion/FileVersion为0.2.19/0.2.19.0；Excel母版SHA-256保持`16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145`。
+- 8001最终候选在F盘纯合成数据根完成Q2上一季末Beginning、季度首日Contribution、Closing、20%收费及Finalize闭环；最终前端提示、49条OpenAPI、入口禁缓存、head `d4f8a1c73b29`、完整性、外键0、57个Trigger和季度边界精确契约通过。
+- 正式切换前0.2.18创建2026/Q3完整数据包`financial_system_data_package_2026_Q3_20260904_151249_073978_6u9oqirh.zip`，887752字节，SHA-256为`4AF30D7CCC44D217DCE810425ABF074ECD60C165103F43DE2E4F0D9486DB931A`，API副本一致；该包在F盘隔离数据根完成0.2.18导入恢复和0.2.19迁移预检。
+- 正式0.2.19已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem`接管`127.0.0.1:8000`及既有数据根；版本、进程、EXE、前端、OpenAPI、head、完整性、外键0、57个Trigger和无恢复残留均通过。升级后同版本数据包`financial_system_data_package_2026_Q3_20260904_151627_786418_xg_p2tk6.zip`为887773字节，SHA-256为`E6FA3EC310F621440ADA308710E1D1A25DE4A6EAC34A99F85366A56801693C93`，API副本一致，并在另一F盘隔离数据根完成0.2.19导入、自动退出、重启和路径复验。
+- 本批未输出客户业务内容、未打开客户文件、未调用Sol/Luna，也未修改Excel母版；旧0.2.18运行目录及候选/预检临时目录在正式验收后移入Windows回收站，可恢复。
+
 ## 0.2.18 - 2026-09-04（Windows运行版）
 
 ### Invoice PDF A+B融合版式

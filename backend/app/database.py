@@ -311,6 +311,13 @@ def init_db() -> None:
             "uq_invoice_sources_active_settlement",
             "uq_invoices_active_client_period_plan",
         }.issubset(index_names)
+        from .services.settlement_boundary_contract import (
+            settlement_boundary_trigger_sql_is_current as _boundary_sql_is_current,
+            settlement_boundary_trigger_sql_is_legacy as _boundary_sql_is_legacy,
+        )
+
+        boundary_sql_is_current = _boundary_sql_is_current(trigger_sql)
+        boundary_sql_is_legacy = _boundary_sql_is_legacy(trigger_sql)
         settlement_integrity_sql_is_current = (
             "legacy_draft_requires_recalculation"
             in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
@@ -328,8 +335,7 @@ def init_db() -> None:
             in trigger_sql.get("trg_settlement_account_line_order", "").lower()
             and "settlement_transaction_totals_changed"
             in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
-            and "transaction_record.transaction_date > line.start_date"
-            in trigger_sql.get("trg_settlement_validate_finalize", "").lower()
+            and (boundary_sql_is_current or boundary_sql_is_legacy)
             and "new.status = 'finalized' and new.void_reason is not null"
             in " ".join(
                 trigger_sql.get("trg_settlement_lifecycle_transition", "")
@@ -476,7 +482,15 @@ def init_db() -> None:
                         raise RuntimeError(
                             "未版本化数据库的ID高水位证据异常；已停止启动，请人工检查"
                         ) from exc
-                command.stamp(alembic_config, "head")
+                if boundary_sql_is_current:
+                    command.stamp(alembic_config, "head")
+                elif boundary_sql_is_legacy:
+                    command.stamp(alembic_config, "c1a7d5e9b402")
+                    command.upgrade(alembic_config, "head")
+                else:
+                    raise RuntimeError(
+                        "未版本化数据库的季度边界Trigger语义异常；已停止启动，请人工检查"
+                    )
             else:
                 # A complete unversioned 0.2.14 schema has exactly the 53
                 # payment-ledger triggers.  Stamp its proven revision first so
@@ -553,9 +567,12 @@ def init_db() -> None:
     from .services.delete_guard_contract import (
         delete_guard_trigger_sql_is_current as _delete_guard_sql_is_current,
     )
+    from .services.settlement_boundary_contract import (
+        settlement_boundary_trigger_sql_is_current as _boundary_sql_is_current,
+    )
 
     with engine.connect() as validation_connection:
-        current_delete_guard_sql = {
+        current_trigger_sql = {
             str(row[0]): str(row[1] or "")
             for row in validation_connection.exec_driver_sql(
                 """
@@ -564,12 +581,19 @@ def init_db() -> None:
                     'trg_client_delete_no_cascade',
                     'trg_account_delete_no_cascade',
                     'trg_statement_import_delete_no_snapshot',
-                    'trg_snapshot_delete_no_confirmed_import'
+                    'trg_snapshot_delete_no_confirmed_import',
+                    'trg_settlement_validate_finalize',
+                    'trg_attachment_update_block_finalized_evidence',
+                    'trg_attachment_delete_block_finalized_evidence'
                 )
                 """
             ).fetchall()
         }
-    if not _delete_guard_sql_is_current(current_delete_guard_sql):
+    if not _delete_guard_sql_is_current(current_trigger_sql):
         raise RuntimeError(
             "数据库受控删除Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查"
+        )
+    if not _boundary_sql_is_current(current_trigger_sql):
+        raise RuntimeError(
+            "数据库季度边界Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查"
         )

@@ -1,15 +1,30 @@
-金融计划收费计算系统 MVP 0.2.18
+金融计划收费计算系统 MVP 0.2.19
 构建日期：2026-09-04
 
-当前状态：0.2.18已完成Invoice PDF A+B融合版式、完整回归、前端构建、Windows候选、正式备份与隔离预检及8000端口正式切换，当前正式运行版为0.2.18。
+当前状态：0.2.19已完成自然季度期初Snapshot和资金流水边界修正、完整回归、Windows候选、正式备份与隔离预检、同版本数据包恢复及8000端口正式切换。
 
-0.2.18主要更新：
+0.2.19主要更新：
+- 自然季度Starting Date继续为季度首日；首次结算可选择紧邻的上一季末Snapshot作为Beginning，季度首日生效资金会计入本季。
+- 非季度首日开始管理的账户继续使用Starting Date当天Snapshot；后续期间继续继承上一期Closing和Next HWM。
+- Calculate、Finalize、凭证保护和SQLite Trigger统一按Beginning Snapshot日期之后至Closing Date汇总资金；新增数据库head d4f8a1c73b29，Trigger总数保持57。
+- “新增资金流水”明确提示填写公司确认的实际入账／基金分配日期，不把供款所属月份截止日当作资金生效日期。
+- 既有业务数据、Invoice PDF、Payment、数据包和Excel母版不改写。
+
+0.2.19验收：
+- 季度边界针对性24/24、后端完整回归360/360及构建内第二轮360/360通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为index-BPfXgcpZ.js和index-DAkh9ICn.css，项目文档检查通过。
+- Windows包于2026-09-04 15:10:58 +08:00构建；写入构建结果.txt前405个文件、614348825字节。EXE SHA-256为AF7F152FE59568EF36FBC51B314070B7CE3349895E0135C19DC2235F7980A865，ProductVersion/FileVersion为0.2.19/0.2.19.0。
+- 8001纯合成候选完成2026-03-31 Beginning、2026-04-01季度首日资金、2026-06-30 Closing及Finalize；金额结果、页面提示、49条OpenAPI、禁缓存、head d4f8a1c73b29、完整性、外键0和57个Trigger均通过。
+- 切换前0.2.18数据包financial_system_data_package_2026_Q3_20260904_151249_073978_6u9oqirh.zip为887752字节，SHA-256为4AF30D7CCC44D217DCE810425ABF074ECD60C165103F43DE2E4F0D9486DB931A，API副本一致；F盘隔离导入、重启和0.2.19迁移预检通过。
+- 正式0.2.19位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；版本、进程、EXE、前端、OpenAPI、数据库及无恢复残留通过。升级后同版本数据包financial_system_data_package_2026_Q3_20260904_151627_786418_xg_p2tk6.zip为887773字节，SHA-256为E6FA3EC310F621440ADA308710E1D1A25DE4A6EAC34A99F85366A56801693C93，API副本一致，并在另一隔离数据根完成导入恢复复验。
+- 验收未输出客户业务内容、未打开客户文件、未调用Sol/Luna、未修改Excel母版。
+
+0.2.18历史主要更新：
 - 客户Invoice中英文PDF融合A版清晰结构与B版深蓝、香槟金质感，升级标题、客户资料、账单项目、总额和付款说明的视觉层级。
 - 客户PDF保留Company、Client、Sub Account、Settlement Period、Fee Plan服务说明、HKD金额、Invoice No、Issue/Due Date和付款资料，不显示Trustee、Platform或Platform Code。
 - 签发前内部页面仍显示Platform、Fee Plan和Scheme以便辨认；底层冻结来源、跨Platform合并、金额、编号、付款和更正规则均不改变。已签发归档PDF不重生成，只有新签发Invoice使用新模板。
 - 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
 
-0.2.18验收：
+0.2.18历史验收：
 - Invoice PDF专项20/20、后端完整回归357/357及构建内第二轮357/357通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为index-CEC_S9AS.js和index-DAkh9ICn.css，项目文档检查通过。
 - Windows包于2026-09-04 13:35:17 +08:00构建；写入构建结果.txt前403个文件、614322908字节，写入后404个文件、614323609字节。EXE SHA-256为D1885972A71C6FE6A96A8F559A1286F13BA878613B30A4C7A21695742FB68AD4，ProductVersion/FileVersion为0.2.18/0.2.18.0。
 - 8001候选版使用纯合成资料完成两个Platform、两个Sub Account的结算和合并Invoice签发；中英文单页A4的字段、金额、付款资料、版面及Trustee/Platform/Platform Code不外显均通过，数据库head、完整性、外键0和57个Trigger正常。

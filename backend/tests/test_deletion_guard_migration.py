@@ -13,10 +13,14 @@ import app.config as config_module
 import app.database as database_module
 from app.config import Settings
 from app.services.backup import _validate_sqlite_database
+from app.services.settlement_boundary_contract import (
+    settlement_boundary_trigger_sql_is_current,
+)
 
 
 PREVIOUS_REVISION = "7f3c2a91b6e4"
-HEAD_REVISION = "c1a7d5e9b402"
+DELETE_GUARD_REVISION = "c1a7d5e9b402"
+HEAD_REVISION = "d4f8a1c73b29"
 DELETE_GUARD_TRIGGERS = {
     "trg_client_delete_no_cascade",
     "trg_account_delete_no_cascade",
@@ -73,6 +77,7 @@ def test_7f_head_upgrades_to_delete_guard_head_with_exact_trigger_contract(
     assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS
     assert len(triggers) == 57
     assert all(sql.strip() for sql in triggers.values())
+    assert settlement_boundary_trigger_sql_is_current(triggers)
     with sqlite3.connect(settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
             HEAD_REVISION,
@@ -84,6 +89,46 @@ def test_7f_head_upgrades_to_delete_guard_head_with_exact_trigger_contract(
                 "SELECT key, value FROM app_settings WHERE key LIKE 'id_high_water.%'"
             ).fetchall()
         ) == {key: "0" for key in ID_HIGH_WATER_KEYS}
+
+
+def test_unstamped_complete_0_2_15_shape_runs_quarter_boundary_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path, "unstamped-0-2-15", monkeypatch)
+    config = _alembic_config(settings)
+    command.upgrade(config, DELETE_GUARD_REVISION)
+    with sqlite3.connect(settings.database_path) as connection:
+        legacy_triggers = {
+            str(name): str(sql or "")
+            for name, sql in connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+        }
+        assert not settlement_boundary_trigger_sql_is_current(legacy_triggers)
+        connection.execute("DROP TABLE alembic_version")
+        connection.commit()
+
+    unstamped_engine = create_engine(
+        settings.database_url, connect_args={"check_same_thread": False}
+    )
+    monkeypatch.setattr(database_module, "engine", unstamped_engine)
+    monkeypatch.setattr(database_module, "settings", settings)
+    database_module.init_db()
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            HEAD_REVISION,
+        )
+        upgraded_triggers = {
+            str(name): str(sql or "")
+            for name, sql in connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+        }
+        assert settlement_boundary_trigger_sql_is_current(upgraded_triggers)
+        assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    unstamped_engine.dispose()
 
 
 def test_delete_guard_migration_seeds_id_high_water_from_live_rows_and_deletion_audits(
@@ -269,7 +314,7 @@ def test_delete_guard_migration_disambiguates_proven_legacy_statement_id_reuse(
         assert details["sha256"] == "historical-proof"
         assert details["deleted_import_id"] == 77
         assert details["legacy_entity_id_reused_before_0_2_15"] is True
-        assert details["legacy_reuse_disambiguation_revision"] == HEAD_REVISION
+        assert details["legacy_reuse_disambiguation_revision"] == DELETE_GUARD_REVISION
 
         correction_id = details["legacy_reuse_correction_audit_id"]
         action, entity_type, correction_entity_id, raw_correction = connection.execute(
@@ -499,7 +544,7 @@ def test_delete_guard_migration_refuses_in_place_downgrade(
     command.upgrade(config, "head")
     before = _trigger_sql(settings.database_path)
 
-    with pytest.raises(RuntimeError, match="不允许原地降级"):
+    with pytest.raises(RuntimeError, match="原地降级"):
         command.downgrade(config, PREVIOUS_REVISION)
 
     assert _trigger_sql(settings.database_path) == before

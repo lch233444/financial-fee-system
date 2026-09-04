@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
+from app.database import engine
 from app.main import app
 
 
@@ -143,6 +147,117 @@ def test_zero_denominator_blocks_finalization() -> None:
         assert settlement["period_rate"] is None
         finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
         assert finalized.status_code == 400
+
+
+def test_first_calendar_quarter_uses_previous_quarter_end_and_includes_first_day_flow() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "QBOUNDARY1")
+        account_id = data["account"]["id"]
+        beginning = _snapshot(client, account_id, "2026-03-31", "1000.00", closing=True)
+        closing = _snapshot(client, account_id, "2026-06-30", "1200.00", closing=True)
+        transaction_response = client.post(
+            "/api/transactions",
+            json={
+                "account_id": account_id,
+                "transaction_date": "2026-04-01",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "100.00",
+            },
+        )
+        assert transaction_response.status_code == 201, transaction_response.text
+        transaction = transaction_response.json()
+        proof_response = client.post(
+            "/api/attachments",
+            data={"entity_type": "TRANSACTION", "entity_id": str(transaction["id"])},
+            files={
+                "file": (
+                    "quarter-opening-contribution.pdf",
+                    b"%PDF-1.4\nquarter-opening\n%%EOF",
+                    "application/pdf",
+                )
+            },
+        )
+        assert proof_response.status_code == 201, proof_response.text
+        proof = proof_response.json()
+
+        calculated = client.post(
+            "/api/settlements/calculate",
+            json={
+                "client_id": data["client"]["id"],
+                "platform_id": data["platform"]["id"],
+                "fee_plan_id": data["plan"]["id"],
+                "year": 2026,
+                "quarter": 2,
+                "account_lines": [
+                    {
+                        "account_id": account_id,
+                        "start_date": "2026-04-01",
+                        "closing_date": "2026-06-30",
+                        "beginning_snapshot_id": beginning["id"],
+                        "closing_snapshot_id": closing["id"],
+                        "original_hwm": "1000.00",
+                    }
+                ],
+            },
+        )
+        assert calculated.status_code == 200, calculated.text
+        settlement = calculated.json()
+        assert settlement["beginning"] == "1000.00"
+        assert settlement["contribution"] == "100.00"
+        assert settlement["gain_loss"] == "100.00"
+        assert settlement["service_fee"] == "20.00"
+
+        finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+        assert finalized.status_code == 200, finalized.text
+
+        with pytest.raises(IntegrityError, match="attachment_used_by_finalized_settlement"):
+            with engine.begin() as connection:
+                connection.execute(
+                    text("DELETE FROM attachments WHERE id = :attachment_id"),
+                    {"attachment_id": proof["id"]},
+                )
+
+
+def test_inherited_quarter_boundary_includes_first_day_flow() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "QBOUNDARY2")
+        first = _settlement(client, data, 1, "1000.00", "1100.00")
+        finalized_first = client.post(f"/api/settlements/{first['id']}/finalize")
+        assert finalized_first.status_code == 200, finalized_first.text
+
+        transaction_response = client.post(
+            "/api/transactions",
+            json={
+                "account_id": data["account"]["id"],
+                "transaction_date": "2026-04-01",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "100.00",
+            },
+        )
+        assert transaction_response.status_code == 201, transaction_response.text
+        uploaded = client.post(
+            "/api/attachments",
+            data={
+                "entity_type": "TRANSACTION",
+                "entity_id": str(transaction_response.json()["id"]),
+            },
+            files={
+                "file": (
+                    "inherited-quarter-opening.pdf",
+                    b"%PDF-1.4\ninherited-opening\n%%EOF",
+                    "application/pdf",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+
+        second = _settlement(client, data, 2, "1100.00", "1300.00")
+        assert second["account_lines"][0]["beginning_snapshot_id"] == first["account_lines"][0]["closing_snapshot_id"]
+        assert second["contribution"] == "100.00"
+        assert second["gain_loss"] == "100.00"
+        assert second["service_fee"] == "20.00"
+        finalized_second = client.post(f"/api/settlements/{second['id']}/finalize")
+        assert finalized_second.status_code == 200, finalized_second.text
 
 
 def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:

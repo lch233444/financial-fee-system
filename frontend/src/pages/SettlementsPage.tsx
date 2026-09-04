@@ -13,6 +13,12 @@ type LineState = Record<number, {
   originalHwm: string;
 }>;
 
+function previousCalendarDate(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function SettlementAccountList({ item, accountById }: { item: Settlement; accountById: Map<number, Account> }) {
   if (!item.account_lines.length) return <span>-</span>;
   return <div className="settlement-account-list">{item.account_lines.map((line) => {
@@ -315,7 +321,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
     <>
       <PageHeader title="季度结算" subtitle="每个Sub Account独立计算HWM和Service Fee；余额快照入账后仍须财务人工计算并Finalize" />
       {error || settlements.error ? <ErrorBanner message={error || settlements.error} /> : null}
-      <Panel title="建立结算组合" subtitle="首次账户需选择Beginning Snapshot并输入自己的Original HWM；账单导入只生成Snapshot，不会自动计算或Finalize">
+      <Panel title="建立结算组合" subtitle="首次账户需选择Beginning Snapshot并输入自己的Original HWM；自然季度首日可选择上一季末Snapshot；账单导入不会自动计算或Finalize">
         <div className="settlement-controls">
           <Field label="Client"><select disabled={settlementMutationBusy} value={clientId} onChange={(e) => { invalidateResult(); setClientId(e.target.value); }}><option value="">请选择</option>{clients.data.filter((x) => x.status === "ACTIVE").map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="Platform"><select disabled={settlementMutationBusy} value={platformId} onChange={(e) => { invalidateResult(); setPlatformId(e.target.value); }}><option value="">请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
@@ -330,14 +336,16 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
             const [quarterStart, quarterClosing] = quarterDates(year, quarter);
             const minimumStart = account.start_date && account.start_date > quarterStart ? account.start_date : quarterStart;
             const maximumClosing = account.end_date && account.end_date < quarterClosing ? account.end_date : quarterClosing;
-            const beginningOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.startDate);
+            const beginningDates = new Set(line?.startDate ? [line.startDate] : []);
+            if (line?.startDate === quarterStart) beginningDates.add(previousCalendarDate(quarterStart));
+            const beginningOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && beginningDates.has(snapshot.as_of_date));
             const closingOptions = snapshots.data.filter((snapshot) => snapshot.account_id === account.id && snapshot.as_of_date === line?.closingDate && snapshot.eligible_for_closing);
             return <div className="account-entry" key={account.id}>
               <span><input type="checkbox" aria-label={`将Sub Account ${account.account_number}加入Settlement`} disabled={settlementMutationBusy} checked={lines[account.id]?.enabled ?? true} onChange={(e) => updateLine(account.id, { enabled: e.target.checked })} /></span>
               <span><strong>{account.account_number}</strong><small>{account.client_name} · {account.platform_name || "待确认Platform"}{account.scheme_name ? ` · ${account.scheme_name}` : ""}</small></span>
               <span><input type="date" disabled={settlementMutationBusy || !line?.enabled} min={minimumStart} max={line?.closingDate || maximumClosing} value={line?.startDate || ""} onChange={(e) => updateLine(account.id, { startDate: e.target.value, beginningSnapshotId: "" })} /></span>
               <span><input type="date" disabled={settlementMutationBusy || !line?.enabled} min={line?.startDate || minimumStart} max={maximumClosing} value={line?.closingDate || ""} onChange={(e) => updateLine(account.id, { closingDate: e.target.value, closingSnapshotId: "" })} /></span>
-              <span><select disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.beginningSnapshotId || ""} onChange={(e) => updateLine(account.id, { beginningSnapshotId: e.target.value })}><option value="">自动继承；首次请选择</option>{beginningOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
+              <span><select disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.beginningSnapshotId || ""} onChange={(e) => updateLine(account.id, { beginningSnapshotId: e.target.value })}><option value="">自动继承；首次请选择</option>{beginningOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>{snapshot.as_of_date} · HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
               <span><select disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.closingSnapshotId || ""} onChange={(e) => updateLine(account.id, { closingSnapshotId: e.target.value })}><option value="">请选择Closing</option>{closingOptions.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>HKD {snapshot.total_balance} · {snapshot.source_type === "STATEMENT_IMPORT" ? "账单导入" : "手工快照"} · {snapshot.evidence_complete ? "有凭证" : "待补凭证"}</option>)}</select></span>
               <span><input type="number" min="0" step="0.01" placeholder="首次账户必填" disabled={settlementMutationBusy || !lines[account.id]?.enabled} value={lines[account.id]?.originalHwm || ""} onChange={(e) => updateLine(account.id, { originalHwm: e.target.value })} /></span>
             </div>;

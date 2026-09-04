@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -34,6 +34,23 @@ class SettlementCurrentStateError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+def _valid_initial_beginning_date(
+    *, snapshot_date: date, line_start_date: date, natural_quarter_start: date
+) -> bool:
+    """Accept an opening balance dated at the boundary it actually represents.
+
+    Existing mid-quarter onboarding uses a same-day snapshot whose cash flows
+    are already included in Beginning.  A normal calendar quarter instead
+    opens from the previous quarter-end snapshot, so the first in-period cash
+    flow is on the following day.
+    """
+
+    return snapshot_date == line_start_date or (
+        line_start_date == natural_quarter_start
+        and snapshot_date == line_start_date - timedelta(days=1)
+    )
 
 
 def _require_sql_safe_rate_inputs(
@@ -335,8 +352,15 @@ def calculate_current_settlement(
             beginning_snapshot = db.get(BalanceSnapshot, spec.beginning_snapshot_id)
             if not beginning_snapshot or beginning_snapshot.account_id != spec.account_id:
                 raise SettlementCurrentStateError(400, "Beginning Snapshot与Sub Account不匹配")
-            if beginning_snapshot.as_of_date != line_start_date:
-                raise SettlementCurrentStateError(400, "首次Beginning Snapshot日期必须等于该账户Starting Date")
+            if not _valid_initial_beginning_date(
+                snapshot_date=beginning_snapshot.as_of_date,
+                line_start_date=line_start_date,
+                natural_quarter_start=natural_start,
+            ):
+                raise SettlementCurrentStateError(
+                    400,
+                    "首次Beginning Snapshot必须等于Starting Date；季度首日也可选择上一季末快照",
+                )
             if spec.original_hwm_cents is None:
                 raise SettlementCurrentStateError(400, "首次账户结算必须输入该Sub Account的Original HWM")
             beginning_snapshot_id = beginning_snapshot.id
@@ -347,7 +371,7 @@ def calculate_current_settlement(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
                 TransactionRecord.account_id == spec.account_id,
                 TransactionRecord.transaction_type == "CONTRIBUTION",
-                TransactionRecord.transaction_date > line_start_date,
+                TransactionRecord.transaction_date > beginning_snapshot.as_of_date,
                 TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0
@@ -355,7 +379,7 @@ def calculate_current_settlement(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
                 TransactionRecord.account_id == spec.account_id,
                 TransactionRecord.transaction_type == "WITHDRAWAL",
-                TransactionRecord.transaction_date > line_start_date,
+                TransactionRecord.transaction_date > beginning_snapshot.as_of_date,
                 TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0

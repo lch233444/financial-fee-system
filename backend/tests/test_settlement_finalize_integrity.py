@@ -31,7 +31,7 @@ from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "c1a7d5e9b402"
+HEAD_REVISION = "d4f8a1c73b29"
 
 
 def _master(client: TestClient, suffix: str) -> dict:
@@ -1182,7 +1182,7 @@ def test_legal_stale_void_draft_does_not_block_upgrade_and_unsafe_downgrade_is_r
         }
     assert "trg_settlement_parent_financial_lock" in triggers_before
 
-    with pytest.raises(RuntimeError, match="不允许原地降级"):
+    with pytest.raises(RuntimeError, match="原地降级"):
         command.downgrade(alembic_config, "c4b7f1d92e60")
     with sqlite3.connect(settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == HEAD_REVISION

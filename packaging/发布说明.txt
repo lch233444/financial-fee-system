@@ -1,22 +1,26 @@
-金融计划收费计算系统 MVP 0.2.19
+金融计划收费计算系统 MVP 0.2.20
 构建日期：2026-09-04
 
-当前状态：0.2.19已完成自然季度期初Snapshot和资金流水边界修正、完整回归、Windows候选、正式备份与隔离预检、同版本数据包恢复及8000端口正式切换。
+当前状态：0.2.20已完成未Finalized资金流水受控更正、完整回归、Windows候选、正式数据包备份与F盘隔离预检、同版数据包恢复及8000端口正式切换。
 
-0.2.19主要更新：
+0.2.20主要更新：
+- “资金与余额”的最近资金流水新增“更正”入口，可修改资金生效日期、Contribution/Withdrawal类型、金额和备注，并必须填写2至500字符更正原因。
+- 更正保留原Transaction ID和已有凭证，审计记录保存原因及更正前后值；相同内容重复提交会被拒绝。
+- 原日期或新日期落入Finalized Settlement期间时均禁止更正，并显示锁定该流水的Settlement；未Finalized Draft在更正后必须重新Calculate。
+- 本版不修改数据库结构、季度边界、Settlement/Invoice/Payment、附件文件或Excel母版；Alembic head继续为d4f8a1c73b29，Trigger继续为57个。
+
+0.2.20最终验收：
+- 后端完整回归362/362与前端TypeScript/Vite生产构建通过；最终资源为index-DGrCqzYT.js和index-DAkh9ICn.css，项目文档检查通过。
+- Windows包于2026-09-04 15:54:08 +08:00构建；最终文档同步后写入构建结果.txt前405个文件、614373831字节，写入后406个文件、614374532字节。EXE SHA-256为1D791591DACABF3CDE463A63F3E296600B33A5EE3F7624FBDBA96A18A0CCAF48，ProductVersion/FileVersion为0.2.20/0.2.20.0。
+- 8001纯合成候选完成流水更正、原凭证保留、单条审计、重复更正拒绝、Q2重算、Finalize后锁定和浏览器界面验收；50条OpenAPI路径、禁缓存、head d4f8a1c73b29、完整性、外键0和57个Trigger通过。
+- 切换前0.2.19数据包副本0.2.19正式切换前数据包_20260904_Q3.zip为887774字节，SHA-256为B0DF1D0A6C5151D5B9F3AD234E09A0745F98C63C51D46646D049865FF3F14BDE，已完成F盘隔离导入、重启和0.2.20接管预检。
+- 正式0.2.20已从F:\财务系统\金融计划收费系统_Windows运行版_0.2.20_20260904\FinancialFeeSystem接管127.0.0.1:8000和原数据根。升级后同版数据包副本0.2.20正式数据包_20260904_Q3.zip为887771字节，SHA-256为F90A607C4695D2BC908108FED3E82603CA7C4F66162C3B77B92B3E158737E584，已在第二个F盘隔离根完成全量覆盖导入复验。
+- 旧0.2.19正式目录已移入Windows回收站。验收未查询或输出客户业务行，未打开客户文件，未调用Sol/Luna，未修改Excel母版。
+
+0.2.19历史主要更新与验收：
 - 自然季度Starting Date继续为季度首日；首次结算可选择紧邻的上一季末Snapshot作为Beginning，季度首日生效资金会计入本季。
-- 非季度首日开始管理的账户继续使用Starting Date当天Snapshot；后续期间继续继承上一期Closing和Next HWM。
-- Calculate、Finalize、凭证保护和SQLite Trigger统一按Beginning Snapshot日期之后至Closing Date汇总资金；新增数据库head d4f8a1c73b29，Trigger总数保持57。
-- “新增资金流水”明确提示填写公司确认的实际入账／基金分配日期，不把供款所属月份截止日当作资金生效日期。
-- 既有业务数据、Invoice PDF、Payment、数据包和Excel母版不改写。
-
-0.2.19验收：
-- 季度边界针对性24/24、后端完整回归360/360及构建内第二轮360/360通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为index-BPfXgcpZ.js和index-DAkh9ICn.css，项目文档检查通过。
-- Windows包于2026-09-04 15:10:58 +08:00构建；写入构建结果.txt前405个文件、614348825字节。EXE SHA-256为AF7F152FE59568EF36FBC51B314070B7CE3349895E0135C19DC2235F7980A865，ProductVersion/FileVersion为0.2.19/0.2.19.0。
-- 8001纯合成候选完成2026-03-31 Beginning、2026-04-01季度首日资金、2026-06-30 Closing及Finalize；金额结果、页面提示、49条OpenAPI、禁缓存、head d4f8a1c73b29、完整性、外键0和57个Trigger均通过。
-- 切换前0.2.18数据包financial_system_data_package_2026_Q3_20260904_151249_073978_6u9oqirh.zip为887752字节，SHA-256为4AF30D7CCC44D217DCE810425ABF074ECD60C165103F43DE2E4F0D9486DB931A，API副本一致；F盘隔离导入、重启和0.2.19迁移预检通过。
-- 正式0.2.19位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；版本、进程、EXE、前端、OpenAPI、数据库及无恢复残留通过。升级后同版本数据包financial_system_data_package_2026_Q3_20260904_151627_786418_xg_p2tk6.zip为887773字节，SHA-256为E6FA3EC310F621440ADA308710E1D1A25DE4A6EAC34A99F85366A56801693C93，API副本一致，并在另一隔离数据根完成导入恢复复验。
-- 验收未输出客户业务内容、未打开客户文件、未调用Sol/Luna、未修改Excel母版。
+- Calculate、Finalize、凭证保护和SQLite Trigger统一按Beginning Snapshot日期之后至Closing Date汇总资金；数据库head为d4f8a1c73b29，Trigger总数57。
+- 季度边界针对性24/24、后端完整回归360/360及构建内第二轮360/360通过；正式0.2.19曾从F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem接管127.0.0.1:8000。
 
 0.2.18历史主要更新：
 - 客户Invoice中英文PDF融合A版清晰结构与B版深蓝、香槟金质感，升级标题、客户资料、账单项目、总额和付款说明的视觉层级。

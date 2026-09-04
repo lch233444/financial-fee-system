@@ -1,4 +1,4 @@
-金融计划收费计算系统 MVP 0.2.19 Windows运行版构建清单
+金融计划收费计算系统 MVP 0.2.20 Windows运行版构建清单
 基线日期：2026-09-04
 
 构建环境：
@@ -18,17 +18,21 @@
 - tesseract.exe: C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - 新收费计划计算纯净版模板.xlsx: 16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 
-0.2.19构建与发布结果：
-- 自然季度首日首次结算可使用上一季末Snapshot作为Beginning，季度首日资金必须计入本季；非季度首日同日Snapshot口径保持不变。
-- 数据库必须迁移到d4f8a1c73b29并保持57个Trigger；Calculate、Finalize和凭证保护必须使用相同Beginning Snapshot日期边界。
-- 资金流水页面必须明确实际入账／基金分配日期口径；不自动改写既有业务数据。
-- Excel母版哈希保持下述基线。
-- 构建时间：2026-09-04 15:10:58 +08:00；写入构建结果.txt前405个文件、614348825字节。
-- FinancialFeeSystem.exe SHA-256：AF7F152FE59568EF36FBC51B314070B7CE3349895E0135C19DC2235F7980A865；Windows ProductVersion/FileVersion：0.2.19/0.2.19.0。
-- 源码及构建内验收：季度边界针对性24/24、后端完整回归360/360及构建内第二轮360/360、前端TypeScript/Vite生产构建及项目文档检查通过；前端资源为index-BPfXgcpZ.js和index-DAkh9ICn.css。
-- 候选验收：8001纯合成Q2上一季末Beginning、季度首日Contribution、Closing及Finalize闭环，49条OpenAPI、禁缓存、head d4f8a1c73b29、完整性、外键0、57个Trigger和页面提示通过。
-- 正式备份与预检：0.2.18创建financial_system_data_package_2026_Q3_20260904_151249_073978_6u9oqirh.zip，887752字节，SHA-256为4AF30D7CCC44D217DCE810425ABF074ECD60C165103F43DE2E4F0D9486DB931A，API副本一致；F盘隔离数据根完成0.2.18导入恢复和0.2.19迁移预检。
-- 正式发布：F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem已接管127.0.0.1:8000和既有数据根；版本、进程、EXE、前端、OpenAPI、数据库及无恢复残留通过。升级后同版本数据包financial_system_data_package_2026_Q3_20260904_151627_786418_xg_p2tk6.zip为887773字节，SHA-256为E6FA3EC310F621440ADA308710E1D1A25DE4A6EAC34A99F85366A56801693C93，API副本一致，另一隔离数据根导入恢复通过。
+0.2.20构建与发布结果：
+- 最近资金流水必须提供更正入口，可修改资金生效日期、类型、金额和备注，并强制填写2至500字符原因。
+- 更正必须保留Transaction ID和原凭证，写入更正前后审计；相同内容重复提交不得制造重复审计。
+- 当前日期或目标日期落入Finalized Settlement期间时均拒绝更正；未Finalized Draft须重新Calculate。
+- 数据库head继续为d4f8a1c73b29并保持57个Trigger；Excel母版哈希保持上述基线。
+- 源码及构建内验收：后端完整回归362/362、前端TypeScript/Vite 7.3.6生产构建和项目文档检查通过；前端资源为index-DGrCqzYT.js和index-DAkh9ICn.css。
+- 构建时间：2026-09-04 15:54:08 +08:00；最终文档同步后写入构建结果.txt前405个文件、614373831字节，写入后406个文件、614374532字节。
+- FinancialFeeSystem.exe SHA-256：1D791591DACABF3CDE463A63F3E296600B33A5EE3F7624FBDBA96A18A0CCAF48；Windows ProductVersion/FileVersion：0.2.20/0.2.20.0。
+- 候选验收：8001纯合成流水更正、原凭证保留、单条审计、重复提交拒绝、Q2重算、Finalize后锁定及界面“更正”/“已锁定”状态通过；50条OpenAPI路径、禁缓存、head、完整性、外键0、57个Trigger通过。
+- 正式备份与预检：0.2.19数据包副本0.2.19正式切换前数据包_20260904_Q3.zip为887774字节，SHA-256为B0DF1D0A6C5151D5B9F3AD234E09A0745F98C63C51D46646D049865FF3F14BDE；F盘隔离导入、重启及0.2.20接管预检通过。
+- 正式发布：F:\财务系统\金融计划收费系统_Windows运行版_0.2.20_20260904\FinancialFeeSystem已接管127.0.0.1:8000及原数据根；版本、进程、EXE、前端、OpenAPI、数据库和无恢复残留通过。升级后0.2.20同版数据包副本0.2.20正式数据包_20260904_Q3.zip为887771字节，SHA-256为F90A607C4695D2BC908108FED3E82603CA7C4F66162C3B77B92B3E158737E584，已在第二个F盘隔离数据根完成同版覆盖导入复验。
+
+0.2.19历史构建与发布结果：
+- 自然季度首日首次结算可使用上一季末Snapshot作为Beginning，季度首日资金必须计入本季；数据库head为d4f8a1c73b29并保持57个Trigger。
+- 后端完整回归360/360、前端生产构建、Windows候选、正式数据包及切换均已通过；0.2.19曾从F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem接管127.0.0.1:8000。
 
 0.2.18历史构建与发布结果：
 - 客户Invoice中英文PDF采用用户确认的A+B融合版式，客户端不显示Trustee、Platform或Platform Code；内部核对字段和底层财务关系保持不变。

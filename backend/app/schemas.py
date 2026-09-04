@@ -161,6 +161,24 @@ class TransactionCreate(BaseModel):
         return _require_cent_precision(value)
 
 
+class TransactionUpdate(BaseModel):
+    transaction_date: date
+    transaction_type: Literal["CONTRIBUTION", "WITHDRAWAL"]
+    amount: Decimal = Field(gt=0)
+    remark: str | None = None
+    correction_reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount_precision(cls, value: Decimal) -> Decimal:
+        return _require_cent_precision(value)
+
+    @field_validator("correction_reason")
+    @classmethod
+    def validate_correction_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
+
 class BalanceSnapshotCreate(BaseModel):
     account_id: int
     as_of_date: date

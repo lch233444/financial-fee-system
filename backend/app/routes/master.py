@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -39,6 +41,7 @@ from ..schemas import (
     FeePlanCreate,
     PlatformCreate,
     TransactionCreate,
+    TransactionUpdate,
 )
 
 
@@ -73,6 +76,36 @@ def _begin_immediate(db: Session) -> None:
                 detail="数据库正在处理另一笔财务写入，请稍后重试",
             ) from exc
         raise
+
+
+def _transaction_locked_settlement_id(
+    db: Session, *, account_id: int, transaction_date: date
+) -> int | None:
+    return db.scalar(
+        select(QuarterlySettlement.id)
+        .join(
+            SettlementAccountLine,
+            SettlementAccountLine.settlement_id == QuarterlySettlement.id,
+        )
+        .where(
+            SettlementAccountLine.account_id == account_id,
+            QuarterlySettlement.status == "FINALIZED",
+            SettlementAccountLine.start_date <= transaction_date,
+            SettlementAccountLine.closing_date >= transaction_date,
+        )
+        .order_by(QuarterlySettlement.year, QuarterlySettlement.quarter)
+        .limit(1)
+    )
+
+
+def _transaction_audit_values(item: TransactionRecord) -> dict:
+    return {
+        "account_id": item.account_id,
+        "transaction_date": item.transaction_date.isoformat(),
+        "transaction_type": item.transaction_type,
+        "amount_cents": item.amount_cents,
+        "remark": item.remark,
+    }
 
 
 def _next_entity_id(db: Session, model: type) -> int:
@@ -957,6 +990,11 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
     result = []
     for item in items:
         account = item.account
+        locked_settlement_id = _transaction_locked_settlement_id(
+            db,
+            account_id=item.account_id,
+            transaction_date=item.transaction_date,
+        )
         attachment_count = db.scalar(
             select(func.count(Attachment.id)).where(
                 Attachment.entity_type == "TRANSACTION", Attachment.entity_id == item.id
@@ -980,6 +1018,8 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
             "remark": item.remark,
             "evidence_count": evidence_count,
             "evidence_complete": evidence_count > 0,
+            "correction_allowed": locked_settlement_id is None,
+            "locked_settlement_id": locked_settlement_id,
         })
     return result
 
@@ -1021,6 +1061,109 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         "id": item.id,
         **payload.model_dump(exclude={"amount"}, mode="json"),
         "amount": money_string(item.amount_cents),
+    }
+
+
+@router.patch("/transactions/{transaction_id}")
+def update_transaction(
+    transaction_id: int,
+    payload: TransactionUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    _begin_immediate(db)
+    item = db.get(TransactionRecord, transaction_id)
+    if item is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="资金流水不存在")
+
+    account = db.get(SubAccount, item.account_id)
+    if account is None:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="资金流水关联的Sub Account不存在")
+    if account.start_date and payload.transaction_date < account.start_date:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="资金生效日期不能早于账户开始管理日期")
+
+    current_lock = _transaction_locked_settlement_id(
+        db,
+        account_id=item.account_id,
+        transaction_date=item.transaction_date,
+    )
+    if current_lock is not None:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"该资金流水已被Finalized Settlement #{current_lock}使用，不能直接更正；请先按顺序作废下游结算",
+        )
+    target_lock = _transaction_locked_settlement_id(
+        db,
+        account_id=item.account_id,
+        transaction_date=payload.transaction_date,
+    )
+    if target_lock is not None:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"更正后的日期落入Finalized Settlement #{target_lock}，不能直接更正；请先按顺序作废下游结算",
+        )
+
+    before = _transaction_audit_values(item)
+    after = {
+        "account_id": item.account_id,
+        "transaction_date": payload.transaction_date.isoformat(),
+        "transaction_type": payload.transaction_type,
+        "amount_cents": to_cents(payload.amount),
+        "remark": payload.remark,
+    }
+    if before == after:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="更正后的资金流水与原记录相同")
+
+    item.transaction_date = payload.transaction_date
+    item.transaction_type = payload.transaction_type
+    item.amount_cents = after["amount_cents"]
+    item.remark = payload.remark
+    db.add(
+        AuditEvent(
+            action="TRANSACTION_CORRECTED",
+            entity_type="TRANSACTION",
+            entity_id=item.id,
+            details_json={
+                "reason": payload.correction_reason,
+                "before": before,
+                "after": after,
+            },
+        )
+    )
+    _commit(db, "资金流水已进入Finalized结算期间，不能更正")
+    db.refresh(item)
+
+    attachment_count = db.scalar(
+        select(func.count(Attachment.id)).where(
+            Attachment.entity_type == "TRANSACTION",
+            Attachment.entity_id == item.id,
+        )
+    ) or 0
+    evidence_count = int(attachment_count) + (1 if item.attachment_id is not None else 0)
+    return {
+        "id": item.id,
+        "account_id": item.account_id,
+        "account_number": account.account_number,
+        "client_id": account.client_id,
+        "client_name": account.client.name,
+        "platform_id": account.platform_id,
+        "platform_name": account.platform.name if account.platform else None,
+        "fee_plan_id": account.fee_plan_id,
+        "fee_plan_name": account.fee_plan.name if account.fee_plan else None,
+        "scheme_name": account.scheme_name,
+        "transaction_date": item.transaction_date.isoformat(),
+        "transaction_type": item.transaction_type,
+        "amount": money_string(item.amount_cents),
+        "remark": item.remark,
+        "evidence_count": evidence_count,
+        "evidence_complete": evidence_count > 0,
+        "correction_allowed": True,
+        "locked_settlement_id": None,
     }
 
 

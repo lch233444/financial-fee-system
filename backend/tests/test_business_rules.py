@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.database import engine
 from app.main import app
+from app.models import Attachment, AuditEvent
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
@@ -258,6 +260,209 @@ def test_inherited_quarter_boundary_includes_first_day_flow() -> None:
         assert second["service_fee"] == "20.00"
         finalized_second = client.post(f"/api/settlements/{second['id']}/finalize")
         assert finalized_second.status_code == 200, finalized_second.text
+
+
+def test_unfinalized_transaction_correction_preserves_evidence_and_updates_quarter() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "TXCORRECT1")
+        account_id = data["account"]["id"]
+        transaction_response = client.post(
+            "/api/transactions",
+            json={
+                "account_id": account_id,
+                "transaction_date": "2026-03-31",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "2192.00",
+                "remark": "待更正",
+            },
+        )
+        assert transaction_response.status_code == 201, transaction_response.text
+        transaction_id = transaction_response.json()["id"]
+        uploaded = client.post(
+            "/api/attachments",
+            data={"entity_type": "TRANSACTION", "entity_id": str(transaction_id)},
+            files={
+                "file": (
+                    "transaction-correction-proof.pdf",
+                    b"%PDF-1.4\ntransaction-correction\n%%EOF",
+                    "application/pdf",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        attachment_id = uploaded.json()["id"]
+
+        corrected = client.patch(
+            f"/api/transactions/{transaction_id}",
+            json={
+                "transaction_date": "2026-04-14",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "2192.42",
+                "remark": "按资金实际生效日期更正",
+                "correction_reason": "原记录误用了供款月份截止日",
+            },
+        )
+        assert corrected.status_code == 200, corrected.text
+        corrected_payload = corrected.json()
+        expected_values = {
+            "id": transaction_id,
+            "transaction_date": "2026-04-14",
+            "transaction_type": "CONTRIBUTION",
+            "amount": "2192.42",
+            "remark": "按资金实际生效日期更正",
+            "evidence_complete": True,
+            "correction_allowed": True,
+            "locked_settlement_id": None,
+        }
+        assert {
+            key: corrected_payload[key] for key in expected_values
+        } == expected_values
+
+        duplicate = client.patch(
+            f"/api/transactions/{transaction_id}",
+            json={
+                "transaction_date": "2026-04-14",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "2192.42",
+                "remark": "按资金实际生效日期更正",
+                "correction_reason": "重复提交同一更正",
+            },
+        )
+        assert duplicate.status_code == 400
+        assert duplicate.json()["detail"] == "更正后的资金流水与原记录相同"
+
+        beginning = _snapshot(client, account_id, "2026-03-31", "299621.36", closing=True)
+        closing = _snapshot(client, account_id, "2026-06-30", "326123.51", closing=True)
+        calculated = client.post(
+            "/api/settlements/calculate",
+            json={
+                "client_id": data["client"]["id"],
+                "platform_id": data["platform"]["id"],
+                "fee_plan_id": data["plan"]["id"],
+                "year": 2026,
+                "quarter": 2,
+                "start_date": "2026-04-01",
+                "closing_date": "2026-06-30",
+                "account_lines": [
+                    {
+                        "account_id": account_id,
+                        "beginning_snapshot_id": beginning["id"],
+                        "closing_snapshot_id": closing["id"],
+                        "original_hwm": "299621.36",
+                    }
+                ],
+            },
+        )
+        assert calculated.status_code == 200, calculated.text
+        assert calculated.json()["contribution"] == "2192.42"
+
+        with Session(engine) as db:
+            attachment = db.get(Attachment, attachment_id)
+            assert attachment is not None
+            assert (attachment.entity_type, attachment.entity_id) == (
+                "TRANSACTION",
+                transaction_id,
+            )
+            audits = db.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "TRANSACTION_CORRECTED",
+                    AuditEvent.entity_type == "TRANSACTION",
+                    AuditEvent.entity_id == transaction_id,
+                )
+            ).all()
+            assert len(audits) == 1
+            assert audits[0].details_json == {
+                "reason": "原记录误用了供款月份截止日",
+                "before": {
+                    "account_id": account_id,
+                    "transaction_date": "2026-03-31",
+                    "transaction_type": "CONTRIBUTION",
+                    "amount_cents": 219200,
+                    "remark": "待更正",
+                },
+                "after": {
+                    "account_id": account_id,
+                    "transaction_date": "2026-04-14",
+                    "transaction_type": "CONTRIBUTION",
+                    "amount_cents": 219242,
+                    "remark": "按资金实际生效日期更正",
+                },
+            }
+
+
+def test_transaction_correction_rejects_finalized_source_or_target_period() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _master(client, "TXCORRECT2")
+        account_id = data["account"]["id"]
+        locked_transaction = client.post(
+            "/api/transactions",
+            json={
+                "account_id": account_id,
+                "transaction_date": "2026-02-15",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "100.00",
+            },
+        )
+        assert locked_transaction.status_code == 201, locked_transaction.text
+        locked_id = locked_transaction.json()["id"]
+        proof = client.post(
+            "/api/attachments",
+            data={"entity_type": "TRANSACTION", "entity_id": str(locked_id)},
+            files={
+                "file": (
+                    "finalized-transaction-proof.pdf",
+                    b"%PDF-1.4\nfinalized-transaction\n%%EOF",
+                    "application/pdf",
+                )
+            },
+        )
+        assert proof.status_code == 201, proof.text
+        settlement = _settlement(client, data, 1, "1000.00", "1200.00")
+        finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+        assert finalized.status_code == 200, finalized.text
+
+        change_locked = client.patch(
+            f"/api/transactions/{locked_id}",
+            json={
+                "transaction_date": "2026-04-15",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "100.00",
+                "remark": None,
+                "correction_reason": "尝试移出已结算期间",
+            },
+        )
+        assert change_locked.status_code == 409
+        assert f"Finalized Settlement #{settlement['id']}" in change_locked.json()["detail"]
+
+        open_transaction = client.post(
+            "/api/transactions",
+            json={
+                "account_id": account_id,
+                "transaction_date": "2026-04-15",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "50.00",
+            },
+        )
+        assert open_transaction.status_code == 201, open_transaction.text
+        move_into_locked = client.patch(
+            f"/api/transactions/{open_transaction.json()['id']}",
+            json={
+                "transaction_date": "2026-02-20",
+                "transaction_type": "CONTRIBUTION",
+                "amount": "50.00",
+                "remark": None,
+                "correction_reason": "尝试移入已结算期间",
+            },
+        )
+        assert move_into_locked.status_code == 409
+        assert f"Finalized Settlement #{settlement['id']}" in move_into_locked.json()["detail"]
+
+        listed = {
+            item["id"]: item for item in client.get("/api/transactions").json()
+        }
+        assert listed[locked_id]["correction_allowed"] is False
+        assert listed[locked_id]["locked_settlement_id"] == settlement["id"]
+        assert listed[open_transaction.json()["id"]]["correction_allowed"] is True
 
 
 def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:

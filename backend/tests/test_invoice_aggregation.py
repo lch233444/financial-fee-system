@@ -14,6 +14,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import (
     AuditEvent,
+    Company,
     ExportRecord,
     FeePlan,
     Invoice,
@@ -731,6 +732,68 @@ def test_bilingual_invoice_pdfs_extract_chinese_company_and_full_invoice_number(
             normalized_text = "".join(_pdf_text(response.content).split())
             assert company_name in normalized_text
             assert invoice_number in normalized_text
+
+
+def test_invoice_pdfs_use_approved_clear_premium_layout_without_platform_fields() -> None:
+    with TestClient(app, headers=WRITE_HEADERS) as client:
+        data = _group(
+            client,
+            "LAYOUT904",
+            platform_count=2,
+            company_name="Sample Financial Services Limited",
+            bank_information="Bank: Sample Bank\nAccount No.: 123-456-789",
+        )
+        with SessionLocal() as db:
+            company = db.get(Company, data["company"]["id"])
+            company.address = "18 Finance Street, Hong Kong"
+            company.contact = "billing@example.test"
+            company.cheque_information = "Payable to Sample Financial Services Limited"
+            db.commit()
+
+        _finalized_settlement(client, data, 0, year=2026, quarter=3)
+        _finalized_settlement(client, data, 1, year=2026, quarter=3)
+        draft = _draft(client, data, year=2026, quarter=3).json()
+        issued = client.post(
+            f"/api/invoices/{draft['id']}/issue",
+            json={"issue_date": "2026-10-05", "language": "zh"},
+        )
+        assert issued.status_code == 200, issued.text
+
+        expected_english = (
+            "INVOICE",
+            "BILL TO",
+            "SUB ACCOUNT",
+            "SERVICE DESCRIPTION",
+            "TOTAL DUE",
+            "PAYMENT INFORMATION",
+            "BANK TRANSFER",
+            "CROSSED CHEQUE",
+            "Bank: Sample Bank",
+            "Payable to Sample Financial Services Limited",
+        )
+        expected_chinese = (
+            "服務費賬單",
+            "客戶 / BILL TO",
+            "賬單編號 / INVOICE NO.",
+            "結算期間 / PERIOD",
+            "付款資料 / PAYMENT INFORMATION",
+            "銀行轉賬 / BANK TRANSFER",
+            "劃線支票 / CROSSED CHEQUE",
+        )
+
+        for language, expected in (("en", expected_english), ("zh", expected_chinese)):
+            response = client.post(f"/api/invoices/{draft['id']}/pdf?language={language}")
+            assert response.status_code == 200, response.text
+            reader = PdfReader(BytesIO(response.content))
+            assert len(reader.pages) == 1
+            assert round(float(reader.pages[0].mediabox.width), 3) == 595.276
+            assert round(float(reader.pages[0].mediabox.height), 3) == 841.890
+            normalized_text = " ".join(_pdf_text(response.content).split())
+            for value in expected:
+                assert value in normalized_text
+            assert "Platform LAYOUT904" not in normalized_text
+            assert "PLAYOUT904" not in normalized_text
+            assert "Trustee" not in normalized_text
 
 
 def test_pdf_money_format_preserves_cents_above_float_precision_limit() -> None:

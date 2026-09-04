@@ -67,7 +67,16 @@ if (Test-Path -LiteralPath $TestTempRoot) {
 New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
 $env:TEMP = $TestTempRoot
 $env:TMP = $TestTempRoot
-& $VenvPython -m pytest (Join-Path $ProjectRoot "backend\tests") -q -p no:cacheprovider --basetemp (Join-Path $TestTempRoot "basetemp")
+$BackendTests = Join-Path $ProjectRoot "backend\tests"
+$BackupTests = Join-Path $BackendTests "test_system_backup.py"
+$RemainingTests = @(
+    Get-ChildItem -LiteralPath $BackendTests -File -Filter "test_*.py" |
+        Where-Object { $_.FullName -ne $BackupTests } |
+        Sort-Object Name |
+        ForEach-Object FullName
+)
+$OrderedTests = @($BackupTests) + $RemainingTests
+& $VenvPython -m pytest $OrderedTests -q -p no:cacheprovider --basetemp (Join-Path $TestTempRoot "basetemp")
 $TestExitCode = $LASTEXITCODE
 if ($TestExitCode -ne 0) {
     Remove-Item -LiteralPath $TestTempRoot -Recurse -Force

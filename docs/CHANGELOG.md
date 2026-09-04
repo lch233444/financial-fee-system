@@ -2,6 +2,25 @@
 
 本项目采用持续更新记录。尚未发布的改动写在“未发布”；正式发布时再移动到对应版本。
 
+## 0.2.18 - 2026-09-04（Windows运行版）
+
+### Invoice PDF A+B融合版式
+
+- 客户Invoice中英文PDF升级为用户确认的A+B融合设计：保留A版白底、清晰分区和易核对表格，同时采用B版深蓝、香槟金与更精致的标题、汇总和付款资料区域。装饰图形为中性双菱形，不冒充Company官方Logo。
+- 客户PDF只展示Company、Client、Sub Account、Settlement Period、Fee Plan服务说明、HKD金额、Invoice No、Issue/Due Date和付款资料；不显示Trustee、Platform或Platform Code。签发前内部页面仍保留Platform、Fee Plan和Scheme供财务人员辨认，不删改底层冻结来源及跨Platform合并校验。
+- 中英文PDF分别使用繁体中文和英文标签；银行转账、划线支票、收款人、银行、户口号码、付款邮箱和邮寄地址继续来自签发时冻结资料。已签发归档PDF保持不可变，只有新签发Invoice使用新模板。
+- 本批不修改财务金额、编号、结算、付款、数据包、数据库结构或Excel母版；Alembic head继续为`c1a7d5e9b402`，Trigger继续为57个。
+- Windows构建仍执行全部后端测试，但先运行内存压力最大的备份/恢复测试，再运行其余测试文件，避免低可用内存机器在测试进程后段一次读取合成恢复包时出现环境性`MemoryError`；没有跳过、放宽或改写测试。
+
+### 测试与发布
+
+- Invoice PDF专项20/20、后端完整回归357/357及构建内第二轮357/357通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为`index-CEC_S9AS.js`和`index-DAkh9ICn.css`，项目文档检查通过。
+- Windows包于2026-09-04 13:35:17 +08:00构建；写入`构建结果.txt`前403个文件、614322908字节，写入后404个文件、614323609字节。主EXE SHA-256为`D1885972A71C6FE6A96A8F559A1286F13BA878613B30A4C7A21695742FB68AD4`，ProductVersion/FileVersion为0.2.18/0.2.18.0；Excel母版SHA-256保持`16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145`。
+- 8001候选版在F盘纯合成数据根完成两个内部Platform、两个Sub Account的结算及合并Invoice签发；中英文PDF均为单页A4，文字、尺寸、付款资料、视觉无重叠/裁切及禁止字段不外显均通过。候选数据库为head `c1a7d5e9b402`、`integrity_check=ok`、外键0、57个Trigger，49条OpenAPI路径和入口禁缓存通过。
+- 正式切换前0.2.17创建2026/Q3完整数据包`financial_system_data_package_2026_Q3_20260904_133808_455462_30riaqax.zip`，639648字节，SHA-256为`B83290FEC8FEA46104CCD4DB452862BB858E9F9F05318AE500BC7A79E1A6641C`，API副本一致；同版程序在F盘隔离数据根完成导入、自动退出和重启，再由0.2.18候选接管，head、完整性、外键0、57个Trigger及无恢复残留全部通过。
+- 正式0.2.18已从`F:\财务系统\金融计划收费系统_Windows运行版_0.2.18_20260904\FinancialFeeSystem`接管`127.0.0.1:8000`和既有数据根；版本、进程路径、EXE、49条OpenAPI路径、前端资源、禁缓存、Sol精确模型可用性、数据库head/完整性/外键0/57个Trigger及无恢复残留均通过。验收未查询或输出客户业务行、未打开客户文件、未调用Sol/Luna，也未修改Excel母版。
+- 旧0.2.17正式目录、固定`release`候选、构建产物、纯合成候选、隔离预检、PDF渲染及本批测试临时目录均已移入Windows回收站，可恢复；本机活动运行目录只保留0.2.18，正式数据根、既有备份和本次完整数据包继续保留。
+
 ## 0.2.17 - 2026-09-04（Windows运行版）
 
 ### 完整数据包交接

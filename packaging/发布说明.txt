@@ -1,16 +1,30 @@
-金融计划收费计算系统 MVP 0.2.17
+金融计划收费计算系统 MVP 0.2.18
 构建日期：2026-09-04
 
-当前状态：0.2.17已完成完整数据包专项、完整回归、前端构建、Windows候选、正式备份与数据包隔离预检及8000端口正式切换，当前正式运行版为0.2.17。
+当前状态：0.2.18已完成Invoice PDF A+B融合版式、完整回归、前端构建、Windows候选、正式备份与隔离预检及8000端口正式切换，当前正式运行版为0.2.18。
 
-0.2.17主要更新：
+0.2.18主要更新：
+- 客户Invoice中英文PDF融合A版清晰结构与B版深蓝、香槟金质感，升级标题、客户资料、账单项目、总额和付款说明的视觉层级。
+- 客户PDF保留Company、Client、Sub Account、Settlement Period、Fee Plan服务说明、HKD金额、Invoice No、Issue/Due Date和付款资料，不显示Trustee、Platform或Platform Code。
+- 签发前内部页面仍显示Platform、Fee Plan和Scheme以便辨认；底层冻结来源、跨Platform合并、金额、编号、付款和更正规则均不改变。已签发归档PDF不重生成，只有新签发Invoice使用新模板。
+- 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
+
+0.2.18验收：
+- Invoice PDF专项20/20、后端完整回归357/357及构建内第二轮357/357通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为index-CEC_S9AS.js和index-DAkh9ICn.css，项目文档检查通过。
+- Windows包于2026-09-04 13:35:17 +08:00构建；写入构建结果.txt前403个文件、614322908字节，写入后404个文件、614323609字节。EXE SHA-256为D1885972A71C6FE6A96A8F559A1286F13BA878613B30A4C7A21695742FB68AD4，ProductVersion/FileVersion为0.2.18/0.2.18.0。
+- 8001候选版使用纯合成资料完成两个Platform、两个Sub Account的结算和合并Invoice签发；中英文单页A4的字段、金额、付款资料、版面及Trustee/Platform/Platform Code不外显均通过，数据库head、完整性、外键0和57个Trigger正常。
+- 正式切换前0.2.17创建2026/Q3完整数据包financial_system_data_package_2026_Q3_20260904_133808_455462_30riaqax.zip，639648字节，SHA-256为B83290FEC8FEA46104CCD4DB452862BB858E9F9F05318AE500BC7A79E1A6641C，API副本一致；同版导入F盘隔离数据根并重启后，再由0.2.18接管，结构和恢复状态全部通过。
+- 正式0.2.18位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.18_20260904\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；版本、进程路径、EXE、49条OpenAPI路径、前端、禁缓存、Sol、数据库结构和无恢复残留均通过。验收未读取客户业务内容、未调用Sol/Luna、未修改Excel母版。
+- 旧0.2.17正式目录、固定候选、构建产物、纯合成候选、隔离预检和本批测试临时目录已移入Windows回收站，可恢复；本机活动运行目录只保留0.2.18，正式数据根、备份及数据包继续保留。
+
+0.2.17历史主要更新：
 - “数据与系统”把整库备份入口升级为按年度、季度标记的完整数据包导出/导入；年度、季度只作复核批次标签，每包仍包含导出时的全部资料和受控业务文件。
 - 新数据包只允许完全相同的系统版本及当前数据库revision导入；接收方导入后完整覆盖本机资料，不做追加或合并。
 - 支持两台电脑使用不同盘符或数据目录。导入时只修改临时数据库副本内的Statement、Attachment、ExportRecord和Invoice PDF路径，复验数据库完整性、外键、57个Trigger及全部文件哈希后才提交。
 - 严格校验扩展到全部Attachment、ExportRecord和Invoice中英文PDF；旧版完整备份仍按旧规则兼容，但不获得新的跨路径保证。
 - 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
 
-0.2.17验收：
+0.2.17历史验收：
 - 完整数据包专项62/62、相关导出与数据包69/69、后端完整回归356/356和前端TypeScript/Vite生产构建通过；最终资源为index-CEC_S9AS.js和index-DAkh9ICn.css，项目文档检查通过。
 - Windows包于2026-09-04 11:47:08 +08:00构建；写入构建结果.txt前403个文件、614301097字节，写入后404个文件、614301798字节。EXE SHA-256为13F03E9739915F8C1BFA64BAE5DBE7B6F27B42257E97322C7C98A5B91A69104E，ProductVersion/FileVersion为0.2.17/0.2.17.0。
 - 候选版在两个不同F盘纯合成数据根完成2026/Q3数据包导出、完整覆盖导入、自动退出和重启；资料与附件转移、附件哈希、四类路径重定向、完整性、外键0、57个Trigger、无恢复残留及浏览器无横向溢出均通过。

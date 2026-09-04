@@ -27,6 +27,7 @@ from app.models import (
     Attachment,
     Client,
     Company,
+    ExportRecord,
     FC,
     FeePlan,
     Invoice,
@@ -93,6 +94,12 @@ def _write_variant(
         for relative_path, content in files.items():
             archive.writestr(relative_path, content)
     return destination
+
+
+def _mark_as_legacy_backup(manifest: dict) -> None:
+    manifest["format"] = backup_service.LEGACY_BACKUP_FORMAT
+    manifest.pop("app_version", None)
+    manifest.pop("snapshot_period", None)
 
 
 def _mutate_archive_database(
@@ -363,14 +370,143 @@ def test_backup_creation_uses_unique_atomic_names_within_same_timestamp(
     second = create_backup()
 
     assert first != second
-    assert first.name.startswith("financial_system_backup_20260831_203040_123456_")
-    assert second.name.startswith("financial_system_backup_20260831_203040_123456_")
+    assert first.name.startswith(
+        "financial_system_data_package_2026_Q3_20260831_203040_123456_"
+    )
+    assert second.name.startswith(
+        "financial_system_data_package_2026_Q3_20260831_203040_123456_"
+    )
     for backup_path in (first, second):
         assert backup_path.is_file()
         with zipfile.ZipFile(backup_path) as archive:
             assert archive.testzip() is None
             assert "manifest.json" in archive.namelist()
-    assert not list(first.parent.glob(".financial_system_backup_*.zip.tmp"))
+    assert not list(first.parent.glob(".financial_system_data_package_*.zip.tmp"))
+
+
+def test_data_package_manifest_records_same_version_and_review_period() -> None:
+    init_db()
+    package_path = create_backup(snapshot_year=2026, snapshot_quarter=2)
+
+    with zipfile.ZipFile(package_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+
+    assert manifest["format"] == backup_service.BACKUP_FORMAT
+    assert manifest["version"] == backup_service.BACKUP_VERSION
+    assert manifest["app_version"] == config_module.APP_VERSION
+    assert manifest["snapshot_period"] == {"year": 2026, "quarter": 2}
+
+
+def test_restore_rejects_data_package_from_different_system_version(tmp_path: Path) -> None:
+    package_path = _valid_backup()
+
+    def change_app_version(_files: dict[str, bytes], manifest: dict) -> None:
+        manifest["app_version"] = "99.99.99"
+
+    invalid_package = _write_variant(
+        package_path,
+        tmp_path / "different-system-version.zip",
+        change_app_version,
+    )
+    with pytest.raises(ValueError, match="系统版本不一致"):
+        stage_restore(invalid_package)
+
+
+def test_data_package_rebases_all_persisted_file_paths_for_another_computer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statement, statement_path, statement_content = _seed_statement_import()
+    seeded = _seed_payment_and_refund_proofs()
+    source_settings = get_settings()
+    invoice_pdf = source_settings.data_root / "output" / "pdf" / f"portable-{uuid4().hex}.pdf"
+    invoice_pdf.write_bytes(b"synthetic portable invoice")
+    extra_export = source_settings.data_root / "output" / "excel" / f"portable-{uuid4().hex}.xlsx"
+    extra_export.write_bytes(b"synthetic portable export")
+
+    with SessionLocal() as db:
+        payment = db.scalar(
+            select(Payment).where(
+                Payment.proof_attachment_id == seeded["payment_attachment_id"]
+            )
+        )
+        assert payment is not None
+        invoice = db.get(Invoice, payment.invoice_id)
+        assert invoice is not None
+        invoice.pdf_paths_json = {"zh": str(invoice_pdf)}
+        db.add_all(
+            [
+                ExportRecord(
+                    export_type="PDF_INVOICE",
+                    entity_type="INVOICE",
+                    entity_id=invoice.id,
+                    stored_path=str(invoice_pdf),
+                    sha256=sha256_file(invoice_pdf),
+                    language="zh",
+                ),
+                ExportRecord(
+                    export_type="EXCEL_INTERNAL",
+                    entity_type="SETTLEMENT_BATCH",
+                    entity_id=1,
+                    stored_path=str(extra_export),
+                    sha256=sha256_file(extra_export),
+                ),
+            ]
+        )
+        db.commit()
+        invoice_id = invoice.id
+
+    package_path = create_backup(snapshot_year=2026, snapshot_quarter=2)
+    target_settings = Settings(data_root=tmp_path / "receiving-computer-data")
+    target_settings.ensure_directories()
+    monkeypatch.setattr(backup_service, "get_settings", lambda: target_settings)
+
+    stage_restore(package_path)
+    assert apply_pending_restore() is True
+
+    target_statement_path = target_settings.data_root / "statement_imports" / statement_path.name
+    target_payment_path = target_settings.data_root / "attachments" / Path(seeded["payment_path"]).name
+    target_refund_path = target_settings.data_root / "attachments" / Path(seeded["refund_path"]).name
+    target_invoice_pdf = target_settings.data_root / "output" / "pdf" / invoice_pdf.name
+    target_extra_export = target_settings.data_root / "output" / "excel" / extra_export.name
+    assert target_statement_path.read_bytes() == statement_content
+    assert target_payment_path.read_bytes() == seeded["payment_bytes"]
+    assert target_refund_path.read_bytes() == seeded["refund_bytes"]
+    assert target_invoice_pdf.read_bytes() == invoice_pdf.read_bytes()
+    assert target_extra_export.read_bytes() == extra_export.read_bytes()
+
+    with sqlite3.connect(target_settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT stored_path FROM statement_imports WHERE id = ?", (statement.id,)
+        ).fetchone() == (str(target_statement_path),)
+        assert connection.execute(
+            "SELECT stored_path FROM attachments WHERE id = ?",
+            (seeded["payment_attachment_id"],),
+        ).fetchone() == (str(target_payment_path),)
+        assert connection.execute(
+            "SELECT stored_path FROM attachments WHERE id = ?",
+            (seeded["refund_attachment_id"],),
+        ).fetchone() == (str(target_refund_path),)
+        restored_invoice_paths = json.loads(
+            connection.execute(
+                "SELECT pdf_paths_json FROM invoices WHERE id = ?", (invoice_id,)
+            ).fetchone()[0]
+        )
+        assert restored_invoice_paths == {"zh": str(target_invoice_pdf)}
+        restored_export_paths = {
+            row[0]
+            for row in connection.execute(
+                "SELECT stored_path FROM export_records WHERE stored_path LIKE ?",
+                (f"{target_settings.data_root}%",),
+            ).fetchall()
+        }
+        assert str(target_invoice_pdf) in restored_export_paths
+        assert str(target_extra_export) in restored_export_paths
+        assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchone() == (57,)
 
 
 def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fails(
@@ -378,7 +514,7 @@ def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fai
 ) -> None:
     init_db()
     settings = get_settings()
-    before = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    before = set((settings.data_root / "backups").glob("financial_system_data_package_*.zip"))
 
     def reject_backup(_backup_path: Path, _extract_root: Path) -> dict:
         raise ValueError("synthetic validation failure")
@@ -387,9 +523,9 @@ def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fai
     with pytest.raises(ValueError, match="synthetic validation failure"):
         create_backup()
 
-    after = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    after = set((settings.data_root / "backups").glob("financial_system_data_package_*.zip"))
     assert after == before
-    assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+    assert not list((settings.data_root / "backups").glob(".financial_system_data_package_*.zip.tmp"))
 
 
 def test_backup_round_trip_validates_every_statement_import_source() -> None:
@@ -411,7 +547,7 @@ def test_backup_round_trip_validates_every_statement_import_source() -> None:
 def test_backup_creation_rejects_inconsistent_statement_import_files(mutation: str) -> None:
     _item, source_path, content = _seed_statement_import()
     settings = get_settings()
-    before = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    before = set((settings.data_root / "backups").glob("financial_system_data_package_*.zip"))
     pending: Path | None = None
 
     if mutation == "missing":
@@ -432,8 +568,8 @@ def test_backup_creation_rejects_inconsistent_statement_import_files(mutation: s
         if pending is not None:
             pending.unlink(missing_ok=True)
 
-    assert set((settings.data_root / "backups").glob("financial_system_backup_*.zip")) == before
-    assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+    assert set((settings.data_root / "backups").glob("financial_system_data_package_*.zip")) == before
+    assert not list((settings.data_root / "backups").glob(".financial_system_data_package_*.zip.tmp"))
 
 
 def test_backup_creation_rejects_statement_delete_race_after_database_copy(
@@ -503,7 +639,7 @@ def test_backup_creation_rejects_missing_or_tampered_financial_proof(
     settings = get_settings()
     proof_path = Path(seeded[f"{proof_kind}_path"])
     original = bytes(seeded[f"{proof_kind}_bytes"])
-    before = set((settings.data_root / "backups").glob("financial_system_backup_*.zip"))
+    before = set((settings.data_root / "backups").glob("financial_system_data_package_*.zip"))
     try:
         if mutation == "missing":
             proof_path.unlink()
@@ -513,8 +649,8 @@ def test_backup_creation_rejects_missing_or_tampered_financial_proof(
             create_backup()
     finally:
         proof_path.write_bytes(original)
-    assert set((settings.data_root / "backups").glob("financial_system_backup_*.zip")) == before
-    assert not list((settings.data_root / "backups").glob(".financial_system_backup_*.zip.tmp"))
+    assert set((settings.data_root / "backups").glob("financial_system_data_package_*.zip")) == before
+    assert not list((settings.data_root / "backups").glob(".financial_system_data_package_*.zip.tmp"))
 
 
 def test_archive_context_rejects_legacy_payment_without_proof(tmp_path: Path) -> None:
@@ -548,7 +684,7 @@ def test_restore_request_is_exclusive_before_upload_read() -> None:
                 files={"file": (backup_path.name, backup_path.read_bytes(), "application/zip")},
             )
     assert response.status_code == 409
-    assert "另一份备份正在校验" in response.json()["detail"]
+    assert "另一份数据包正在校验" in response.json()["detail"]
 
 
 def test_financial_mutation_gate_rejects_write_already_overlapping_restore() -> None:
@@ -559,7 +695,7 @@ def test_financial_mutation_gate_rejects_write_already_overlapping_restore() -> 
     finally:
         app_main._restore_mutation_gate.leave_restore()
     assert response.status_code == 409
-    assert "恢复正在校验" in response.json()["detail"]
+    assert "数据包导入正在校验" in response.json()["detail"]
 
 
 def test_restore_gate_rejects_restore_while_financial_write_is_active() -> None:
@@ -1035,6 +1171,7 @@ def test_restore_accepts_complete_supported_9d_database(
     command.upgrade(alembic_config, "9d2f6a8c4b13")
 
     def replace_with_9d_database(files: dict[str, bytes], manifest: dict) -> None:
+        _mark_as_legacy_backup(manifest)
         database_record = next(record for record in manifest["files"] if record["path"].startswith("database/"))
         content = legacy_settings.database_path.read_bytes()
         files[database_record["path"]] = content
@@ -1078,6 +1215,7 @@ def test_restore_accepts_complete_supported_7f_database(
         ).fetchone() == (53,)
 
     def replace_with_7f_database(files: dict[str, bytes], manifest: dict) -> None:
+        _mark_as_legacy_backup(manifest)
         database_record = next(
             record for record in manifest["files"] if record["path"].startswith("database/")
         )
@@ -1120,6 +1258,7 @@ def test_restore_rejects_9d_head_with_incomplete_trigger_set(
         connection.execute("DROP TRIGGER trg_settlement_validate_finalize")
 
     def replace_with_incomplete_9d_database(files: dict[str, bytes], manifest: dict) -> None:
+        _mark_as_legacy_backup(manifest)
         database_record = next(
             record for record in manifest["files"] if record["path"].startswith("database/")
         )
@@ -1139,6 +1278,7 @@ def test_restore_accepts_recognizable_unversioned_legacy_database(tmp_path: Path
     backup_path = _valid_backup()
 
     def remove_revision_table(files: dict[str, bytes], manifest: dict) -> None:
+        _mark_as_legacy_backup(manifest)
         database_record = next(record for record in manifest["files"] if record["path"].startswith("database/"))
         database_copy = tmp_path / "unversioned-legacy.sqlite3"
         database_copy.write_bytes(files[database_record["path"]])

@@ -13,16 +13,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from ..config import get_settings
+from ..config import APP_VERSION, get_settings
 from .delete_guard_contract import delete_guard_trigger_sql_is_current
 from .storage import sha256_file
 
 
 INCLUDED_DIRECTORIES = ("attachments", "statement_imports", "output")
-BACKUP_FORMAT = "financial-fee-system-backup"
+BACKUP_FORMAT = "financial-fee-system-data-package"
+LEGACY_BACKUP_FORMAT = "financial-fee-system-backup"
 BACKUP_VERSION = 1
-MANIFEST_KEYS = frozenset({"format", "version", "created_at", "files"})
+MANIFEST_KEYS = frozenset(
+    {"format", "version", "app_version", "snapshot_period", "created_at", "files"}
+)
+LEGACY_MANIFEST_KEYS = frozenset({"format", "version", "created_at", "files"})
 MANIFEST_RECORD_KEYS = frozenset({"path", "sha256"})
+SNAPSHOT_PERIOD_KEYS = frozenset({"year", "quarter"})
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 MAX_MANIFEST_SIZE = 16 * 1024 * 1024
 RESTORE_COMPONENTS = ("database", *INCLUDED_DIRECTORIES)
@@ -168,6 +173,12 @@ _LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
 _LEGACY_REUSE_REVISION = "c1a7d5e9b402"
 _LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
 _LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
+CURRENT_DATABASE_REVISION = "c1a7d5e9b402"
+PATH_REBASE_TRIGGER_NAMES = (
+    "trg_attachment_update_block_finalized_evidence",
+    "trg_attachment_update_block_payment_evidence",
+    "trg_statement_import_update_block_finalized_evidence",
+)
 
 
 def _normalized_index_where(sql: str) -> str:
@@ -317,6 +328,23 @@ def _archived_statement_path(
             matches.append(relative_path)
     if len(matches) != 1:
         raise ValueError("备份中的账单原件路径无法唯一映射到statement_imports")
+    return matches[0]
+
+
+def _archived_output_path(stored_path: str, records: dict[str, str]) -> str:
+    stored_parts = tuple(
+        part.casefold() for part in _stored_path_parts(stored_path, "导出文件")
+    )
+    matches: list[str] = []
+    for relative_path in records:
+        archive_parts = PurePosixPath(relative_path).parts
+        if not archive_parts or archive_parts[0].casefold() != "output":
+            continue
+        folded = tuple(part.casefold() for part in archive_parts)
+        if len(stored_parts) >= len(folded) and stored_parts[-len(folded) :] == folded:
+            matches.append(relative_path)
+    if len(matches) != 1:
+        raise ValueError("数据包中的导出文件路径无法唯一映射到output")
     return matches[0]
 
 
@@ -505,6 +533,116 @@ def _validate_payment_proof_archive(
             raise ValueError("备份中的付款凭证文件校验失败")
 
 
+def _validate_data_package_file_references(
+    database_path: Path,
+    archive_root: Path,
+    records: dict[str, str],
+) -> None:
+    """Require every persisted file path to be portable and physically complete."""
+
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
+    )
+    try:
+        attachment_rows = connection.execute(
+            "SELECT id, stored_path, size_bytes, sha256 FROM attachments ORDER BY id"
+        ).fetchall()
+        export_rows = connection.execute(
+            "SELECT id, stored_path, sha256 FROM export_records ORDER BY id"
+        ).fetchall()
+        invoice_rows = connection.execute(
+            "SELECT id, pdf_paths_json FROM invoices WHERE pdf_paths_json IS NOT NULL ORDER BY id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    attachment_paths: set[str] = set()
+    for attachment_id, stored, size, sha in attachment_rows:
+        if (
+            not isinstance(attachment_id, int)
+            or not isinstance(stored, str)
+            or not isinstance(size, int)
+            or size <= 0
+            or not isinstance(sha, str)
+            or SHA256_PATTERN.fullmatch(sha.casefold()) is None
+        ):
+            raise ValueError("数据包中的附件路径或哈希元数据无效")
+        relative_path = _archived_attachment_path(stored, records, None)
+        if relative_path in attachment_paths:
+            raise ValueError("数据包中的多条附件记录共用同一文件路径")
+        attachment_paths.add(relative_path)
+        archived_path = archive_root.joinpath(*PurePosixPath(relative_path).parts)
+        _require_within_root(archived_path, archive_root, "附件")
+        if (
+            archived_path.is_symlink()
+            or archived_path.is_junction()
+            or not archived_path.is_file()
+        ):
+            raise ValueError("数据包缺少有效的附件文件")
+        try:
+            actual_size = archived_path.stat().st_size
+            actual_sha = sha256_file(archived_path)
+        except OSError as exc:
+            raise ValueError("数据包中的附件文件无法读取") from exc
+        if (
+            actual_size != size
+            or actual_sha.casefold() != sha.casefold()
+            or records.get(relative_path, "").casefold() != sha.casefold()
+        ):
+            raise ValueError("数据包中的附件文件校验失败")
+
+    for export_id, stored, sha in export_rows:
+        if (
+            not isinstance(export_id, int)
+            or not isinstance(stored, str)
+            or not isinstance(sha, str)
+            or SHA256_PATTERN.fullmatch(sha.casefold()) is None
+        ):
+            raise ValueError("数据包中的导出文件路径或哈希元数据无效")
+        relative_path = _archived_output_path(stored, records)
+        archived_path = archive_root.joinpath(*PurePosixPath(relative_path).parts)
+        _require_within_root(archived_path, archive_root, "导出文件")
+        if (
+            archived_path.is_symlink()
+            or archived_path.is_junction()
+            or not archived_path.is_file()
+        ):
+            raise ValueError("数据包缺少有效的导出文件")
+        try:
+            actual_sha = sha256_file(archived_path)
+        except OSError as exc:
+            raise ValueError("数据包中的导出文件无法读取") from exc
+        if (
+            actual_sha.casefold() != sha.casefold()
+            or records.get(relative_path, "").casefold() != sha.casefold()
+        ):
+            raise ValueError("数据包中的导出文件校验失败")
+
+    for invoice_id, raw_paths in invoice_rows:
+        try:
+            paths = json.loads(raw_paths, object_pairs_hook=_json_object_with_unique_keys)
+        except (TypeError, ValueError, json.JSONDecodeError, _DuplicateJsonKeyError) as exc:
+            raise ValueError(f"数据包中的Invoice #{invoice_id} PDF路径无效") from exc
+        if not isinstance(paths, dict) or any(
+            not isinstance(language, str)
+            or not language
+            or not isinstance(stored, str)
+            or not stored
+            for language, stored in paths.items()
+        ):
+            raise ValueError(f"数据包中的Invoice #{invoice_id} PDF路径无效")
+        for stored in paths.values():
+            relative_path = _archived_output_path(stored, records)
+            archived_path = archive_root.joinpath(*PurePosixPath(relative_path).parts)
+            _require_within_root(archived_path, archive_root, "Invoice PDF")
+            if (
+                archived_path.is_symlink()
+                or archived_path.is_junction()
+                or not archived_path.is_file()
+            ):
+                raise ValueError(f"数据包缺少Invoice #{invoice_id} PDF文件")
+
+
 class _DuplicateJsonKeyError(ValueError):
     pass
 
@@ -515,8 +653,20 @@ class RestoreStageResult:
     cleanup_warning: str | None = None
 
 
-def create_backup() -> Path:
+def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None = None) -> Path:
     settings = get_settings()
+    now = datetime.now()
+    snapshot_year = now.year if snapshot_year is None else snapshot_year
+    snapshot_quarter = ((now.month - 1) // 3 + 1) if snapshot_quarter is None else snapshot_quarter
+    if (
+        isinstance(snapshot_year, bool)
+        or not isinstance(snapshot_year, int)
+        or not 2000 <= snapshot_year <= 2100
+        or isinstance(snapshot_quarter, bool)
+        or not isinstance(snapshot_quarter, int)
+        or not 1 <= snapshot_quarter <= 4
+    ):
+        raise ValueError("数据包检查批次必须是2000至2100年及Q1至Q4")
     database_directory = settings.database_path.parent
     if (
         database_directory.is_symlink()
@@ -529,10 +679,10 @@ def create_backup() -> Path:
         raise ValueError("数据库文件不存在，无法创建备份")
     backup_directory = settings.data_root / "backups"
     backup_directory.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
     with tempfile.NamedTemporaryFile(
         dir=backup_directory,
-        prefix=f".financial_system_backup_{timestamp}_",
+        prefix=f".financial_system_data_package_{snapshot_year}_Q{snapshot_quarter}_{timestamp}_",
         suffix=".zip.tmp",
         delete=False,
     ) as temporary_file:
@@ -598,7 +748,12 @@ def create_backup() -> Path:
             manifest = {
                 "format": BACKUP_FORMAT,
                 "version": BACKUP_VERSION,
-                "created_at": datetime.now().isoformat(),
+                "app_version": APP_VERSION,
+                "snapshot_period": {
+                    "year": snapshot_year,
+                    "quarter": snapshot_quarter,
+                },
+                "created_at": now.isoformat(),
                 "files": files,
             }
             (tmp / "manifest.json").write_text(
@@ -759,6 +914,10 @@ def validate_backup_archive_root(root: Path) -> dict:
     _validate_sqlite_database(database_path)
     _validate_payment_proof_archive(database_path, root, records)
     _validate_statement_import_archive(database_path, root, records)
+    if manifest["format"] == BACKUP_FORMAT:
+        if _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
+            raise ValueError("数据包数据库版本与当前系统不一致")
+        _validate_data_package_file_references(database_path, root, records)
     return manifest
 
 
@@ -789,6 +948,154 @@ def stage_restore(backup_path: Path) -> RestoreStageResult:
     return RestoreStageResult(marker=marker, cleanup_warning=cleanup_warning)
 
 
+def _rebased_live_path(data_root: Path, relative_path: str, label: str) -> str:
+    validated_relative = _validate_relative_path(relative_path, label)
+    target = data_root.joinpath(*PurePosixPath(validated_relative).parts)
+    _require_within_root(target, data_root, label)
+    value = str(target)
+    if len(value) > 600:
+        raise ValueError(f"数据包导入后的{label}路径过长")
+    return value
+
+
+def _rebase_data_package_database(
+    archive_root: Path,
+    data_root: Path,
+    manifest: dict,
+) -> None:
+    """Rewrite only physical file locations for the receiving computer."""
+
+    if manifest.get("format") != BACKUP_FORMAT:
+        return
+    records = _validate_manifest(manifest)
+    settings = get_settings()
+    database_relative_path = f"database/{settings.database_path.name}"
+    database_path = archive_root.joinpath(*PurePosixPath(database_relative_path).parts)
+    if _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
+        raise ValueError("数据包数据库版本与当前系统不一致")
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        statement_updates: list[tuple[str, int]] = []
+        for row_id, stored in connection.execute(
+            "SELECT id, stored_path FROM statement_imports ORDER BY id"
+        ).fetchall():
+            new_path = _rebased_live_path(
+                data_root,
+                _archived_statement_path(str(stored), records, None),
+                "账单原件",
+            )
+            if new_path != stored:
+                statement_updates.append((new_path, int(row_id)))
+
+        attachment_updates: list[tuple[str, int]] = []
+        for row_id, stored in connection.execute(
+            "SELECT id, stored_path FROM attachments ORDER BY id"
+        ).fetchall():
+            new_path = _rebased_live_path(
+                data_root,
+                _archived_attachment_path(str(stored), records, None),
+                "附件",
+            )
+            if new_path != stored:
+                attachment_updates.append((new_path, int(row_id)))
+
+        export_updates: list[tuple[str, int]] = []
+        for row_id, stored in connection.execute(
+            "SELECT id, stored_path FROM export_records ORDER BY id"
+        ).fetchall():
+            new_path = _rebased_live_path(
+                data_root,
+                _archived_output_path(str(stored), records),
+                "导出文件",
+            )
+            if new_path != stored:
+                export_updates.append((new_path, int(row_id)))
+        invoice_updates: list[tuple[str, int]] = []
+        for invoice_id, raw_paths in connection.execute(
+            "SELECT id, pdf_paths_json FROM invoices WHERE pdf_paths_json IS NOT NULL ORDER BY id"
+        ).fetchall():
+            try:
+                paths = json.loads(raw_paths, object_pairs_hook=_json_object_with_unique_keys)
+            except (TypeError, ValueError, json.JSONDecodeError, _DuplicateJsonKeyError) as exc:
+                raise ValueError(f"数据包中的Invoice #{invoice_id} PDF路径无效") from exc
+            if not isinstance(paths, dict) or any(
+                not isinstance(language, str)
+                or not language
+                or not isinstance(stored, str)
+                or not stored
+                for language, stored in paths.items()
+            ):
+                raise ValueError(f"数据包中的Invoice #{invoice_id} PDF路径无效")
+            rebased_paths = {
+                language: _rebased_live_path(
+                    data_root,
+                    _archived_output_path(stored, records),
+                    "Invoice PDF",
+                )
+                for language, stored in paths.items()
+            }
+            if rebased_paths != paths:
+                invoice_updates.append(
+                    (json.dumps(rebased_paths, ensure_ascii=False), int(invoice_id))
+                )
+
+        needs_protected_update = bool(statement_updates or attachment_updates)
+        trigger_sql: dict[str, str] = {}
+        if needs_protected_update:
+            trigger_sql = {
+                str(name): str(sql or "")
+                for name, sql in connection.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+                    f"AND name IN ({','.join('?' for _ in PATH_REBASE_TRIGGER_NAMES)})",
+                    PATH_REBASE_TRIGGER_NAMES,
+                ).fetchall()
+            }
+            if set(trigger_sql) != set(PATH_REBASE_TRIGGER_NAMES) or any(
+                not trigger_sql[name].strip() for name in PATH_REBASE_TRIGGER_NAMES
+            ):
+                raise ValueError("数据包数据库缺少路径重定向所需的完整保护规则")
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for name in PATH_REBASE_TRIGGER_NAMES if needs_protected_update else ():
+                connection.execute(f'DROP TRIGGER "{name}"')
+            connection.executemany(
+                "UPDATE statement_imports SET stored_path = ? WHERE id = ?",
+                statement_updates,
+            )
+            connection.executemany(
+                "UPDATE attachments SET stored_path = ? WHERE id = ?",
+                attachment_updates,
+            )
+            connection.executemany(
+                "UPDATE export_records SET stored_path = ? WHERE id = ?",
+                export_updates,
+            )
+            connection.executemany(
+                "UPDATE invoices SET pdf_paths_json = ? WHERE id = ?",
+                invoice_updates,
+            )
+            for name in PATH_REBASE_TRIGGER_NAMES if needs_protected_update else ():
+                connection.execute(trigger_sql[name])
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    finally:
+        connection.close()
+
+    database_record = next(
+        record for record in manifest["files"] if record["path"] == database_relative_path
+    )
+    database_record["sha256"] = sha256_file(database_path)
+    (archive_root / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def apply_pending_restore() -> bool:
     settings = get_settings()
     _recover_interrupted_restore_transactions(settings.data_root)
@@ -798,8 +1105,10 @@ def apply_pending_restore() -> bool:
         return False
     payload = _read_pending_restore_payload(marker)
     pending_root = _validate_pending_restore_root(Path(payload["path"]), settings.data_root / "tmp")
-    validate_backup_archive_root(pending_root)
-    transaction_root = _prepare_restore_transaction(pending_root, settings.data_root)
+    manifest = validate_backup_archive_root(pending_root)
+    transaction_root = _prepare_restore_transaction(
+        pending_root, settings.data_root, manifest
+    )
     try:
         for component in RESTORE_COMPONENTS:
             _activate_restore_component(component, settings.data_root, transaction_root)
@@ -826,7 +1135,11 @@ def apply_pending_restore() -> bool:
     return True
 
 
-def _prepare_restore_transaction(pending_root: Path, data_root: Path) -> Path:
+def _prepare_restore_transaction(
+    pending_root: Path,
+    data_root: Path,
+    manifest: dict,
+) -> Path:
     staging_base = _validated_restore_staging_base(data_root)
     transaction_root = Path(tempfile.mkdtemp(prefix=RESTORE_PREPARE_PREFIX, dir=staging_base))
     try:
@@ -847,6 +1160,7 @@ def _prepare_restore_transaction(pending_root: Path, data_root: Path) -> Path:
             else:
                 destination.mkdir(parents=True)
         shutil.copy2(pending_root / "manifest.json", new_root / "manifest.json")
+        _rebase_data_package_database(new_root, data_root, manifest)
         validate_backup_archive_root(new_root)
         apply_root = staging_base / transaction_root.name.replace(
             RESTORE_PREPARE_PREFIX,
@@ -1140,11 +1454,35 @@ def _validate_zip_member_type(member: zipfile.ZipInfo, is_directory: bool) -> No
 
 
 def _validate_manifest(manifest: object) -> dict[str, str]:
-    if not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS:
+    if not isinstance(manifest, dict):
         raise ValueError("备份清单结构无效")
+
+    manifest_format = manifest.get("format")
+    if manifest_format == BACKUP_FORMAT:
+        if set(manifest) != MANIFEST_KEYS:
+            raise ValueError("数据包清单结构无效")
+        if manifest.get("app_version") != APP_VERSION:
+            raise ValueError(
+                f"数据包系统版本不一致：数据包为{manifest.get('app_version')}，当前系统为{APP_VERSION}"
+            )
+        snapshot_period = manifest.get("snapshot_period")
+        if (
+            not isinstance(snapshot_period, dict)
+            or set(snapshot_period) != SNAPSHOT_PERIOD_KEYS
+            or type(snapshot_period.get("year")) is not int
+            or not 2000 <= snapshot_period["year"] <= 2100
+            or type(snapshot_period.get("quarter")) is not int
+            or not 1 <= snapshot_period["quarter"] <= 4
+        ):
+            raise ValueError("数据包检查批次无效")
+    elif manifest_format == LEGACY_BACKUP_FORMAT:
+        if set(manifest) != LEGACY_MANIFEST_KEYS:
+            raise ValueError("备份清单结构无效")
+    else:
+        raise ValueError("不支持的数据包或备份格式")
+
     if (
-        manifest.get("format") != BACKUP_FORMAT
-        or type(manifest.get("version")) is not int
+        type(manifest.get("version")) is not int
         or manifest["version"] != BACKUP_VERSION
     ):
         raise ValueError("不支持的备份格式")
@@ -1415,6 +1753,27 @@ def _validate_backup_id_high_water_settings(connection: sqlite3.Connection) -> N
         )
         if stored_max < max(table_max, audit_maxima[key]):
             raise ValueError(f"备份数据库ID高水位低于可信历史最大ID：{key}")
+
+
+def _sqlite_database_revision(database_path: Path) -> str | None:
+    try:
+        connection = sqlite3.connect(
+            f"{database_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
+        )
+        try:
+            table_exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
+            ).fetchone()
+            if table_exists is None:
+                return None
+            rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise ValueError("数据包数据库无法读取版本") from exc
+    if len(rows) != 1 or not isinstance(rows[0][0], str):
+        raise ValueError("数据包数据库迁移版本无效")
+    return rows[0][0]
 
 
 def _validate_sqlite_database(database_path: Path) -> None:

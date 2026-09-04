@@ -16,7 +16,7 @@ import {
   startAiAssistantLogin,
   withFinancialSystemRequestHeader,
 } from "../api";
-import { ErrorBanner, Loading, PageHeader, Panel, StatusBadge } from "../components";
+import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge } from "../components";
 import type { AiAssistantStatus } from "../types";
 import { SOL_MODEL_ID } from "../types";
 
@@ -37,6 +37,10 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   const [loginPolling, setLoginPolling] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const backupBusyRef = useRef(false);
+  const [packageYear, setPackageYear] = useState(() => new Date().getFullYear());
+  const [packageQuarter, setPackageQuarter] = useState(
+    () => Math.floor(new Date().getMonth() / 3) + 1,
+  );
   const [restoreBusy, setRestoreBusy] = useState(false);
   const restoreBusyRef = useRef(false);
   const [error, setError] = useState("");
@@ -138,18 +142,25 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
     setBackupBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/backups", withFinancialSystemRequestHeader({ method: "POST" }));
-      if (!response.ok) throw new Error("备份失败");
+      const response = await fetch(
+        `/api/backups?year=${packageYear}&quarter=${packageQuarter}`,
+        withFinancialSystemRequestHeader({ method: "POST" }),
+      );
+      if (!response.ok) throw new Error("数据包导出失败");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `financial_system_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+      const disposition = response.headers.get("content-disposition") || "";
+      const serverName = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+      anchor.download = serverName || `financial_system_data_package_${packageYear}_Q${packageQuarter}.zip`;
+      document.body.appendChild(anchor);
       anchor.click();
+      anchor.remove();
       URL.revokeObjectURL(url);
-      notify("备份已生成并通过哈希校验");
+      notify(`${packageYear} Q${packageQuarter}完整数据包已生成并通过校验`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "备份失败");
+      setError(err instanceof Error ? err.message : "数据包导出失败");
     } finally {
       backupBusyRef.current = false;
       setBackupBusy(false);
@@ -159,6 +170,10 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   async function restore(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (restoreBusyRef.current) return;
+    const confirmed = window.confirm(
+      "导入数据包会完整覆盖这台电脑现有的数据库、账单原件、附件和导出文件，不能与现有资料合并。\n\n请确认这台电脑不需要保留当前资料，并且数据包来自相同版本的系统。确定继续吗？",
+    );
+    if (!confirmed) return;
     restoreBusyRef.current = true;
     setRestoreBusy(true);
     const form = event.currentTarget;
@@ -167,11 +182,11 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
     try {
       const result = await api<{ staged: boolean; restart_required: boolean; shutdown_scheduled: boolean; cleanup_warning: string | null }>("/api/backups/restore", { method: "POST", body: data });
       if (result.staged) {
-        notify(`备份已校验并排队恢复，系统正在安全退出；退出后请重新启动以完成恢复${result.cleanup_warning ? `；${result.cleanup_warning}` : ""}`);
+        notify(`数据包已校验并排队导入，系统正在安全退出；退出后请重新启动以完成导入${result.cleanup_warning ? `；${result.cleanup_warning}` : ""}`);
       }
       form.reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "恢复失败");
+      setError(err instanceof Error ? err.message : "数据包导入失败");
     } finally {
       restoreBusyRef.current = false;
       setRestoreBusy(false);
@@ -182,7 +197,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   const assistantReady = assistant?.status === "ready";
   return (
     <>
-      <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整备份恢复" />
+      <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整数据包交接" />
       {error ? <ErrorBanner message={error} /> : null}
       {info ? <div className="system-grid"><article><FolderLock /><span><small>数据根目录 Data Root</small><strong>{info.data_root}</strong></span></article><article><HardDrive /><span><small>SQLite Database</small><strong>{info.database_path}</strong></span></article><article><ArchiveRestore /><span><small>Excel Template</small><strong>{info.template_exists ? info.template_path : "模板未找到"}</strong></span></article><article><DatabaseBackup /><span><small>访问范围</small><strong>{info.local_only ? "仅本机 127.0.0.1" : "请检查网络配置"}</strong></span></article></div> : null}
 
@@ -210,8 +225,8 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       </Panel>
 
       <div className="split-layout">
-        <Panel title="建立完整备份" subtitle="包含数据库、账单原件、附件及导出文件"><div className="backup-action"><DatabaseBackup size={38} /><p>备份采用SQLite安全快照，并为每个文件写入SHA-256校验值。</p><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成备份..." : "生成并下载ZIP备份"}</button></div></Panel>
-        <Panel title="恢复备份" subtitle="先校验所有文件，重启后才正式替换数据"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><input name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验备份..." : "校验并安排恢复"}</button></form></Panel>
+        <Panel title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} /><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><input name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
       </div>
     </>
   );

@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -239,7 +240,10 @@ def export_excel(
     ).all()
     invoice_map = {settlement_id: invoice for settlement_id, invoice in invoice_sources}
     settings = get_settings()
-    filename = f"financial_settlements_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    filename = (
+        f"financial_settlements_{datetime.now():%Y%m%d_%H%M%S_%f}_"
+        f"{uuid4().hex[:8]}.xlsx"
+    )
     output_path = settings.data_root / "output" / "excel" / filename
     try:
         export_settlements_to_template(
@@ -282,7 +286,10 @@ def export_settlement_pdf(
     if not settlement:
         raise HTTPException(status_code=404, detail="Finalized Settlement不存在")
     settings = get_settings()
-    filename = f"settlement_{settlement.id}_{language}.pdf"
+    filename = (
+        f"settlement_{settlement.id}_{language}_{datetime.now():%Y%m%d_%H%M%S_%f}_"
+        f"{uuid4().hex[:8]}.pdf"
+    )
     output_path = settings.data_root / "output" / "pdf" / filename
     generate_settlement_pdf(settlement=settlement, output_path=output_path, language=language)
     db.add(
@@ -300,8 +307,11 @@ def export_settlement_pdf(
 
 
 @router.post("/backups")
-def make_backup() -> FileResponse:
-    path = create_backup()
+def make_backup(
+    year: int = Query(..., ge=2000, le=2100, description="检查批次年度"),
+    quarter: int = Query(..., ge=1, le=4, description="检查批次季度"),
+) -> FileResponse:
+    path = create_backup(snapshot_year=year, snapshot_quarter=quarter)
     return FileResponse(path, media_type="application/zip", filename=path.name)
 
 
@@ -312,9 +322,9 @@ async def restore_backup(
     coordinator: ShutdownCoordinator = Depends(get_shutdown_coordinator),
 ) -> dict:
     if Path(file.filename or "").suffix.lower() != ".zip":
-        raise HTTPException(status_code=415, detail="只支持系统生成的ZIP备份")
+        raise HTTPException(status_code=415, detail="只支持系统生成的ZIP数据包或旧版备份")
     if not _restore_request_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="另一份备份正在校验并安排恢复，请勿重复提交")
+        raise HTTPException(status_code=409, detail="另一份数据包正在校验并安排导入，请勿重复提交")
     try:
         data = await file.read(2 * 1024 * 1024 * 1024)
         settings = get_settings()

@@ -185,8 +185,16 @@ def test_each_account_fee_is_calculated_before_group_total() -> None:
         sheet = load_workbook(BytesIO(excel.content), data_only=False)["利润20%"]
         assert [sheet["H3"].value, sheet["H4"].value] == ["OFFSET-1", "OFFSET-2"]
         assert [sheet["V3"].value, sheet["V4"].value] == [20, 0]
+        repeated_excel = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
+        assert repeated_excel.status_code == 200, repeated_excel.text
+        assert repeated_excel.headers["content-disposition"] != excel.headers["content-disposition"]
         pdf = client.post(f"/api/exports/pdf?settlement_id={settlement['id']}&language=zh")
         assert pdf.status_code == 200, pdf.text
+        repeated_pdf = client.post(
+            f"/api/exports/pdf?settlement_id={settlement['id']}&language=zh"
+        )
+        assert repeated_pdf.status_code == 200, repeated_pdf.text
+        assert repeated_pdf.headers["content-disposition"] != pdf.headers["content-disposition"]
 
 
 def test_internal_finance_excel_batches_selected_finalized_settlements() -> None:

@@ -46,6 +46,13 @@ def _suffix() -> str:
     return uuid4().hex[:10].upper()
 
 
+def _write_controlled_test_file(directory: str, name: str, content: bytes) -> Path:
+    path = get_settings().data_root / directory / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
 def _empty_parsed_statement() -> SimpleNamespace:
     return SimpleNamespace(
         account_number=None,
@@ -412,37 +419,53 @@ def test_account_and_client_delete_report_every_business_and_file_reference() ->
             )
             db.add_all([transaction, snapshot, statement])
             db.flush()
+            account_attachment_content = f"account-{suffix}".encode()
+            account_export_content = f"account-export-{suffix}".encode()
+            client_attachment_content = f"client-{suffix}".encode()
+            client_export_content = f"client-export-{suffix}".encode()
+            account_attachment_path = _write_controlled_test_file(
+                "attachments", f"account-{suffix}.pdf", account_attachment_content
+            )
+            account_export_path = _write_controlled_test_file(
+                "output/excel", f"account-export-{suffix}.xlsx", account_export_content
+            )
+            client_attachment_path = _write_controlled_test_file(
+                "attachments", f"client-{suffix}.pdf", client_attachment_content
+            )
+            client_export_path = _write_controlled_test_file(
+                "output/excel", f"client-export-{suffix}.xlsx", client_export_content
+            )
             db.add_all(
                 [
                     Attachment(
                         entity_type="sub-account",
                         entity_id=account["id"],
                         original_name="account.pdf",
-                        stored_path=f"F:/synthetic/account-{suffix}.pdf",
-                        sha256=hashlib.sha256(f"account-{suffix}".encode()).hexdigest(),
-                        size_bytes=1,
+                        stored_path=str(account_attachment_path),
+                        sha256=hashlib.sha256(account_attachment_content).hexdigest(),
+                        size_bytes=len(account_attachment_content),
                     ),
                     ExportRecord(
                         export_type="TEST",
                         entity_type="ACCOUNT",
                         entity_id=account["id"],
-                        stored_path=f"F:/synthetic/account-export-{suffix}.xlsx",
-                        sha256=hashlib.sha256(f"account-export-{suffix}".encode()).hexdigest(),
+                        stored_path=str(account_export_path),
+                        sha256=hashlib.sha256(account_export_content).hexdigest(),
                     ),
                     Attachment(
                         entity_type="CLIENT",
                         entity_id=client["id"],
                         original_name="client.pdf",
-                        stored_path=f"F:/synthetic/client-{suffix}.pdf",
-                        sha256=hashlib.sha256(f"client-{suffix}".encode()).hexdigest(),
-                        size_bytes=1,
+                        stored_path=str(client_attachment_path),
+                        sha256=hashlib.sha256(client_attachment_content).hexdigest(),
+                        size_bytes=len(client_attachment_content),
                     ),
                     ExportRecord(
                         export_type="TEST",
                         entity_type="client",
                         entity_id=client["id"],
-                        stored_path=f"F:/synthetic/client-export-{suffix}.xlsx",
-                        sha256=hashlib.sha256(f"client-export-{suffix}".encode()).hexdigest(),
+                        stored_path=str(client_export_path),
+                        sha256=hashlib.sha256(client_export_content).hexdigest(),
                     ),
                 ]
             )
@@ -787,6 +810,14 @@ def test_confirmed_statement_delete_rejects_snapshot_or_import_files_and_exports
             account_id=account["id"],
             suffix=suffix,
         )
+        snapshot_attachment_content = f"snapshot-{suffix}".encode()
+        statement_export_content = f"statement-export-{suffix}".encode()
+        snapshot_attachment_path = _write_controlled_test_file(
+            "attachments", f"snapshot-{suffix}.pdf", snapshot_attachment_content
+        )
+        statement_export_path = _write_controlled_test_file(
+            "output/excel", f"statement-export-{suffix}.xlsx", statement_export_content
+        )
         with SessionLocal() as db:
             db.add_all(
                 [
@@ -794,16 +825,16 @@ def test_confirmed_statement_delete_rejects_snapshot_or_import_files_and_exports
                         entity_type="snapshot",
                         entity_id=snapshot_id,
                         original_name="snapshot.pdf",
-                        stored_path=f"F:/synthetic/snapshot-{suffix}.pdf",
-                        sha256=hashlib.sha256(f"snapshot-{suffix}".encode()).hexdigest(),
-                        size_bytes=1,
+                        stored_path=str(snapshot_attachment_path),
+                        sha256=hashlib.sha256(snapshot_attachment_content).hexdigest(),
+                        size_bytes=len(snapshot_attachment_content),
                     ),
                     ExportRecord(
                         export_type="TEST",
                         entity_type="statement-import",
                         entity_id=import_id,
-                        stored_path=f"F:/synthetic/statement-export-{suffix}.xlsx",
-                        sha256=hashlib.sha256(f"statement-export-{suffix}".encode()).hexdigest(),
+                        stored_path=str(statement_export_path),
+                        sha256=hashlib.sha256(statement_export_content).hexdigest(),
                     ),
                 ]
             )

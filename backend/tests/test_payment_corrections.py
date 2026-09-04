@@ -251,7 +251,9 @@ def test_one_time_payment_requires_intact_proof_and_separates_company_difference
         with SessionLocal() as db:
             attachment = db.get(Attachment, tampered_proof)
             assert attachment is not None
-            Path(attachment.stored_path).write_bytes(b"tampered")
+            tampered_path = Path(attachment.stored_path)
+            original_proof = tampered_path.read_bytes()
+            tampered_path.write_bytes(b"tampered")
         tampered = client.post(
             f"/api/invoices/{invoice['id']}/payments",
             json={
@@ -263,6 +265,7 @@ def test_one_time_payment_requires_intact_proof_and_separates_company_difference
         )
         assert tampered.status_code == 400
         assert "SHA-256" in tampered.json()["detail"] or "大小" in tampered.json()["detail"]
+        tampered_path.write_bytes(original_proof)
 
         proof_id = _unclaimed_proof(client, "PAYMENT", "valid-payment")
         blank_payment_method = client.post(

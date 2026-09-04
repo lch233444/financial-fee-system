@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import (
@@ -387,15 +389,22 @@ def test_attachment_and_export_history_references_block_deletion() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         attachment_company = _create_company(client, f"A{suffix}")
         export_company = _create_company(client, f"E{suffix}")
+        settings = get_settings()
+        attachment_path = settings.data_root / "attachments" / f"legacy-master-{suffix}.pdf"
+        export_path = settings.data_root / "output" / "pdf" / f"legacy-export-{suffix}.pdf"
+        attachment_content = f"legacy-master-{suffix}".encode()
+        export_content = f"legacy-export-{suffix}".encode()
+        attachment_path.write_bytes(attachment_content)
+        export_path.write_bytes(export_content)
         with SessionLocal() as db:
             db.add(
                 Attachment(
                     entity_type=" company ",
                     entity_id=attachment_company["id"],
                     original_name="legacy.pdf",
-                    stored_path=f"legacy-master-{suffix}.pdf",
-                    sha256="a" * 64,
-                    size_bytes=1,
+                    stored_path=str(attachment_path),
+                    sha256=hashlib.sha256(attachment_content).hexdigest(),
+                    size_bytes=len(attachment_content),
                 )
             )
             db.add(
@@ -403,8 +412,8 @@ def test_attachment_and_export_history_references_block_deletion() -> None:
                     export_type="LEGACY",
                     entity_type="Company",
                     entity_id=export_company["id"],
-                    stored_path=f"legacy-export-{suffix}.pdf",
-                    sha256="b" * 64,
+                    stored_path=str(export_path),
+                    sha256=hashlib.sha256(export_content).hexdigest(),
                 )
             )
             db.commit()

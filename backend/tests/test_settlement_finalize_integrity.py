@@ -394,13 +394,17 @@ def test_valid_generic_transaction_attachment_can_replace_damaged_direct_referen
             assert transaction is not None and attachment is not None
             transaction.attachment_id = attachment.id
             damaged_path = Path(attachment.stored_path)
+            original_direct_proof = damaged_path.read_bytes()
             damaged_path.write_bytes(b"D" * attachment.size_bytes)
             db.commit()
-        _attach(client, "TRANSACTION", transaction_id, marker=b"replacement generic proof")
-        settlement = _calculate(client, data, beginning, closing)
+        try:
+            _attach(client, "TRANSACTION", transaction_id, marker=b"replacement generic proof")
+            settlement = _calculate(client, data, beginning, closing)
 
-        finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
-        assert finalized.status_code == 200, finalized.text
+            finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
+            assert finalized.status_code == 200, finalized.text
+        finally:
+            damaged_path.write_bytes(original_direct_proof)
 
 
 def test_finalized_parent_children_inputs_are_immutable_but_void_allows_source_correction() -> None:
@@ -423,6 +427,9 @@ def test_finalized_parent_children_inputs_are_immutable_but_void_allows_source_c
                 entity_type="SNAPSHOT", entity_id=closing["id"]
             ).one()
             snapshot_proof_id = snapshot_proof.id
+            transaction_attachment = db.get(Attachment, transaction_proof["id"])
+            assert transaction_attachment is not None
+            original_transaction_proof_sha = transaction_attachment.sha256
         settlement = _calculate(client, data, beginning, closing)
         finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
         assert finalized.status_code == 200, finalized.text
@@ -477,6 +484,12 @@ def test_finalized_parent_children_inputs_are_immutable_but_void_allows_source_c
             with sqlite3.connect(database_path) as connection:
                 with pytest.raises(sqlite3.IntegrityError):
                     connection.execute(sql, parameters)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE attachments SET sha256 = ? WHERE id = ?",
+                (original_transaction_proof_sha, transaction_proof["id"]),
+            )
+            connection.commit()
 
 
 def test_direct_status_bypasses_require_metadata_reason_and_draft_insert() -> None:

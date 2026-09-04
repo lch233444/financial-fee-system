@@ -107,7 +107,7 @@ async def require_financial_write_marker(request: Request, call_next):
             return JSONResponse(
                 status_code=409,
                 content={
-                    "detail": "备份恢复已排队，系统正在安全退出；为避免恢复后丢失新数据，已停止接受财务写入"
+                    "detail": "数据包导入已排队，系统正在安全退出；为避免导入后丢失新数据，已停止接受财务写入"
                 },
             )
 
@@ -116,12 +116,12 @@ async def require_financial_write_marker(request: Request, call_next):
             if not _restore_mutation_gate.try_enter_restore():
                 return JSONResponse(
                     status_code=409,
-                    content={"detail": "系统仍有财务写入或另一份恢复正在处理，请稍后重试"},
+                    content={"detail": "系统仍有财务写入或另一份数据包正在导入，请稍后重试"},
                 )
         elif not _restore_mutation_gate.try_enter_mutation():
             return JSONResponse(
                 status_code=409,
-                content={"detail": "备份恢复正在校验，已暂停新的财务写入"},
+                content={"detail": "数据包导入正在校验，已暂停新的财务写入"},
             )
         try:
             return await call_next(request)

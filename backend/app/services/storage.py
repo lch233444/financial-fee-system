@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import tempfile
 from pathlib import Path
+from typing import BinaryIO
 
 
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
@@ -59,6 +61,26 @@ def copy_with_hash(source: Path, target: Path) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return sha256_file(target)
+
+
+def store_stream(*, stream: BinaryIO, directory: Path, max_bytes: int, suffix: str = "") -> Path:
+    """Spool uploads with bounded memory and remove incomplete files on any failure."""
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=directory, prefix="restore_", suffix=suffix, delete=False) as output:
+        target = Path(output.name)
+        try:
+            total = 0
+            while chunk := stream.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("上传文件超过大小限制")
+                output.write(chunk)
+            output.flush()
+        except BaseException:
+            output.close()
+            target.unlink(missing_ok=True)
+            raise
+    return target
 
 
 def is_within(path: Path, root: Path) -> bool:

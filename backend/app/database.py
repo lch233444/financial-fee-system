@@ -483,7 +483,17 @@ def init_db() -> None:
                             "未版本化数据库的ID高水位证据异常；已停止启动，请人工检查"
                         ) from exc
                 if boundary_sql_is_current:
-                    command.stamp(alembic_config, "head")
+                    from .services.workflow_guard_contract import (
+                        workflow_trigger_sql_is_current,
+                        workflow_trigger_sql_is_legacy,
+                    )
+                    if workflow_trigger_sql_is_current(trigger_sql):
+                        command.stamp(alembic_config, "head")
+                    elif workflow_trigger_sql_is_legacy(trigger_sql):
+                        command.stamp(alembic_config, "d4f8a1c73b29")
+                        command.upgrade(alembic_config, "head")
+                    else:
+                        raise RuntimeError("未版本化数据库的财务流程Trigger语义异常；已停止启动")
                 elif boundary_sql_is_legacy:
                     command.stamp(alembic_config, "c1a7d5e9b402")
                     command.upgrade(alembic_config, "head")
@@ -584,7 +594,11 @@ def init_db() -> None:
                     'trg_snapshot_delete_no_confirmed_import',
                     'trg_settlement_validate_finalize',
                     'trg_attachment_update_block_finalized_evidence',
-                    'trg_attachment_delete_block_finalized_evidence'
+                    'trg_attachment_delete_block_finalized_evidence',
+                    'trg_transactions_block_finalized_period',
+                    'trg_transactions_update_block_frozen_period',
+                    'trg_transactions_delete_block_frozen_period',
+                    'trg_invoice_correction_validate_update'
                 )
                 """
             ).fetchall()
@@ -597,3 +611,7 @@ def init_db() -> None:
         raise RuntimeError(
             "数据库季度边界Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查"
         )
+    from .services.workflow_guard_contract import workflow_trigger_sql_is_current
+
+    if not workflow_trigger_sql_is_current(current_trigger_sql):
+        raise RuntimeError("数据库财务流程Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查")

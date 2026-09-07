@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel } from "../components";
 import { todayIso, useApiList } from "../hooks";
+import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel } from "../types";
 import type { Account, BalanceSnapshot } from "../types";
 
@@ -19,6 +20,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
   const [filterPlatformId, setFilterPlatformId] = useState("");
   const [filterAccountId, setFilterAccountId] = useState("");
   const [localError, setLocalError] = useState("");
+  const attachmentAction = useFormAction(setLocalError, notify);
   const [transactionBusy, setTransactionBusy] = useState(false);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -124,19 +126,17 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
     }
   }
 
-  async function submitAttachment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLocalError("");
-    try {
-      const data = new FormData(event.currentTarget);
-      data.set("entity_type", proofType);
-      data.set("entity_id", proofTargetId);
-      const result = await api<Attachment>("/api/attachments", { method: "POST", body: data });
-      event.currentTarget.reset();
-      setProofTargetId("");
-      await Promise.all([attachments.reload(), transactions.reload(), snapshots.reload()]);
-      notify(result.duplicate ? "该凭证已经归档" : "凭证已关联到具体记录并安全归档");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "凭证上传失败"); }
+  function submitAttachment(event: FormEvent<HTMLFormElement>) {
+    return attachmentAction.submit(event, {
+      save: (data) => {
+        data.set("entity_type", proofType);
+        data.set("entity_id", proofTargetId);
+        return api<Attachment>("/api/attachments", { method: "POST", body: data });
+      },
+      afterSave: () => setProofTargetId(""),
+      refresh: () => Promise.all([attachments.reload(), transactions.reload(), snapshots.reload()]),
+      message: "凭证已关联到具体记录并安全归档",
+    });
   }
 
   function attachmentTarget(item: Attachment): string {
@@ -181,7 +181,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
           <Field label="Sub Account"><select value={filterAccountId} onChange={(event) => { setFilterAccountId(event.target.value); setProofTargetId(""); }}><option value="">全部账户</option>{accounts.data.filter((item) => (!filterClientId || item.client_id === Number(filterClientId)) && (!filterPlatformId || item.platform_id === Number(filterPlatformId))).map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
         </div>
       </Panel>
-      <Panel title="结算凭证归档" subtitle="凭证必须关联到具体Snapshot或资金流水；切换类型或筛选会清空关联目标，避免错挂"><form className="inline-form evidence-form" onSubmit={(e) => void submitAttachment(e)}><Field label="凭证类型"><select value={proofType} onChange={(e) => { setProofType(e.target.value as "SNAPSHOT" | "TRANSACTION"); setProofTargetId(""); }}><option value="SNAPSHOT">Balance Snapshot</option><option value="TRANSACTION">Contribution / Withdrawal</option></select></Field><Field label="关联记录"><select name="entity_id" required value={proofTargetId} onChange={(event) => setProofTargetId(event.target.value)}><option value="" disabled>请选择具体记录</option>{proofTargets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field><Field label="凭证文件"><input name="file" type="file" accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required /></Field><button className="secondary" type="submit">上传并关联</button></form>{visibleAttachments.length ? <div className="table-wrap compact-table"><table><thead><tr><th>关联记录</th><th>文件</th><th>归档时间</th><th></th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{attachmentTarget(item)}</td><td>{item.original_name}</td><td>{new Date(item.created_at).toLocaleString("zh-CN")}</td><td><a className="text-link" href={`/api/attachments/${item.id}/file`}>查看原件</a></td></tr>)}</tbody></table></div> : <EmptyState title="当前筛选没有结算凭证" detail="调整筛选，或先为具体Snapshot/资金流水上传凭证。" />}</Panel>
+      <Panel title="结算凭证归档" subtitle="凭证必须关联到具体Snapshot或资金流水；切换类型或筛选会清空关联目标，避免错挂"><form className="inline-form evidence-form" onSubmit={(e) => void submitAttachment(e)}><Field label="凭证类型"><select value={proofType} onChange={(e) => { setProofType(e.target.value as "SNAPSHOT" | "TRANSACTION"); setProofTargetId(""); }}><option value="SNAPSHOT">Balance Snapshot</option><option value="TRANSACTION">Contribution / Withdrawal</option></select></Field><Field label="关联记录"><select name="entity_id" required value={proofTargetId} onChange={(event) => setProofTargetId(event.target.value)}><option value="" disabled>请选择具体记录</option>{proofTargets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field><Field label="凭证文件"><input name="file" type="file" accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required /></Field><button className="secondary" type="submit" disabled={attachmentAction.pending}>{attachmentAction.pending ? "保存中..." : "上传并关联"}</button></form>{visibleAttachments.length ? <div className="table-wrap compact-table"><table><thead><tr><th>关联记录</th><th>文件</th><th>归档时间</th><th></th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{attachmentTarget(item)}</td><td>{item.original_name}</td><td>{new Date(item.created_at).toLocaleString("zh-CN")}</td><td><a className="text-link" href={`/api/attachments/${item.id}/file`}>查看原件</a></td></tr>)}</tbody></table></div> : <EmptyState title="当前筛选没有结算凭证" detail="调整筛选，或先为具体Snapshot/资金流水上传凭证。" />}</Panel>
       <Panel title="最近资金流水">{visibleTransactions.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Client / Platform / A/C</th><th>Type</th><th>Amount</th><th>凭证</th><th>Remark</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((x) => { const account = accountById.get(x.account_id); return <tr key={x.id}><td>{x.transaction_date}</td><td><strong>{account?.client_name || "未知Client"}</strong><small className="cell-note">{account ? [account.platform_name || "待确认Platform", account.account_number, account.scheme_name].filter(Boolean).join(" · ") : x.account_number}</small></td><td>{x.transaction_type}</td><td><Money value={x.amount} /></td><td>{x.evidence_complete ? `完整 (${x.evidence_count})` : "待补"}</td><td>{x.remark || "-"}</td><td>{x.correction_allowed ? <button className="ghost" type="button" disabled={correctionBusy} onClick={() => { setEditingTransaction(x); setLocalError(""); }}>更正</button> : <small className="cell-note">已由 Settlement #{x.locked_settlement_id} 锁定</small>}</td></tr>; })}</tbody></table></div> : <EmptyState title="当前筛选没有资金流水" detail="调整筛选，或为具体Sub Account登记Contribution/Withdrawal。" />}</Panel>
       <Panel title="余额快照">{visibleSnapshots.length ? <div className="table-wrap"><table><thead><tr><th>As-of Date</th><th>Client / Platform / A/C</th><th>Total Balance</th><th>持仓明细</th><th>来源</th><th>Closing资格</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((x) => { const account = accountById.get(x.account_id); return <tr key={x.id}><td>{x.as_of_date}</td><td><strong>{x.client_name || account?.client_name || "未知Client"}</strong><small className="cell-note">{[x.platform_name || account?.platform_name || "待确认Platform", x.account_number, x.scheme_name || account?.scheme_name].filter(Boolean).join(" · ")}</small></td><td><Money value={x.total_balance} /></td><td>{x.holdings.length ? <details><summary>{x.holdings.length}项</summary>{snapshotHoldings(x)}</details> : "无"}</td><td>{x.source_type === "STATEMENT_IMPORT" && x.statement_import_id ? <a className="text-link" href={`/api/statement-imports/${x.statement_import_id}/file`} target="_blank" rel="noreferrer">Statement Import · 查看原账单</a> : x.source_type === "STATEMENT_IMPORT" ? "Statement Import · 原账单索引缺失" : "手工录入"}</td><td>{x.eligible_for_closing ? "可作为Closing" : "普通快照"}</td><td>{x.evidence_complete ? `完整 (${x.evidence_count || 0})` : "待补"}</td></tr>; })}</tbody></table></div> : <EmptyState title="当前筛选没有余额快照" detail="调整筛选；账单确认入账或手工保存后会在这里出现。" />}</Panel>
     </>

@@ -1,9 +1,9 @@
-金融计划收费计算系统 MVP 0.2.20 Windows运行版构建清单
-文档修订：2026-09-07；依据当前scripts/build-windows.ps1及0.2.20交付记录。
+金融计划收费计算系统 MVP 0.2.21 Windows运行版构建清单
+文档修订：2026-09-07；依据当前scripts/build-windows.ps1；候选证据见项目说明书。
 
 一、当前构建契约
-- 应用版本：0.2.20；Windows ProductVersion：0.2.20；FileVersion：0.2.20.0。
-- 数据库head：d4f8a1c73b29；目标57个Trigger；结构数量不能替代业务验收。
+- 应用版本：0.2.21；Windows ProductVersion：0.2.21；FileVersion：0.2.21.0。
+- 数据库head：e8b2c6d91a04；目标57个Trigger；结构数量不能替代业务验收。
 - 固定候选输出：release/FinancialFeeSystem。构建开始清理上一候选，不能把真实数据放入该目录。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
@@ -14,24 +14,29 @@
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 
 二、执行顺序和产物
-- 运行scripts/build-windows.ps1，先完整后端回归与前端TypeScript/Vite构建，再校验组件、模板及版本并生成PyInstaller onedir。
-- 构建pytest使用项目盘根.ffsys-build-tmp短目录设置TEMP/TMP和basetemp；先test_system_backup.py，再按文件名执行其余测试，集合不减少。
+- 运行scripts/build-windows.ps1，先前端交互测试、TypeScript/Vite构建及完整后端回归，再校验组件、模板及版本并生成PyInstaller onedir。
+- 构建pytest使用项目父目录.ffsys-build-tmp（本机F:\财务系统\.ffsys-build-tmp）短目录设置TEMP/TMP和basetemp；先test_system_backup.py，再按文件名执行其余测试，集合不减少。
 - Codex两个EXE、Tesseract、模板和版本任一校验失败即停止。不得通过更改文档哈希掩盖实际组件变更。
 - 包含完整运行依赖、前端资源、迁移文件、Tesseract、Codex、启动脚本，以及当前README、docs、发布说明和构建清单。
 - 构建脚本在docs/build-dependencies中保留本次依赖锁文件，在程序根生成构建结果.txt，记录实际时间、文件数、字节数、EXE哈希和Windows版本。
 - 不复制历史构建结果充当新产物证据；文档更改也不表示现有正式包内容已同步。
 
-三、当前正式包的历史交付标识
+三、0.2.21候选验收
+- 构建时间：2026-09-07 15:01:36 +08:00；EXE SHA-256：016991A01DC164B53BAC4EB4CF9B5CFFAA53CDC86CC78F60E64F72D28BD2369A。
+- 后端377/377、前端20/20、生产构建及Windows构建通过；8001/8002隔离EXE、Company保存、财务更正、实体凭证保护、跨目录恢复、安全退出及中英文PDF视觉验收通过。
+- 正式包未切换；详细证据及限制见项目说明书第11.3节。
+
+四、当前正式包的历史交付标识
 - 构建日期：2026-09-04；当时记录15:54:08 +08:00构建0.2.20。
 - 正式目录：F:\财务系统\金融计划收费系统_Windows运行版_0.2.20_20260904\FinancialFeeSystem。
 - 正式数据根：F:\财务系统\财务数据；独立于源码和运行包。
 - FinancialFeeSystem.exe SHA-256：1D791591DACABF3CDE463A63F3E296600B33A5EE3F7624FBDBA96A18A0CCAF48。
 - 当时后端362/362、前端构建、候选EXE/HTTP/浏览器、正式备份与隔离恢复、切换验收通过。
-- 本次文档整理没有构建或替换上述正式包。当前机器状态、接手复核及已知业务漏洞见docs/项目说明书.md，不能沿用历史验收作为实时正常证明。
+- 本轮候选构建不会替换上述正式包。当前机器状态、接手复核及已知业务漏洞见docs/项目说明书.md，不能沿用历史验收作为实时正常证明。
 
-四、后续发布门槛
+五、后续发布门槛
 - 候选只连隔离合成数据，核对版本、loopback、/api/openapi.json、静态资源/cache、关键业务成功/拒绝路径及安全退出；对应Excel/PDF/UI须实际检查。
-- 当前F-01/F-02/F-03属于已知未修复问题，新功能或修复发布应明确关闭或报告相应风险，不能仅以57个Trigger宣称完整性已覆盖。
+- 0.2.21已为F-01/F-02/F-03补上代码与回归保护；候选仍需验证对应成功/拒绝路径，不能仅以57个Trigger宣称完整性已覆盖。
 - 正式切换须有明确授权、现状完整备份及目标版本F盘隔离预检；再安全退出旧程序并提升新独立目录。
 - 验收完成后精确清理候选、构建及测试产物，保留独立真实数据和完整备份；本机只留最新正式运行版。
 - 组件、模板或依赖升级时同步校验契约并重新验收；不把旧程序连接到已经升级的数据库。

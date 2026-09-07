@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { api, patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge } from "../components";
 import { useApiList } from "../hooks";
+import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel } from "../types";
 import type { Account, Client, Company, FC, FeePlan, Platform } from "../types";
 
@@ -19,6 +20,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
   const [localError, setLocalError] = useState("");
+  const formAction = useFormAction(setLocalError, notify);
   const [deletingKey, setDeletingKey] = useState("");
   const deleteBusyRef = useRef(false);
   const error = localError || clients.error || accounts.error || companies.error || fcs.error || platforms.error || plans.error;
@@ -27,39 +29,31 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId));
   const selectedDraftAccountClient = clients.data.find((item) => item.id === selectedDraftAccount?.client_id);
 
-  async function submitClient(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setLocalError("");
-    try {
-      await postJson("/api/clients", {
+  function submitClient(event: FormEvent<HTMLFormElement>) {
+    return formAction.submit(event, {
+      save: (data) => postJson("/api/clients", {
         company_id: Number(data.get("company_id")), fc_id: Number(data.get("fc_id")), name: data.get("name"),
         management_start_date: data.get("start_date"), contact: data.get("contact") || null,
         remark: data.get("remark") || null, status: "ACTIVE",
-      });
-      event.currentTarget.reset();
-      setClientCompanyId("");
-      await clients.reload();
-      notify("Client已建立");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "Client保存失败"); }
+      }),
+      afterSave: () => setClientCompanyId(""),
+      refresh: clients.reload,
+      message: "Client已建立",
+    });
   }
 
-  async function submitAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setLocalError("");
-    try {
-      await postJson("/api/accounts", {
+  function submitAccount(event: FormEvent<HTMLFormElement>) {
+    return formAction.submit(event, {
+      save: (data) => postJson("/api/accounts", {
         client_id: Number(data.get("client_id")), platform_id: Number(data.get("platform_id")),
         fee_plan_id: Number(data.get("fee_plan_id")), account_number: data.get("account_number"),
         scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
         end_date: data.get("end_date") || null, status: "ACTIVE",
-      });
-      event.currentTarget.reset();
-      setAccountClientId("");
-      await accounts.reload();
-      notify("Sub Account已建立");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "Sub Account保存失败"); }
+      }),
+      afterSave: () => setAccountClientId(""),
+      refresh: accounts.reload,
+      message: "Sub Account已建立",
+    });
   }
 
   async function completeDraftClient(event: FormEvent<HTMLFormElement>) {
@@ -163,7 +157,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <Field label="Management Start Date"><input name="start_date" type="date" required /></Field>
             <Field label="联系方式"><input name="contact" /></Field>
             <Field label="备注"><textarea name="remark" rows={2} /></Field>
-            <button className="primary" type="submit">保存Client</button>
+            <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存Client"}</button>
           </form>
         </Panel>
         <Panel title="新增Sub Account" subtitle="币种固定为HKD">
@@ -175,7 +169,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <Field label="Scheme Name"><input name="scheme_name" /></Field>
             <Field label="开始管理日期"><input name="start_date" type="date" required /></Field>
             <Field label="实际结束日期（如适用）"><input name="end_date" type="date" /></Field>
-            <button className="primary" type="submit">保存Sub Account</button>
+            <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存Sub Account"}</button>
           </form>
         </Panel>
       </div>

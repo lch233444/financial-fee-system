@@ -261,6 +261,8 @@ def calculate_or_update_settlement(
 
 
 def _missing_evidence(db: Session, item: QuarterlySettlement) -> list[str]:
+    from ..services.settlement_period import cash_flow_conditions
+
     missing: list[str] = []
     for line in item.account_lines:
         beginning = db.get(BalanceSnapshot, line.beginning_snapshot_id) if line.beginning_snapshot_id else None
@@ -272,11 +274,11 @@ def _missing_evidence(db: Session, item: QuarterlySettlement) -> list[str]:
             missing.append(f"{label} Beginning Snapshot（{beginning_problem}）")
         if closing_problem:
             missing.append(f"{label} Closing Snapshot（{closing_problem}）")
+        if beginning is None:
+            continue
         transactions = db.scalars(
             select(TransactionRecord).where(
-                TransactionRecord.account_id == line.account_id,
-                TransactionRecord.transaction_date > line.start_date,
-                TransactionRecord.transaction_date <= line.closing_date,
+                *cash_flow_conditions(line.account_id, beginning.as_of_date, line.closing_date),
             )
         ).all()
         for transaction in transactions:

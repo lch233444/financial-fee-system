@@ -23,6 +23,7 @@ from .calculation import (
     calculate_account_settlement,
     quarter_dates,
 )
+from .settlement_period import cash_flow_conditions
 
 
 ACCOUNT_HWM_MODE = "ACCOUNT_HWM"
@@ -327,6 +328,15 @@ def calculate_current_settlement(
             db, account_id=spec.account_id, year=year, quarter=quarter
         )
         if previous_line:
+            previous = db.get(QuarterlySettlement, previous_line.settlement_id)
+            if previous.year * 4 + previous.quarter != year * 4 + quarter - 1:
+                missing_year = previous.year + (previous.quarter == 4)
+                missing_quarter = previous.quarter % 4 + 1
+                raise SettlementCurrentStateError(
+                    409,
+                    f"Sub Account {account.account_number}必须先补齐并Finalize "
+                    f"{missing_year} Q{missing_quarter}，不能跳季结算",
+                )
             if previous_line.closing_snapshot_id is None or previous_line.next_hwm_cents is None:
                 raise SettlementCurrentStateError(409, "前序账户结算缺少Closing Snapshot或Next HWM")
             if spec.beginning_snapshot_id not in (None, previous_line.closing_snapshot_id):
@@ -369,18 +379,14 @@ def calculate_current_settlement(
 
         contribution_cents = db.scalar(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
-                TransactionRecord.account_id == spec.account_id,
+                *cash_flow_conditions(spec.account_id, beginning_snapshot.as_of_date, line_closing_date),
                 TransactionRecord.transaction_type == "CONTRIBUTION",
-                TransactionRecord.transaction_date > beginning_snapshot.as_of_date,
-                TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0
         withdrawal_cents = db.scalar(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
-                TransactionRecord.account_id == spec.account_id,
+                *cash_flow_conditions(spec.account_id, beginning_snapshot.as_of_date, line_closing_date),
                 TransactionRecord.transaction_type == "WITHDRAWAL",
-                TransactionRecord.transaction_date > beginning_snapshot.as_of_date,
-                TransactionRecord.transaction_date <= line_closing_date,
             )
         ) or 0
         try:

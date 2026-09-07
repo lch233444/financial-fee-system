@@ -20,6 +20,7 @@ from .settlement_boundary_contract import (
     settlement_boundary_trigger_sql_is_legacy,
 )
 from .storage import sha256_file
+from .workflow_guard_contract import workflow_trigger_sql_is_current, workflow_trigger_sql_is_legacy
 
 
 INCLUDED_DIRECTORIES = ("attachments", "statement_imports", "output")
@@ -50,6 +51,7 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "7f3c2a91b6e4",
         "c1a7d5e9b402",
         "d4f8a1c73b29",
+        "e8b2c6d91a04",
     }
 )
 OLD_HEAD_TRIGGER_NAMES = frozenset(
@@ -178,7 +180,7 @@ _LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
 _LEGACY_REUSE_REVISION = "c1a7d5e9b402"
 _LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
 _LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
-CURRENT_DATABASE_REVISION = "d4f8a1c73b29"
+CURRENT_DATABASE_REVISION = "e8b2c6d91a04"
 PATH_REBASE_TRIGGER_NAMES = (
     "trg_attachment_update_block_finalized_evidence",
     "trg_attachment_update_block_payment_evidence",
@@ -1819,6 +1821,7 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     "7f3c2a91b6e4",
                     "c1a7d5e9b402",
                     "d4f8a1c73b29",
+                    "e8b2c6d91a04",
                 }:
                     _require_named_partial_unique_index(
                         connection,
@@ -1849,6 +1852,7 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     "7f3c2a91b6e4",
                     "c1a7d5e9b402",
                     "d4f8a1c73b29",
+                    "e8b2c6d91a04",
                 }:
                     settlement_columns = {
                         row[1]
@@ -2064,16 +2068,23 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         "trg_invoice_block_void_with_payment", ""
                     ):
                         raise ValueError("备份数据库结构不兼容")
-                    if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29"}:
+                    if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04"}:
                         _validate_backup_id_high_water_settings(connection)
                         if not delete_guard_trigger_sql_is_current(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
                     if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
                         if not settlement_boundary_trigger_sql_is_legacy(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
-                    elif database_revision == "d4f8a1c73b29":
+                    elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04"}:
                         if not settlement_boundary_trigger_sql_is_current(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
+                        workflow_valid = (
+                            workflow_trigger_sql_is_current(trigger_sql)
+                            if database_revision == "e8b2c6d91a04"
+                            else workflow_trigger_sql_is_legacy(trigger_sql)
+                        )
+                        if not workflow_valid:
+                            raise ValueError("备份数据库财务流程保护结构不兼容")
         finally:
             connection.close()
     except sqlite3.Error as exc:

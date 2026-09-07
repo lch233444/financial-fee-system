@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -31,7 +32,7 @@ from ..serializers import invoice_accounting_cents, invoice_is_overdue
 from ..services.backup import create_backup, stage_restore
 from ..services.excel_export import export_settlements_to_template, file_sha256
 from ..services.pdf_invoice import generate_settlement_pdf
-from ..services.storage import store_bytes
+from ..services.storage import store_stream
 from ..services.shutdown import ShutdownCoordinator, get_shutdown_coordinator
 
 
@@ -326,14 +327,16 @@ async def restore_backup(
     if not _restore_request_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="另一份数据包正在校验并安排导入，请勿重复提交")
     try:
-        data = await file.read(2 * 1024 * 1024 * 1024)
         settings = get_settings()
-        backup_path, _ = store_bytes(
-            data=data,
-            original_name=file.filename or "restore.zip",
-            directory=settings.data_root / "tmp",
-            prefix="restore_",
-        )
+        try:
+            backup_path = await run_in_threadpool(
+                store_stream, stream=file.file, directory=settings.data_root / "tmp",
+                max_bytes=2 * 1024 * 1024 * 1024, suffix=".zip",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail="数据包不能超过2 GiB") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"数据包暂存失败：{exc}") from exc
         try:
             staged = stage_restore(backup_path)
         except (ValueError, OSError) as exc:

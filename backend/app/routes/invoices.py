@@ -41,6 +41,7 @@ from ..schemas import (
     PaymentCreate,
     VoidRequest,
 )
+from ..services.invoice_sources import settlements_follow_original
 from ..serializers import invoice_accounting_cents, invoice_correction_dict, invoice_dict
 from ..services.excel_export import file_sha256
 from ..services.invoice_archive import (
@@ -192,42 +193,13 @@ def _active_apply_allocations(item: Invoice) -> list[PaymentAllocation]:
     ]
 
 
-def _settlements_follow_original(
-    db: Session, original: Invoice, settlements: list[QuarterlySettlement]
-) -> bool:
-    original_ids = {source.settlement_id for source in original.sources}
-    if not original_ids or len(settlements) != len(original_ids):
-        return False
-
-    matched_original_ids: set[int] = set()
-    for settlement in settlements:
-        if settlement.version_no <= 1:
-            return False
-        current = settlement
-        visited: set[int] = set()
-        matched = None
-        while current is not None and current.id not in visited:
-            visited.add(current.id)
-            replaced_id = current.replaces_settlement_id
-            if replaced_id is None:
-                break
-            if replaced_id in original_ids:
-                matched = replaced_id
-                break
-            current = db.get(QuarterlySettlement, replaced_id)
-        if matched is None or matched in matched_original_ids:
-            return False
-        matched_original_ids.add(matched)
-    return matched_original_ids == original_ids
-
-
 def _replacement_sources_follow_original(
     db: Session, original: Invoice, replacement: Invoice
 ) -> bool:
     active_sources = [source for source in replacement.sources if source.active]
     if any(source.settlement is None for source in active_sources):
         return False
-    return _settlements_follow_original(
+    return settlements_follow_original(
         db,
         original,
         [source.settlement for source in active_sources],
@@ -268,7 +240,7 @@ def _validate_open_correction_sources(
         quarter=quarter,
         fee_plan_id=fee_plan_id,
     )
-    if correction and not _settlements_follow_original(db, correction.original_invoice, settlements):
+    if correction and not settlements_follow_original(db, correction.original_invoice, settlements):
         raise HTTPException(
             status_code=409,
             detail="该分组正在更正，必须先作废原Settlement并使用完整的替代版本链重建Invoice",
@@ -305,6 +277,11 @@ def _pending_replacement_correction(
 def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
     items = db.scalars(_invoice_query().order_by(Invoice.created_at.desc())).unique().all()
     return [invoice_dict(item) for item in items]
+
+
+@router.get("/{invoice_id}")
+def get_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    return invoice_dict(_reload_invoice(db, invoice_id))
 
 
 @router.post("", status_code=201)

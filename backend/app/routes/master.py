@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
+from ..services.settlement_period import transaction_locked_settlement_id
 from ..models import (
     Attachment,
     AuditEvent,
@@ -76,26 +77,6 @@ def _begin_immediate(db: Session) -> None:
                 detail="数据库正在处理另一笔财务写入，请稍后重试",
             ) from exc
         raise
-
-
-def _transaction_locked_settlement_id(
-    db: Session, *, account_id: int, transaction_date: date
-) -> int | None:
-    return db.scalar(
-        select(QuarterlySettlement.id)
-        .join(
-            SettlementAccountLine,
-            SettlementAccountLine.settlement_id == QuarterlySettlement.id,
-        )
-        .where(
-            SettlementAccountLine.account_id == account_id,
-            QuarterlySettlement.status == "FINALIZED",
-            SettlementAccountLine.start_date <= transaction_date,
-            SettlementAccountLine.closing_date >= transaction_date,
-        )
-        .order_by(QuarterlySettlement.year, QuarterlySettlement.quarter)
-        .limit(1)
-    )
 
 
 def _transaction_audit_values(item: TransactionRecord) -> dict:
@@ -990,7 +971,7 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
     result = []
     for item in items:
         account = item.account
-        locked_settlement_id = _transaction_locked_settlement_id(
+        locked_settlement_id = transaction_locked_settlement_id(
             db,
             account_id=item.account_id,
             transaction_date=item.transaction_date,
@@ -1031,16 +1012,8 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Sub Account不存在")
     if account.start_date and payload.transaction_date < account.start_date:
         raise HTTPException(status_code=400, detail="交易日期不能早于账户开始管理日期")
-    locked_settlement_id = db.scalar(
-        select(QuarterlySettlement.id)
-        .join(SettlementAccountLine, SettlementAccountLine.settlement_id == QuarterlySettlement.id)
-        .where(
-            SettlementAccountLine.account_id == payload.account_id,
-            QuarterlySettlement.status == "FINALIZED",
-            SettlementAccountLine.start_date <= payload.transaction_date,
-            SettlementAccountLine.closing_date >= payload.transaction_date,
-        )
-        .limit(1)
+    locked_settlement_id = transaction_locked_settlement_id(
+        db, account_id=payload.account_id, transaction_date=payload.transaction_date
     )
     if locked_settlement_id is not None:
         raise HTTPException(
@@ -1084,7 +1057,7 @@ def update_transaction(
         db.rollback()
         raise HTTPException(status_code=400, detail="资金生效日期不能早于账户开始管理日期")
 
-    current_lock = _transaction_locked_settlement_id(
+    current_lock = transaction_locked_settlement_id(
         db,
         account_id=item.account_id,
         transaction_date=item.transaction_date,
@@ -1095,7 +1068,7 @@ def update_transaction(
             status_code=409,
             detail=f"该资金流水已被Finalized Settlement #{current_lock}使用，不能直接更正；请先按顺序作废下游结算",
         )
-    target_lock = _transaction_locked_settlement_id(
+    target_lock = transaction_locked_settlement_id(
         db,
         account_id=item.account_id,
         transaction_date=payload.transaction_date,

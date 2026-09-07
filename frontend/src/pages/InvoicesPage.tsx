@@ -3,6 +3,7 @@ import { Ban, CheckCircle2, FileDown, FilePlus2, ReceiptText, RotateCcw } from "
 import { api, download, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge } from "../components";
 import { todayIso, useApiList } from "../hooks";
+import { settlementSourcesFollowOriginal } from "../invoiceSources";
 import type { Invoice, InvoiceCorrection, Settlement } from "../types";
 
 type UploadedAttachment = {
@@ -75,35 +76,6 @@ async function uploadUnclaimedProof(file: File, entityType: "PAYMENT" | "PAYMENT
   data.set("file", file);
   data.set("entity_type", entityType);
   return api<UploadedAttachment>("/api/attachments", { method: "POST", body: data });
-}
-
-function settlementSourcesFollowOriginal(
-  originalIds: number[],
-  replacementIds: number[],
-  settlementById: Map<number, Settlement>,
-) {
-  if (!originalIds.length || replacementIds.length !== originalIds.length) return false;
-  const originalIdSet = new Set(originalIds);
-  const matchedOriginalIds = new Set<number>();
-
-  for (const replacementId of replacementIds) {
-    let current = settlementById.get(replacementId);
-    const visited = new Set<number>();
-    let matchedId: number | null = null;
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id);
-      const replacedId = current.replaces_settlement_id;
-      if (replacedId == null) break;
-      if (originalIdSet.has(replacedId)) {
-        matchedId = replacedId;
-        break;
-      }
-      current = settlementById.get(replacedId);
-    }
-    if (matchedId == null || matchedOriginalIds.has(matchedId)) return false;
-    matchedOriginalIds.add(matchedId);
-  }
-  return matchedOriginalIds.size === originalIdSet.size;
 }
 
 type PendingRefund = {

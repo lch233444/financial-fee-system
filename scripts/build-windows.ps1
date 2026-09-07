@@ -8,8 +8,28 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
-$ProjectDriveRoot = [System.IO.Path]::GetPathRoot($ProjectRoot)
-$TestTempRoot = Join-Path $ProjectDriveRoot ".ffsys-build-tmp"
+$TestTempRoot = Join-Path (Split-Path $ProjectRoot -Parent) ".ffsys-build-tmp"
+# Keep test resources bounded on Windows desktops with many logical CPUs.
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:OMP_NUM_THREADS = "1"
+$env:GOMAXPROCS = "2"
+New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
+$env:TEMP = $TestTempRoot
+$env:TMP = $TestTempRoot
+
+function Remove-BuildDirectory([string]$Target) {
+    $Expected = [IO.Path]::GetFullPath($Target)
+    if ($Expected -notin @([IO.Path]::GetFullPath($ReleaseRoot), [IO.Path]::GetFullPath($TestTempRoot))) {
+        throw "拒绝清理未登记的构建目录：$Expected"
+    }
+    if (Test-Path -LiteralPath $Expected) {
+        $Item = Get-Item -LiteralPath $Expected -Force
+        if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "拒绝清理重解析目录：$Expected"
+        }
+        Remove-Item -LiteralPath $Expected -Recurse -Force
+    }
+}
 $ConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "backend\app\config.py")
 $VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"')
 if (-not $VersionMatch.Success) {
@@ -42,27 +62,29 @@ if ($ActualTemplateHash -ne $ExpectedTemplateHash) {
 }
 
 if (Test-Path -LiteralPath $ReleaseRoot) {
-    Remove-Item -LiteralPath $ReleaseRoot -Recurse -Force
+    Remove-BuildDirectory $ReleaseRoot
 }
 
 if (-not (Test-Path -LiteralPath $VenvPython)) {
     throw "开发环境尚未安装，请先运行scripts/setup-dev.ps1。"
 }
-if ($PnpmExecutable) {
-    & $PnpmExecutable --dir (Join-Path $ProjectRoot "frontend") run build
-} elseif (Get-Command pnpm -ErrorAction SilentlyContinue) {
-    & pnpm --dir (Join-Path $ProjectRoot "frontend") run build
-} elseif (Get-Command corepack -ErrorAction SilentlyContinue) {
-    & corepack pnpm --dir (Join-Path $ProjectRoot "frontend") run build
-} else {
-    throw "未找到pnpm或corepack。"
-}
-if ($LASTEXITCODE -ne 0) {
-    throw "前端生产构建失败，Windows发布已停止。"
+foreach ($FrontendCheck in @("test", "build")) {
+    if ($PnpmExecutable) {
+        & $PnpmExecutable --dir (Join-Path $ProjectRoot "frontend") run $FrontendCheck
+    } elseif (Get-Command pnpm -ErrorAction SilentlyContinue) {
+        & pnpm --dir (Join-Path $ProjectRoot "frontend") run $FrontendCheck
+    } elseif (Get-Command corepack -ErrorAction SilentlyContinue) {
+        & corepack pnpm --dir (Join-Path $ProjectRoot "frontend") run $FrontendCheck
+    } else {
+        throw "未找到pnpm或corepack。"
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "前端 $FrontendCheck 失败，Windows发布已停止。"
+    }
 }
 
 if (Test-Path -LiteralPath $TestTempRoot) {
-    Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
+    Remove-BuildDirectory $TestTempRoot
 }
 New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
 $env:TEMP = $TestTempRoot
@@ -79,7 +101,7 @@ $OrderedTests = @($BackupTests) + $RemainingTests
 & $VenvPython -m pytest $OrderedTests -q -p no:cacheprovider --basetemp (Join-Path $TestTempRoot "basetemp")
 $TestExitCode = $LASTEXITCODE
 if ($TestExitCode -ne 0) {
-    Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
+    Remove-BuildDirectory $TestTempRoot
     throw "后端测试失败，Windows发布已停止。"
 }
 
@@ -193,9 +215,9 @@ Windows ProductVersion：$AppVersion
 Windows FileVersion：$ExpectedFileVersion
 Excel母版 SHA-256：$ActualTemplateHash
 Tesseract SHA-256：$ActualTesseractHash
-后端完整测试和前端生产构建已由本脚本先行通过。
+后端完整测试、前端交互测试和前端生产构建已由本脚本先行通过。
 "@
 Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8
-Remove-Item -LiteralPath $TestTempRoot -Recurse -Force
+Remove-BuildDirectory $TestTempRoot
 
 Write-Host "Windows一键版已生成：$ReleaseApp"

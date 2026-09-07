@@ -1,27 +1,41 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
 export function useApiList<T>(path: string, refreshKey = 0) {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const requestId = useRef(0);
+  const controller = useRef<AbortController | null>(null);
 
   const reload = useCallback(async () => {
+    const id = ++requestId.current;
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
     setLoading(true);
     setError("");
     try {
-      setData(await api<T[]>(path));
+      const next = await api<T[]>(path, { signal: request.signal });
+      if (id !== requestId.current) return false;
+      setData(next);
       return true;
     } catch (err) {
+      if (id !== requestId.current) return false;
       setError(err instanceof Error ? err.message : "读取失败");
       return false;
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, [path]);
 
   useEffect(() => {
+    setData([]);
     void reload();
+    return () => {
+      ++requestId.current;
+      controller.current?.abort();
+    };
   }, [reload, refreshKey]);
 
   return { data, loading, error, reload, setData };

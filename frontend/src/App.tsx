@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import { Building2, Calculator, Database, FileScan, Gauge, Menu, Power, ReceiptText, UsersRound, WalletCards, X } from "lucide-react";
 import DashboardPage from "./pages/DashboardPage";
 import SetupPage from "./pages/SetupPage";
@@ -43,6 +43,7 @@ const navigation: Array<{ id: Page; label: string; sub: string; icon: typeof Gau
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
+  const hasNavigated = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [shutdownState, setShutdownState] = useState<ShutdownState>("idle");
@@ -55,17 +56,20 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
+    let cancelled = false;
     api<Array<{ id: number }>>("/api/companies")
       .then((companies) => {
-        if (!companies.length) {
+        if (!cancelled && !hasNavigated.current && !companies.length) {
           setPage("setup");
           setToast("首次使用：请先建立Company、FC、Platform和Fee Plan");
         }
       })
       .catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
   function navigate(target: Page) {
+    hasNavigated.current = true;
     setPage(target);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -122,7 +126,7 @@ export default function App() {
       </aside>
       {sidebarOpen ? <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="关闭菜单" /> : null}
       <main>
-        <header className="topbar"><button className="menu-button" onClick={() => setSidebarOpen(true)}><Menu /></button><div><span className="live-dot" />本地数据库已连接</div><time>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(new Date())}</time></header>
+        <header className="topbar"><button className="menu-button" onClick={() => setSidebarOpen(true)}><Menu /></button><div>本机财务工作台</div><time>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(new Date())}</time></header>
         <div className="content">{pages[page]}</div>
       </main>
       {toast ? <div className="toast"><span>✓</span>{toast}</div> : null}

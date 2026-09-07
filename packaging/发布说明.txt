@@ -1,119 +1,41 @@
 金融计划收费计算系统 MVP 0.2.20
-构建日期：2026-09-04
+程序发布记录：2026-09-04
+文档修订：2026-09-07
 
-当前状态：0.2.20已完成未Finalized资金流水受控更正、完整回归、Windows候选、正式数据包备份与F盘隔离预检、同版数据包恢复及8000端口正式切换。
+本次修订只整理源码仓库文档，未重新构建EXE或替换既有正式运行包。
+当前开发依据：docs/项目说明书.md；财务操作步骤：docs/用户操作手册.md。
 
-0.2.20主要更新：
-- “资金与余额”的最近资金流水新增“更正”入口，可修改资金生效日期、Contribution/Withdrawal类型、金额和备注，并必须填写2至500字符更正原因。
-- 更正保留原Transaction ID和已有凭证，审计记录保存原因及更正前后值；相同内容重复提交会被拒绝。
-- 原日期或新日期落入Finalized Settlement期间时均禁止更正，并显示锁定该流水的Settlement；未Finalized Draft在更正后必须重新Calculate。
-- 本版不修改数据库结构、季度边界、Settlement/Invoice/Payment、附件文件或Excel母版；Alembic head继续为d4f8a1c73b29，Trigger继续为57个。
+当前功能
+- Windows单机、浏览器操作、loopback监听、页面内安全退出。
+- Company/FC/Client/Sub Account资料、eMPF账单人工复核、余额快照、资金流水与凭证。
+- 本地Tesseract OCR与固定gpt-5.6-sol辅助识别；独立ChatGPT登录，用户主动触发一次，人工确认后才入账。
+- 逐Sub Account独立HWM和20%收费，合计到客户季度Invoice；签发冻结明细与双语PDF。
+- 一次性收款、公司承担差额、错单替代、现金转配和有凭证退款。
+- 内部Excel/Settlement PDF导出；同版本全量数据包交接、跨数据目录整体覆盖导入。
+- 0.2.20新增未锁定普通资金流水受控更正，保留原ID/凭证和前后值/原因；相关Draft需重新Calculate。
 
-0.2.20最终验收：
-- 后端完整回归362/362与前端TypeScript/Vite生产构建通过；最终资源为index-DGrCqzYT.js和index-DAkh9ICn.css，项目文档检查通过。
-- Windows包于2026-09-04 15:54:08 +08:00构建；最终文档同步后写入构建结果.txt前405个文件、614373831字节，写入后406个文件、614374532字节。EXE SHA-256为1D791591DACABF3CDE463A63F3E296600B33A5EE3F7624FBDBA96A18A0CCAF48，ProductVersion/FileVersion为0.2.20/0.2.20.0。
-- 8001纯合成候选完成流水更正、原凭证保留、单条审计、重复更正拒绝、Q2重算、Finalize后锁定和浏览器界面验收；50条OpenAPI路径、禁缓存、head d4f8a1c73b29、完整性、外键0和57个Trigger通过。
-- 切换前0.2.19数据包副本0.2.19正式切换前数据包_20260904_Q3.zip为887774字节，SHA-256为B0DF1D0A6C5151D5B9F3AD234E09A0745F98C63C51D46646D049865FF3F14BDE，已完成F盘隔离导入、重启和0.2.20接管预检。
-- 正式0.2.20已从F:\财务系统\金融计划收费系统_Windows运行版_0.2.20_20260904\FinancialFeeSystem接管127.0.0.1:8000和原数据根。升级后同版数据包副本0.2.20正式数据包_20260904_Q3.zip为887771字节，SHA-256为F90A607C4695D2BC908108FED3E82603CA7C4F66162C3B77B92B3E158737E584，已在第二个F盘隔离根完成全量覆盖导入复验。
-- 旧0.2.19正式目录已移入Windows回收站。验收未查询或输出客户业务行，未打开客户文件，未调用Sol/Luna，未修改Excel母版。
+当前重要限制
+- F-01：采用前季末Beginning时，季度首日流水的实体凭证复验有遗漏；Finalize成功不代替财务核对原件。
+- F-02：跳过中间季度后，参与后续结算的中间季度流水仍可能被更正。必须按已确认规则先补齐季度，当前程序尚未完整拦截跳季。
+- F-03：已签发Invoice后新增遗漏平台，同组更正可能被来源替代链校验阻止；不得删除来源或另开第二张活动季度单绕过。
+- 因计算失误，原收100、正确应收120时，保留100现金，公司承担20并记录原因，客户不补款；公司差额不属于现金收入。
+- 当前未提供普通流水删除/冲正、手工Snapshot和普通附件的完整更正/删除、统一审计时间线或任意版式OCR。
+- 本次文档整理未修复上述程序缺陷。完整条件及代码依据见项目说明书“已知问题”。
 
-0.2.19历史主要更新与验收：
-- 自然季度Starting Date继续为季度首日；首次结算可选择紧邻的上一季末Snapshot作为Beginning，季度首日生效资金会计入本季。
-- Calculate、Finalize、凭证保护和SQLite Trigger统一按Beginning Snapshot日期之后至Closing Date汇总资金；数据库head为d4f8a1c73b29，Trigger总数57。
-- 季度边界针对性24/24、后端完整回归360/360及构建内第二轮360/360通过；正式0.2.19曾从F:\财务系统\金融计划收费系统_Windows运行版_0.2.19_20260904\FinancialFeeSystem接管127.0.0.1:8000。
+使用与数据
+- 完整解压并保留FinancialFeeSystem文件夹，双击启动脚本或EXE，不单独复制EXE。
+- 数据根与程序目录分开；新电脑首次选择目录。源代码、程序、业务数据分别交接。
+- 完整数据包年度季度只是复核批次，不筛选数据。双方应用版本必须完全相同，导入覆盖接收方当前资料，不合并。
+- 登录凭据不随数据包迁移；新电脑由本人在系统专用环境授权ChatGPT。
+- 本地OCR不上传；点击Sol辅助识别时图片发送给OpenAI。失败转人工，不切第二模型。
+- 关闭请使用“安全退出系统”；程序运行时不得手工复制SQLite或移动附件归档。
+- 当前范围为Windows单机，Defer及服务器/多用户不在本版本能力内。
 
-0.2.18历史主要更新：
-- 客户Invoice中英文PDF融合A版清晰结构与B版深蓝、香槟金质感，升级标题、客户资料、账单项目、总额和付款说明的视觉层级。
-- 客户PDF保留Company、Client、Sub Account、Settlement Period、Fee Plan服务说明、HKD金额、Invoice No、Issue/Due Date和付款资料，不显示Trustee、Platform或Platform Code。
-- 签发前内部页面仍显示Platform、Fee Plan和Scheme以便辨认；底层冻结来源、跨Platform合并、金额、编号、付款和更正规则均不改变。已签发归档PDF不重生成，只有新签发Invoice使用新模板。
-- 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
+版本及验证证据
+- APP_VERSION/ProductVersion：0.2.20；Windows FileVersion：0.2.20.0。
+- 数据库目标head：d4f8a1c73b29；目标57个Trigger。EXE、母版及依赖校验值见构建清单.txt。
+- 2026-09-04交付记录：后端362/362、前端构建、Windows候选、正式备份与隔离恢复、正式切换通过。
+- 2026-09-07文档整理前复核：后端361/362，唯一失败为文档固定版本句式；前端构建通过，并额外复现F-01/F-02/F-03。
+- 本次文档修正版本声明，专项验收见项目说明书。历史全量测试成绩不证明本次重新执行过Windows发布验收，也不证明已知缺陷消失。
 
-0.2.18历史验收：
-- Invoice PDF专项20/20、后端完整回归357/357及构建内第二轮357/357通过；前端TypeScript/Vite 7.3.6生产构建通过，最终资源为index-CEC_S9AS.js和index-DAkh9ICn.css，项目文档检查通过。
-- Windows包于2026-09-04 13:35:17 +08:00构建；写入构建结果.txt前403个文件、614322908字节，写入后404个文件、614323609字节。EXE SHA-256为D1885972A71C6FE6A96A8F559A1286F13BA878613B30A4C7A21695742FB68AD4，ProductVersion/FileVersion为0.2.18/0.2.18.0。
-- 8001候选版使用纯合成资料完成两个Platform、两个Sub Account的结算和合并Invoice签发；中英文单页A4的字段、金额、付款资料、版面及Trustee/Platform/Platform Code不外显均通过，数据库head、完整性、外键0和57个Trigger正常。
-- 正式切换前0.2.17创建2026/Q3完整数据包financial_system_data_package_2026_Q3_20260904_133808_455462_30riaqax.zip，639648字节，SHA-256为B83290FEC8FEA46104CCD4DB452862BB858E9F9F05318AE500BC7A79E1A6641C，API副本一致；同版导入F盘隔离数据根并重启后，再由0.2.18接管，结构和恢复状态全部通过。
-- 正式0.2.18位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.18_20260904\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；版本、进程路径、EXE、49条OpenAPI路径、前端、禁缓存、Sol、数据库结构和无恢复残留均通过。验收未读取客户业务内容、未调用Sol/Luna、未修改Excel母版。
-- 旧0.2.17正式目录、固定候选、构建产物、纯合成候选、隔离预检和本批测试临时目录已移入Windows回收站，可恢复；本机活动运行目录只保留0.2.18，正式数据根、备份及数据包继续保留。
-
-0.2.17历史主要更新：
-- “数据与系统”把整库备份入口升级为按年度、季度标记的完整数据包导出/导入；年度、季度只作复核批次标签，每包仍包含导出时的全部资料和受控业务文件。
-- 新数据包只允许完全相同的系统版本及当前数据库revision导入；接收方导入后完整覆盖本机资料，不做追加或合并。
-- 支持两台电脑使用不同盘符或数据目录。导入时只修改临时数据库副本内的Statement、Attachment、ExportRecord和Invoice PDF路径，复验数据库完整性、外键、57个Trigger及全部文件哈希后才提交。
-- 严格校验扩展到全部Attachment、ExportRecord和Invoice中英文PDF；旧版完整备份仍按旧规则兼容，但不获得新的跨路径保证。
-- 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
-
-0.2.17历史验收：
-- 完整数据包专项62/62、相关导出与数据包69/69、后端完整回归356/356和前端TypeScript/Vite生产构建通过；最终资源为index-CEC_S9AS.js和index-DAkh9ICn.css，项目文档检查通过。
-- Windows包于2026-09-04 11:47:08 +08:00构建；写入构建结果.txt前403个文件、614301097字节，写入后404个文件、614301798字节。EXE SHA-256为13F03E9739915F8C1BFA64BAE5DBE7B6F27B42257E97322C7C98A5B91A69104E，ProductVersion/FileVersion为0.2.17/0.2.17.0。
-- 候选版在两个不同F盘纯合成数据根完成2026/Q3数据包导出、完整覆盖导入、自动退出和重启；资料与附件转移、附件哈希、四类路径重定向、完整性、外键0、57个Trigger、无恢复残留及浏览器无横向溢出均通过。
-- 正式切换前0.2.16创建financial_system_backup_20260904_115132_097175_b0icn7wa.zip，639599字节，SHA-256为6D61A97291E9AF781463FDD44D976100A4A8F183FCE87CC38A264DDA18631B0F，API副本一致；0.2.17创建financial_system_data_package_2026_Q3_20260904_115224_264023_kg42jhv6.zip，639647字节，SHA-256为73DB05797C5C04BAF00B20058C307FCA48DB8F8F384EE72728A22D58310BD4F0，API副本一致，F盘隔离导入及重启预检通过。
-- 正式0.2.17位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.17_20260904\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；版本、进程路径、EXE、49条OpenAPI路径、前端、禁缓存、Sol、数据库结构和正式浏览器页面验收通过。旧0.2.16、固定候选、构建产物、纯合成数据根、隔离预检和精确测试临时目录已移入Windows回收站，可恢复；本机只保留0.2.17正式运行目录，正式数据根、备份及数据包继续保留。
-
-0.2.16历史主要更新：
-- 用户主动触发的ChatGPT Pro辅助识别固定从gpt-5.6-luna切换为gpt-5.6-sol；请求与回执都必须是精确Sol模型，不调用第二模型。
-- 保持低推理档位、严格财务字段Schema、本地OCR独立结果、逐字段差异和人工最终确认；AI结果不能自动入账。
-- 页面、状态和安全退出提示统一显示Sol。LunaCodexHome目录及luna_document_type_reviewed字段仅为兼容现有登录和旧客户端保留。
-- 数据库结构不变，继续使用Alembic head c1a7d5e9b402及57个Trigger；Excel母版不修改。
-
-0.2.16验收：
-- 后端353/353完整回归和前端TypeScript/Vite生产构建通过；最终资源为index-CfnBQxXk.js和index-BoYfTAme.css。
-- Windows包于2026-09-03 16:45:01 +08:00构建；写入结果文件前403个文件、613863716字节，写入后404个文件、613864417字节。EXE SHA-256为CE12DBE8B7BAC8BA30D1257D8C1596D4215FFE5C3271660E8D02F42D58DDE5A7，ProductVersion/FileVersion为0.2.16/0.2.16.0。
-- 用户明确授权的指定测试图片已由Sol完成一次识别并通过严格财务字段Schema；仅输出非敏感状态，不生成财务入账。
-- 8001候选及正式浏览器验收均确认Sol界面无Luna残留、无横向溢出且控制台无告警；49条OpenAPI路径、最新资源、入口no-store、Sol精确模型及ready状态均通过。
-- 正式切换前备份financial_system_backup_20260903_164924_726172_v0x_wd3d.zip为554659字节，SHA-256为3FF6B716D6599DFFBCD696A88F9F0B00E7FD84CA2C33E01CBFBBC32153D6109E，API副本一致；严格验证及F盘隔离启动预检确认head c1a7d5e9b402、完整性、外键0和57个Trigger正常。
-- 正式0.2.16位于F:\财务系统\金融计划收费系统_Windows运行版_0.2.16_20260903\FinancialFeeSystem，已接管127.0.0.1:8000和既有数据根；旧0.2.15目录已移入Windows回收站，可恢复。
-
-0.2.15历史主要更新：
-- “客户与账户清单”为Client和Sub Account增加受控删除按钮。仅在没有任何业务、附件、导出或历史引用时允许删除；系统不猜测资料是否为测试数据，不会连带删除其他记录。
-- “账单导入”允许删除未确认记录；已确认误入账须填写2至500字符原因，而且只能在唯一Balance Snapshot关系完整、原件与SHA-256一致、没有进入Settlement、没有附件/导出/重复后继引用时撤销。成功后只删除该次导入、由它生成且未使用的Snapshot、持仓、识别结果和原件，Client及Sub Account继续保留。
-- 删除原件先同目录暂存，数据库提交后才清理；新上传原件先建立`.upload-pending`安全标记。异常按数据库、审计、精确路径和SHA-256恢复或收尾，证据不明确时停止启动。上传、OCR、Luna、确认和删除共享互斥保护，避免同一账单被同时改动。
-- Client、Sub Account、Statement Import和Balance Snapshot使用持久编号高水位；已经删除的编号不会分配给未来新记录。升级前若历史Statement删除编号已与现存记录撞号，只有唯一旧删除审计在类型、保留字段和严格时序全部可证明时，迁移才会保留原详情并追加独立更正审计；其他模糊情形仍安全停止。
-- Alembic head升级为c1a7d5e9b402，新增4个删除保护Trigger，总数57；备份新增Statement Import数据库记录与归档原件的路径、全集和SHA-256交叉校验。
-- 公司Excel母版未修改，SHA-256继续为16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
-
-0.2.15验收：
-- 后端352/352、前端TypeScript/Vite生产构建通过；资源为index-CKCifoas.js和index-BoYfTAme.css。
-- Windows包构建时间为2026-09-01 23:26:35 +08:00；写入结果文件前403个文件、613852656字节，写入后404个文件、613853357字节；EXE SHA-256为42442BFCF26693E5BEFD722BB146C697B6734A071BA6618A1E297B2DA847DC51，ProductVersion/FileVersion为0.2.15/0.2.15.0。
-- 8001纯合成删除闭环、严格备份、head c1a7d5e9b402、完整性、外键、57个Trigger、页面无横向溢出及控制台无告警通过；未读取真实客户文件或调用Luna。
-- 正式切换前备份financial_system_backup_20260901_233123_452757_tvghcclt.zip为978172字节，SHA-256为121D882F259F619C5095B8B4D7B1CB53E5C6FBB937E736CF99D7D83703F88519，API副本一致。最终Windows候选在F盘隔离副本完成升级和获批2条账单删除预检后，旧0.2.14才安全退出。0.2.15已从F:\财务系统\金融计划收费系统_Windows运行版_0.2.15_20260901\FinancialFeeSystem接管127.0.0.1:8000；正式库中该2条账单已删除，新删除审计恰好2条，head c1a7d5e9b402、完整性、外键0、57个Trigger及无pending均通过。删除后备份financial_system_backup_20260901_233658_829621_tnoatd06.zip为55272字节，SHA-256为854706D90A7D7569CDFF220B1CB10142C5E82E2C9948FA1F2BA14567DD4FB842，已严格验证。旧0.2.14目录共403个文件、613708412字节，已整体移入Windows回收站，可恢复；活动运行目录只保留0.2.15。
-
-0.2.14沿用的核心能力：
-- Settlement页面新增Finalized作废入口。作废记录永久保留；同一Client、Platform、Fee Plan、年度、季度组合仅允许一个非VOID活动版本，后续重建按version_no和replaces_settlement_id形成不可覆盖的v1→v2→v3替代链。
-- Settlement Calculate取得SQLite写锁后判断活动版本并创建替代草稿；Finalize继续按当前资料重新计算、拒绝陈旧Draft，并保持结算、资金、余额、凭证及HWM关系冻结。
-- Payment业务状态收敛为UNPAID/PAID，逾期只作独立提示。每张Invoice只允许一次付款确认；付款/退款方式必须去空格后非空，付款必须绑定数据库内未占用的实体凭证，且磁盘原文件存在、非空、大小和SHA-256一致。占用按Attachment关系和凭证外键判断；SHA-256只证明文件完整性，相同哈希不自动代表同一业务凭证。
-- 付款确认同时记录实际现金和公司承担差额，两者必须精确等于Invoice金额；差额大于零时必须填写原因，差额为零时拒绝无意义的差额原因。Payment INSERT由数据库原子认领凭证并生成绑定该Payment的可选差额及初始现金分配，普通差额不能独立插入。系统不再接受多笔或部分付款。
-- 错单不删除原Invoice、编号、PDF或现金事实。Invoice Correction以OPEN→COMPLETED处理：原因去空格后至少2字符；原Invoice转VOID时强制作废时间和2至500字符原因并在之后冻结；先用不可变REVERSAL冲回当前活动现金分配，再把本轮可处置现金分配到完整Settlement替代链生成的新Invoice，或登记有实体凭证的退款。
-- 连续更正必须先完成上一轮；OPEN期间替代Invoice必须保持资金空白，也不能提前登记付款或发起嵌套更正。REVERSAL在OPEN立即生效，新分配、退款和更正差额只有完成态守恒校验通过后才同时进入会计值。每轮满足“REVERSAL=新分配+本轮退款”，全链满足“净分配+累计退款=原Payment现金”，已退款金额不能再次使用。
-- 新Alembic迁移7f3c2a91b6e4重建Settlement活动唯一约束，收紧Payment凭证外键并新增PaymentAllocation、PaymentRefund、InvoiceAdjustment和InvoiceCorrection不可变账本及SQLite Trigger。旧库仅在既有Invoice已由Payment合计完整结清、每笔Payment均有独立且物理一致的付款凭证时自动回填；尚未结清、缺证、共用凭证、外键异常或半迁移结构会在写入前安全停止。历史多笔Payment若合计恰好全额且逐笔合规会无损保留，新版本不再允许新增多笔付款。
-- 备份校验同时逐笔对照数据库Payment/PaymentRefund凭证关系与归档实体，核验归属、唯一受控路径、非空普通文件、大小、数据库SHA-256及Manifest SHA-256；旧9d Payment缺证或归档凭证被篡改、删去时拒绝。
-- 备份严格验证同时识别旧正式head 9d2f6a8c4b13和新head 7f3c2a91b6e4各自结构，不把半迁移数据库当作有效恢复源。
-- Settlement及Invoice页面显示版本、替代关系、二态付款、更正、分配、差额、退款和凭证信息，并对Void、付款及更正操作提供受控确认和防重复提交。
-- 公司Excel母版未修改，SHA-256保持16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145。
-
-0.2.14历史发布验收：
-- 后端完整回归260/260、数据库核心专项49/49、备份专项52/52以及前端TypeScript/Vite 7.3.6生产构建通过；最终前端资源为index-gxMgisA1.js和index-Bb_qOqzJ.css。
-- Windows包于2026-09-01 04:08:59 +08:00构建，写入构建结果.txt前401个文件、613697621字节；FinancialFeeSystem.exe SHA-256为B0DE1AE4439CFB8ACDB773D127F4A1FBDE8F230DAC82970839CF3B67834CC73B，ProductVersion/FileVersion为0.2.14/0.2.14.0。
-- 8001端口纯合成HTTP及浏览器验收通过：Settlement v1/v2/v3收费为120.00/100.00/90.00，原120.00现金经20.00和10.00有凭证退款后最终Invoice为PAID 90.00；400/409/422、原PDF哈希、严格备份、页面无横向溢出和控制台无告警均通过。
-- 正式备份financial_system_backup_20260901_041300_780215_2mlboy8f.zip共1517367字节，SHA-256为0EF541673DB0FFAE2377DAFE678B0805D42BAC00C929256C50BC878F2D59C538，API副本一致；F盘隔离副本9d2f6a8c4b13→7f3c2a91b6e4迁移通过，integrity_check=ok、外键违规0、53个Trigger且无恢复残留。
-- 正式0.2.14已从F:\财务系统\金融计划收费系统_Windows运行版_0.2.14_20260901\FinancialFeeSystem接管127.0.0.1:8000和既有数据根；正式目录含配置和结果文件共403个文件、613708412字节，49条OpenAPI路径、Settlement Void端点及Invoice Correction四项端点（合计5条相关新路径）、最新前端、no-store、EXE版本/哈希及数据库结构均通过。旧0.2.13已停止并移入Windows回收站。
-- 验收未读取或输出真实客户业务内容、未打开真实客户文件、未调用Luna，也未修改Excel母版。固定release、构建产物、候选/隔离预检及本批精确测试临时目录共31个目标、2549个文件、1132227932字节已永久清理；正式运行目录、真实数据根及完整备份未删除。
-
-启动方式：
-1. 保持本文件、FinancialFeeSystem.exe、_internal、Tesseract-OCR、Codex和docs在同一文件夹。
-2. 双击“启动金融计划收费系统.bat”或FinancialFeeSystem.exe。
-3. 首次启动选择数据保存目录；系统随后自动打开浏览器。
-4. 使用完毕时点击左侧栏底部“安全退出系统”，无需进入任务管理器。
-
-注意：
-- 不要只复制exe，完整文件夹才是一键运行版。
-- 系统仅监听127.0.0.1，不开放外网。
-- 客人账单和数据库只保存在首次选择的数据目录；运行目录不等于数据目录。
-- 本地OCR不上传客人账单。只有用户主动点击“Sol辅助识别”时，当前账单图片才会发送给OpenAI。
-- ChatGPT Pro辅助识别不使用OpenAI API Key；所需Codex程序已包含在发布包中，首次使用需在本系统专用环境单独完成一次浏览器登录。
-- ChatGPT未登录、登录失效、额度不足或Sol不可用时，系统直接转人工复核，本地OCR和其他财务功能不受影响。
-- AI模型固定为gpt-5.6-sol，出现冲突、错误或不可用时不会切换其他模型再次识别。
-- AI结果不能直接入账，仍须财务人员在原图旁确认。
-- 页面内“退出ChatGPT Pro”只退出本系统专用Sol环境，不影响桌面Codex；“安全退出系统”会先停止本程序启动的识别进程，再正常停止本地服务，不会删除财务数据。
-- 前端入口页禁止缓存，升级后不会继续显示上一版界面。
-- 需要迁移电脑时，请先在系统内建立并验证完整备份。
+历史版本细节通过Git追溯；本文件仅描述当前版本及有日期的相关证据。

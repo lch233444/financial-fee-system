@@ -84,18 +84,3 @@ export function Loading() {
 export function ErrorBanner({ message }: { message: string }) {
   return <div className="error-banner">{message}</div>;
 }
-
-export function SystemExitScreen({ complete, message }: { complete: boolean; message: string }) {
-  return (
-    <main className="system-exit-screen" role="status" aria-live="polite">
-      <section className="system-exit-card">
-        <div className={complete ? "system-exit-mark complete" : "system-exit-mark"} aria-hidden="true">
-          {complete ? "✓" : <span />}
-        </div>
-        <h1>{complete ? "系统已安全退出" : "正在安全退出系统"}</h1>
-        <p>{message}</p>
-        <small>{complete ? "若页面没有自动关闭，现在可以直接关闭此页面。" : "正在停止本地服务与本程序启动的Sol识别进程，请稍候。"}</small>
-      </section>
-    </main>
-  );
-}

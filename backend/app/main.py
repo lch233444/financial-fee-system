@@ -12,10 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_VERSION, LOOPBACK_HOSTS, get_settings
 from .database import init_db
-from .routes import ai_assistant, attachments, invoices, master, settlements, statements, system
+from .routes import ai_assistant, attachments, browser_sessions, invoices, master, settlements, statements, system
+from .services.browser_sessions import BrowserSessions
 from .services.backup import apply_pending_restore
 from .services.codex_app_server import get_codex_app_server
 from .services.statement_delete_recovery import reconcile_statement_delete_pending_files
+from .services.shutdown import get_shutdown_coordinator
 
 
 @asynccontextmanager
@@ -23,9 +25,12 @@ async def lifespan(_app: FastAPI):
     apply_pending_restore()
     init_db()
     reconcile_statement_delete_pending_files()
+    sessions = BrowserSessions(get_shutdown_coordinator())
+    _app.state.browser_sessions = sessions
     try:
         yield
     finally:
+        await sessions.close()
         get_codex_app_server().close()
 
 
@@ -139,6 +144,7 @@ app.include_router(invoices.router)
 app.include_router(invoices.correction_router)
 app.include_router(attachments.router)
 app.include_router(system.router)
+app.include_router(browser_sessions.router)
 app.include_router(ai_assistant.router)
 
 

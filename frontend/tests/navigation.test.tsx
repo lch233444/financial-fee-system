@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import App from "../src/App";
+vi.mock("../src/useBrowserSession", () => ({ useBrowserSession: vi.fn() }));
 
 vi.mock("../src/pages/DashboardPage", () => ({ default: () => <div>概览页面</div> }));
 vi.mock("../src/pages/SetupPage", () => ({ default: () => <div>设置页面</div> }));
@@ -16,4 +17,5 @@ test.each([false, true])("初始化慢请求不覆盖用户导航（已导航=%s
   await act(async () => resolve(new Response("[]")));
   expect(screen.getByText(navigate ? "客户页面" : "设置页面")).toBeTruthy();
   expect(screen.queryByText("本地数据库已连接")).toBeNull();
+  expect(screen.queryByRole("button", { name: "安全退出系统" })).toBeNull();
 });

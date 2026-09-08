@@ -8,6 +8,8 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import ProxyHandler, build_opener
 
 import uvicorn
 
@@ -94,21 +96,53 @@ def _port_available(host: str, port: int) -> bool:
             return False
 
 
+def _is_same_running_system(url: str, *, version: str, data_root: Path) -> bool:
+    """Reopen only the expected local app, version, and chosen data directory."""
+    opener = build_opener(ProxyHandler({}))
+    try:
+        def read_json(path: str) -> dict:
+            with opener.open(url + path, timeout=1) as response:
+                value = json.loads(response.read(65537))
+            if not isinstance(value, dict):
+                raise ValueError("Unexpected local service response")
+            return value
+
+        health = read_json("/api/health")
+        info = read_json("/api/system-info")
+        return (
+            health.get("app") == "金融计划收费计算系统"
+            and health.get("status") == "ok"
+            and health.get("version") == version
+            and health.get("local_only") is True
+            and info.get("local_only") is True
+            and isinstance(info.get("data_root"), str)
+            and Path(info["data_root"]).resolve() == data_root.resolve()
+        )
+    except (OSError, URLError, ValueError, TypeError):
+        return False
+
+
 def main() -> None:
     _prepare_data_root()
     # Import only after FINANCIAL_DATA_ROOT is known: database.py creates the
     # SQLite engine during import and must bind to the selected directory.
-    from .config import get_settings
-    from .main import app
+    from .config import APP_VERSION, get_settings
     from .services.shutdown import get_shutdown_coordinator
 
     settings = get_settings()
-    if not _port_available(settings.host, settings.port):
-        raise SystemExit(f"端口{settings.port}已被占用，请关闭已运行的系统后重试。")
     browser_host = f"[{settings.host}]" if ":" in settings.host else settings.host
+    url = f"http://{browser_host}:{settings.port}"
+    if not _port_available(settings.host, settings.port):
+        if _is_same_running_system(url, version=APP_VERSION, data_root=settings.data_root):
+            if os.getenv("FINANCIAL_NO_BROWSER") != "1":
+                webbrowser.open(url)
+            return
+        raise SystemExit(f"端口{settings.port}被其他程序、不同版本或不同数据目录的系统占用，请核实后重试。")
+    from .main import app
+
     if os.getenv("FINANCIAL_NO_BROWSER") != "1":
         threading.Timer(
-            1.2, lambda: webbrowser.open(f"http://{browser_host}:{settings.port}")
+            1.2, lambda: webbrowser.open(url)
         ).start()
     # PyInstaller's windowed mode intentionally has no stdout/stderr stream.
     # Uvicorn's default colour formatter probes isatty() on that missing

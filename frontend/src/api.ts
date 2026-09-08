@@ -76,17 +76,6 @@ export function recognizeStatementWithAi(importId: number): Promise<StatementImp
   return postJson<StatementImport>(`/api/statement-imports/${importId}/ai-recognize`, {});
 }
 
-export type ShutdownResult = {
-  status: "shutting_down";
-  accepted: boolean;
-  already_requested: boolean;
-  message: string;
-};
-
-export function shutdownFinancialSystem(): Promise<ShutdownResult> {
-  return postJson<ShutdownResult>("/api/shutdown", {});
-}
-
 export async function download(path: string, suggestedName: string, options: RequestInit = {}): Promise<void> {
   const response = await fetch(path, withFinancialSystemRequestHeader(options));
   if (!response.ok) {

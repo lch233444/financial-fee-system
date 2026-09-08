@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
-import { Building2, Calculator, Database, FileScan, Gauge, Menu, Power, ReceiptText, UsersRound, WalletCards, X } from "lucide-react";
+import { Building2, Calculator, Database, FileScan, Gauge, Menu, ReceiptText, UsersRound, WalletCards, X } from "lucide-react";
 import DashboardPage from "./pages/DashboardPage";
 import SetupPage from "./pages/SetupPage";
 import ClientsPage from "./pages/ClientsPage";
@@ -8,27 +8,10 @@ import TransactionsPage from "./pages/TransactionsPage";
 import SettlementsPage from "./pages/SettlementsPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import SystemPage from "./pages/SystemPage";
-import { api, shutdownFinancialSystem } from "./api";
-import { SystemExitScreen } from "./components";
+import { api } from "./api";
+import { useBrowserSession } from "./useBrowserSession";
 
 type Page = "dashboard" | "setup" | "clients" | "imports" | "transactions" | "settlements" | "invoices" | "system";
-type ShutdownState = "idle" | "requesting" | "exiting" | "exited";
-
-const pause = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-
-async function waitForLocalServerToStop(timeoutMilliseconds = 6000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    await pause(250);
-    try {
-      const response = await fetch("/api/health", { cache: "no-store" });
-      if (!response.ok) return true;
-    } catch {
-      return true;
-    }
-  }
-  return false;
-}
 
 const navigation: Array<{ id: Page; label: string; sub: string; icon: typeof Gauge }> = [
   { id: "dashboard", label: "经营概览", sub: "Dashboard", icon: Gauge },
@@ -42,12 +25,11 @@ const navigation: Array<{ id: Page; label: string; sub: string; icon: typeof Gau
 ];
 
 export default function App() {
+  useBrowserSession();
   const [page, setPage] = useState<Page>("dashboard");
   const hasNavigated = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState("");
-  const [shutdownState, setShutdownState] = useState<ShutdownState>("idle");
-  const [shutdownMessage, setShutdownMessage] = useState("安全退出请求已发送，请稍候。");
 
   useEffect(() => {
     if (!toast) return;
@@ -75,28 +57,6 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
-  async function shutdown() {
-    if (shutdownState !== "idle") return;
-    const confirmed = window.confirm(
-      "确定安全退出金融计划收费系统吗？\n\n系统会停止本地服务和本程序启动的Sol识别进程；尚未提交的表单内容将不会保存。",
-    );
-    if (!confirmed) return;
-    setSidebarOpen(false);
-    setShutdownState("requesting");
-    try {
-      const result = await shutdownFinancialSystem();
-      setShutdownMessage(result.message);
-      setShutdownState("exiting");
-      const stopped = await waitForLocalServerToStop();
-      setShutdownMessage(stopped ? "本地服务与Sol识别进程已停止。" : "安全退出指令已执行，可以关闭此页面。");
-      setShutdownState("exited");
-      window.setTimeout(() => window.close(), 500);
-    } catch (error) {
-      setShutdownState("idle");
-      setToast(error instanceof Error ? `安全退出失败：${error.message}` : "安全退出失败，请重试");
-    }
-  }
-
   const pages: Record<Page, ReactElement> = {
     dashboard: <DashboardPage />,
     setup: <SetupPage notify={setToast} />,
@@ -108,10 +68,6 @@ export default function App() {
     system: <SystemPage notify={setToast} />,
   };
 
-  if (shutdownState === "exiting" || shutdownState === "exited") {
-    return <SystemExitScreen complete={shutdownState === "exited"} message={shutdownMessage} />;
-  }
-
   return (
     <div className="app-shell">
       <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
@@ -119,9 +75,6 @@ export default function App() {
         <nav>{navigation.map((item) => { const Icon = item.icon; return <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => navigate(item.id)}><Icon size={20} /><span><b>{item.label}</b><small>{item.sub}</small></span></button>; })}</nav>
         <div className="sidebar-footer">
           <div className="sidebar-local-status"><span className="local-dot" /><span>仅本机运行<strong>127.0.0.1</strong></span></div>
-          <button className="shutdown-button" type="button" disabled={shutdownState !== "idle"} onClick={() => void shutdown()}>
-            <Power size={16} />{shutdownState === "requesting" ? "正在安全退出…" : "安全退出系统"}
-          </button>
         </div>
       </aside>
       {sidebarOpen ? <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="关闭菜单" /> : null}

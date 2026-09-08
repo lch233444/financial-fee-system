@@ -7,7 +7,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      "/api": { target: "http://127.0.0.1:8000", ws: true },
     },
   },
   build: {
@@ -15,4 +15,3 @@ export default defineConfig({
     sourcemap: false,
   },
 });
-

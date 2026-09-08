@@ -1,8 +1,8 @@
-金融计划收费计算系统 MVP 0.2.21 Windows运行版构建清单
-文档修订：2026-09-07；依据当前scripts/build-windows.ps1；候选证据见项目说明书。
+金融计划收费计算系统 MVP 0.2.22 Windows运行版构建清单
+文档修订：2026-09-08；依据当前scripts/build-windows.ps1；候选证据见项目说明书。
 
 一、当前构建契约
-- 应用版本：0.2.21；Windows ProductVersion：0.2.21；FileVersion：0.2.21.0。
+- 应用版本：0.2.22；Windows ProductVersion：0.2.22；FileVersion：0.2.22.0。
 - 数据库head：e8b2c6d91a04；目标57个Trigger；结构数量不能替代业务验收。
 - 固定候选输出：release/FinancialFeeSystem。构建开始清理上一候选，不能把真实数据放入该目录。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
@@ -21,9 +21,9 @@
 - 构建脚本在docs/build-dependencies中保留本次依赖锁文件，在程序根生成构建结果.txt，记录实际时间、文件数、字节数、EXE哈希和Windows版本。
 - 不复制历史构建结果充当新产物证据；文档更改也不表示现有正式包内容已同步。
 
-三、0.2.21候选验收
-- 构建时间：2026-09-07 15:01:36 +08:00；EXE SHA-256：016991A01DC164B53BAC4EB4CF9B5CFFAA53CDC86CC78F60E64F72D28BD2369A。
-- 后端377/377、前端20/20、生产构建及Windows构建通过；8001/8002隔离EXE、Company保存、财务更正、实体凭证保护、跨目录恢复、安全退出及中英文PDF视觉验收通过。
+三、0.2.22候选验收
+- 构建时间：2026-09-08 11:33:56 +08:00；EXE SHA-256：CBAFF01987EC1A6B7539B2E3D67C99BDE60A99BBE5E38032F064E9ABA071275F。
+- 后端384/384、前端20/20、生产及Windows构建通过；隔离8001验证双语缴费单、跨平台单一服务费金额、指定期限、历史归档字节不变、内部结算明细及安全退出。标准单各1页、长说明各3页逐页视觉检查通过；head e8b2c6d91a04、完整性ok、外键0、57个Trigger。
 - 正式包未切换；详细证据及限制见项目说明书第11.3节。
 
 四、当前正式包的历史交付标识

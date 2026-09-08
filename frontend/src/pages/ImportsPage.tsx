@@ -1,3 +1,4 @@
+import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
@@ -617,7 +618,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div> : null}
             </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Sol。本地OCR结果仍可由财务人工复核；运行Sol前请确认可以将此账单发送至OpenAI。</span></div>}
 
-            <Field label="匹配已有Sub Account" hint="每次切换导入记录都会清空选择；请按Client、Platform、Account Number及Scheme核对"><select name="account_id" value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}><option value="">自动匹配 / 创建草稿</option>{accounts.data.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
+            <Field group label="匹配已有Sub Account" hint="每次切换导入记录都会清空选择；请按Client、Platform、Account Number及Scheme核对"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId} onChange={setSelectedAccountId} placeholder="自动匹配 / 创建草稿" searchPlaceholder="搜索客户、账户号码或平台…" options={accounts.data.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>
             <Field label="Client Name" hint={confidence(selected, "client_name")}><input name="client_name" required value={reviewValues.client_name} onChange={(event) => setReviewValues((current) => ({ ...current, client_name: event.target.value }))} /></Field>
             <Field label="Account Number" hint={confidence(selected, "account_number")}><input name="account_number" required value={reviewValues.account_number} onChange={(event) => setReviewValues((current) => ({ ...current, account_number: event.target.value }))} /></Field>
             <Field label="Scheme Name"><input name="scheme_name" value={reviewValues.scheme_name} onChange={(event) => setReviewValues((current) => ({ ...current, scheme_name: event.target.value }))} /></Field>

@@ -1,3 +1,4 @@
+import SearchableSelect from "../SearchableSelect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Calculator, CheckCircle2, Download, FileText, Trash2 } from "lucide-react";
 import { api, download, postJson } from "../api";
@@ -323,7 +324,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       {error || settlements.error ? <ErrorBanner message={error || settlements.error} /> : null}
       <Panel title="建立结算组合" subtitle="首次账户需选择Beginning Snapshot并输入自己的Original HWM；自然季度首日可选择上一季末Snapshot；账单导入不会自动计算或Finalize">
         <div className="settlement-controls">
-          <Field label="Client"><select disabled={settlementMutationBusy} value={clientId} onChange={(e) => { invalidateResult(); setClientId(e.target.value); }}><option value="">请选择</option>{clients.data.filter((x) => x.status === "ACTIVE").map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          <Field group label="Client"><SearchableSelect label="结算客户" disabled={settlementMutationBusy} value={clientId} onChange={(value) => { invalidateResult(); setClientId(value); }} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
           <Field label="Platform"><select disabled={settlementMutationBusy} value={platformId} onChange={(e) => { invalidateResult(); setPlatformId(e.target.value); }}><option value="">请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="Fee Plan"><select disabled={settlementMutationBusy} value={planId} onChange={(e) => { invalidateResult(); setPlanId(e.target.value); }}><option value="">请选择</option>{plans.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="Year"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { invalidateResult(); setYear(Number(e.target.value)); }} /></Field>
@@ -365,7 +366,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         <div className="settlement-controls internal-export-filters">
           <Field label="Year"><select value={exportYear} onChange={(e) => setExportYear(Number(e.target.value))}>{exportYears.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
           <Field label="Quarter"><select value={exportQuarter} onChange={(e) => setExportQuarter(e.target.value)}><option value="">全部季度</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select></Field>
-          <Field label="Client"><select value={exportClientId} onChange={(e) => setExportClientId(e.target.value)}><option value="">全部客户</option>{clients.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+          <Field group label="Client"><SearchableSelect label="导出客户" value={exportClientId} onChange={setExportClientId} placeholder="全部客户" options={clients.data.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
         </div>
         {exportableSettlements.length ? <>
           <div className="internal-export-toolbar">

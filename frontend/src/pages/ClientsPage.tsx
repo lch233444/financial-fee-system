@@ -1,3 +1,4 @@
+import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, patchJson, postJson } from "../api";
@@ -16,6 +17,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [clientCompanyId, setClientCompanyId] = useState("");
   const [accountClientId, setAccountClientId] = useState("");
+  const [clientSearch, setClientSearch] = useState("");
+  const visibleClients = clients.data.filter((item) => matchesSearch(item.name, clientSearch));
   const [draftClientId, setDraftClientId] = useState("");
   const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
@@ -162,7 +165,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
         </Panel>
         <Panel title="新增Sub Account" subtitle="币种固定为HKD">
           <form className="form-grid" onSubmit={(e) => void submitAccount(e)}>
-            <Field label="Client"><select name="client_id" value={accountClientId} required onChange={(e) => setAccountClientId(e.target.value)}><option value="" disabled>请选择</option>{clients.data.filter((x) => x.status === "ACTIVE").map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+            <Field group label="Client"><SearchableSelect label="新增账户客户" name="client_id" value={accountClientId} required onChange={setAccountClientId} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
             <Field label="Platform"><select name="platform_id" defaultValue="" required><option value="" disabled>请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Fee Plan"><select name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.filter((x) => !selectedAccountClient?.company_id || x.company_id === selectedAccountClient.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Account Number"><input name="account_number" required /></Field>
@@ -176,18 +179,14 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
 
       <div className="split-layout">
         <Panel title="补全待确认Client" subtitle="OCR建立的Draft必须补齐归属和开始日期后才能激活">
-          <Field label="选择Draft Client">
-            <select
-              value={draftClientId}
-              onChange={(event) => {
-                const next = clients.data.find((item) => item.id === Number(event.target.value));
-                setDraftClientId(event.target.value);
+          <Field group label="选择Draft Client">
+            <SearchableSelect label="待确认客户" value={draftClientId}
+              onChange={(value) => {
+                const next = clients.data.find((item) => item.id === Number(value));
+                setDraftClientId(value);
                 setDraftClientCompanyId(next?.company_id ? String(next.company_id) : "");
               }}
-            >
-              <option value="">请选择</option>
-              {clients.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+              options={clients.data.filter((item) => item.status === "DRAFT").map((item) => ({ value: String(item.id), label: item.name }))} />
           </Field>
           {selectedDraftClient ? (
             <form className="form-grid" key={selectedDraftClient.id} onSubmit={(event) => void completeDraftClient(event)}>
@@ -220,9 +219,11 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       </div>
 
       <Panel title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
+        <div className="list-search"><Field label="搜索客户"><input type="search" value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="输入客户名称…" /></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
+        {clientSearch.trim() && !visibleClients.length ? <EmptyState title="未找到匹配的客户" detail="请更换关键词或清空搜索。" /> : null}
         {clients.data.length ? (
           <div className="client-list">
-            {clients.data.map((client) => {
+            {visibleClients.map((client) => {
               const rows = accounts.data.filter((account) => account.client_id === client.id);
               return <article className="client-card" key={client.id}>
                 <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>

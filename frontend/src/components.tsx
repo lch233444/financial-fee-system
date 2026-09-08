@@ -25,13 +25,14 @@ export function Panel({ title, subtitle, children, className = "" }: PropsWithCh
   );
 }
 
-export function Field({ label, hint, children }: PropsWithChildren<{ label: string; hint?: string }>) {
+export function Field({ label, hint, children, group = false }: PropsWithChildren<{ label: string; hint?: string; group?: boolean }>) {
+  const Container = group ? "div" : "label";
   return (
-    <label className="field">
+    <Container className="field">
       <span>{label}</span>
       {children}
       {hint ? <small>{hint}</small> : null}
-    </label>
+    </Container>
   );
 }
 

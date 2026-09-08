@@ -180,7 +180,7 @@ def generate_invoice_pdf(
     """Render a customer payment notice; keep calculation detail in internal exports."""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    company = invoice.company
+    company = getattr(invoice, "payee_company", None) or invoice.company
     client = invoice.client
     is_english = language == "en"
     dynamic_text = "\n".join(

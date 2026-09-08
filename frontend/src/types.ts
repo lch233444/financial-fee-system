@@ -210,6 +210,8 @@ export type Settlement = {
   }>;
 };
 export type Invoice = {
+  payee_company_id: number;
+  can_correct_company: boolean;
   id: number;
   settlement_id: number;
   settlement_ids: number[];
@@ -262,6 +264,9 @@ export type PaymentRecord = {
 };
 
 export type InvoiceCorrection = {
+  target_company_id: number | null;
+  target_company_name: string | null;
+  original_company_name: string;
   id: number;
   status: "OPEN" | "COMPLETED";
   reason: string;

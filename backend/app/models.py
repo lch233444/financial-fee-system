@@ -319,6 +319,9 @@ class Invoice(TimestampMixin, Base):
         ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True
     )
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
+    # The settlement's service ownership stays in company_id. NULL preserves
+    # the original payee for invoices created before company-only corrections.
+    payee_company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
     fc_id: Mapped[int] = mapped_column(ForeignKey("fcs.id", ondelete="RESTRICT"), index=True)
     invoice_number: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="DRAFT", index=True)
@@ -334,7 +337,8 @@ class Invoice(TimestampMixin, Base):
     settlement: Mapped[QuarterlySettlement] = relationship()
     client: Mapped[Client] = relationship()
     fee_plan: Mapped[FeePlan] = relationship()
-    company: Mapped[Company] = relationship()
+    company: Mapped[Company] = relationship(foreign_keys=[company_id])
+    payee_company: Mapped[Company | None] = relationship(foreign_keys=[payee_company_id])
     fc: Mapped[FC] = relationship()
     sources: Mapped[list[InvoiceSource]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan"
@@ -360,6 +364,14 @@ class Invoice(TimestampMixin, Base):
         back_populates="invoice", foreign_keys="PaymentAllocation.invoice_id"
     )
     adjustments: Mapped[list[InvoiceAdjustment]] = relationship(back_populates="invoice")
+
+    @property
+    def receiving_company(self) -> Company:
+        return self.payee_company or self.company
+
+    @property
+    def receiving_company_id(self) -> int:
+        return self.payee_company_id if self.payee_company_id is not None else self.company_id
 
 
 class InvoiceSource(TimestampMixin, Base):
@@ -508,6 +520,8 @@ class InvoiceCorrection(TimestampMixin, Base):
     )
     status: Mapped[str] = mapped_column(String(20), default="OPEN", index=True)
     reason: Mapped[str] = mapped_column(Text)
+    target_company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
+    target_company: Mapped[Company | None] = relationship()
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

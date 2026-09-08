@@ -3,11 +3,17 @@ from sqlalchemy.orm import Session
 from ..models import Invoice, QuarterlySettlement
 
 
-def settlements_follow_original(db: Session, original: Invoice, settlements: list[QuarterlySettlement]) -> bool:
+def settlements_follow_original(db: Session, original: Invoice, settlements: list[QuarterlySettlement], *, same_sources: bool = False) -> bool:
     """Cover every old source with its replacement; allow additional, distinct platforms."""
     originals = {source.settlement_id: db.get(QuarterlySettlement, source.settlement_id) for source in original.sources}
     if not originals or any(item is None for item in originals.values()):
         return False
+    if same_sources:
+        return (
+            len(settlements) == len(originals)
+            and {item.id for item in settlements} == set(originals)
+            and all(item.status == "FINALIZED" for item in settlements)
+        )
     original_platforms = {item.platform_id for item in originals.values()}
     matched_ids: set[int] = set()
     seen_platforms: set[int] = set()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import MetaData, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import application_root, get_settings
@@ -76,11 +76,22 @@ def init_db() -> None:
             "payment_refunds",
             "invoice_adjustments",
         }
-        Base.metadata.create_all(
+        # Bootstrap only the pre-payee shape. A missing table must not gain
+        # future columns before the real revision can install their guards.
+        bootstrap_metadata = MetaData()
+        for table in Base.metadata.sorted_tables:
+            table.to_metadata(bootstrap_metadata)
+        bootstrap_invoice = bootstrap_metadata.tables["invoices"]
+        payee_column = bootstrap_invoice.c.payee_company_id
+        for foreign_key in list(payee_column.foreign_keys):
+            bootstrap_invoice.constraints.discard(foreign_key.constraint)
+            bootstrap_invoice.foreign_keys.discard(foreign_key)
+        bootstrap_invoice._columns.remove(payee_column)
+        bootstrap_metadata.create_all(
             bind=engine,
             tables=[
                 table
-                for table_name, table in Base.metadata.tables.items()
+                for table_name, table in bootstrap_metadata.tables.items()
                 if table_name not in settlement_ledger_table_names
             ],
         )
@@ -488,7 +499,20 @@ def init_db() -> None:
                         workflow_trigger_sql_is_legacy,
                     )
                     if workflow_trigger_sql_is_current(trigger_sql):
-                        command.stamp(alembic_config, "head")
+                        from .services.invoice_payee_contract import PAYEE_REVISION, payee_schema_is_current, payee_trigger_sql_is_current
+                        target_columns = {column["name"] for column in refreshed_inspector.get_columns("invoice_corrections")}
+                        has_payee = "payee_company_id" in invoice_columns
+                        has_target = "target_company_id" in target_columns
+                        if has_payee or has_target:
+                            with engine.connect() as payee_connection:
+                                payee_shape_valid = payee_schema_is_current(payee_connection)
+                            if not (has_payee and has_target and payee_shape_valid
+                                    and payee_trigger_sql_is_current(trigger_sql)):
+                                raise RuntimeError("未版本化数据库的收款公司字段或保护不完整；已停止启动")
+                            command.stamp(alembic_config, PAYEE_REVISION)
+                        else:
+                            command.stamp(alembic_config, "e8b2c6d91a04")
+                            command.upgrade(alembic_config, "head")
                     elif workflow_trigger_sql_is_legacy(trigger_sql):
                         command.stamp(alembic_config, "d4f8a1c73b29")
                         command.upgrade(alembic_config, "head")
@@ -598,7 +622,11 @@ def init_db() -> None:
                     'trg_transactions_block_finalized_period',
                     'trg_transactions_update_block_frozen_period',
                     'trg_transactions_delete_block_frozen_period',
-                    'trg_invoice_correction_validate_update'
+                    'trg_invoice_correction_validate_update',
+                    'trg_invoice_correction_validate_insert',
+                    'trg_invoice_financial_header_update_lock',
+                    'trg_invoice_validate_issue',
+                    'trg_settlement_validate_void'
                 )
                 """
             ).fetchall()
@@ -615,3 +643,8 @@ def init_db() -> None:
 
     if not workflow_trigger_sql_is_current(current_trigger_sql):
         raise RuntimeError("数据库财务流程Trigger语义不完整；系统已停止启动，请使用已验证备份并人工检查")
+    from .services.invoice_payee_contract import payee_schema_is_current, payee_trigger_sql_is_current
+    with engine.connect() as payee_connection:
+        payee_shape_valid = payee_schema_is_current(payee_connection)
+    if not payee_trigger_sql_is_current(current_trigger_sql) or not payee_shape_valid:
+        raise RuntimeError("数据库Invoice收款公司保护不完整；系统已停止启动")

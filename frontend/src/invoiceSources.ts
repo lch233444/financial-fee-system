@@ -1,9 +1,12 @@
 import type { Settlement } from "./types";
 
-export function settlementSourcesFollowOriginal(originalIds: number[], replacementIds: number[], settlementById: Map<number, Settlement>) {
+export function settlementSourcesFollowOriginal(originalIds: number[], replacementIds: number[], settlementById: Map<number, Settlement>, sameSources = false) {
   if (!originalIds.length) return false;
   const originals = originalIds.map((id) => settlementById.get(id));
   if (originals.some((item) => !item)) return false;
+  if (sameSources) return originalIds.length === replacementIds.length
+    && new Set(replacementIds).size === originalIds.length
+    && replacementIds.every((id) => originalIds.includes(id) && settlementById.get(id)?.status === "FINALIZED");
   const original = originals[0]!;
   const originalPlatforms = new Set(originals.map((item) => item!.platform_id));
   const originalIdSet = new Set(originalIds);

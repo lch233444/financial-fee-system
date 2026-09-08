@@ -23,3 +23,13 @@ test.each([
 ])("拒绝$description", ({ ids, changes }) => {
   expect(settlementSourcesFollowOriginal([1], ids, sources(changes))).toBe(false);
 });
+
+test("公司更正只接受完全相同且仍Finalized的来源，财务更正仍须版本链", () => {
+  const current = sources([{ status: "FINALIZED" }]);
+  expect(settlementSourcesFollowOriginal([1, 3], [3, 1], current, true)).toBe(true);
+  for (const ids of [[1], [1, 1], [2, 3], [1, 2, 3]]) {
+    expect(settlementSourcesFollowOriginal([1, 3], ids, current, true)).toBe(false);
+  }
+  expect(settlementSourcesFollowOriginal([1], [1], sources(), true)).toBe(false);
+  expect(settlementSourcesFollowOriginal([1], [1], current)).toBe(false);
+});

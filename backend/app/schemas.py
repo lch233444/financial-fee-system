@@ -276,7 +276,9 @@ class PaymentCreate(BaseModel):
 
 
 class InvoiceCorrectionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     reason: str = Field(min_length=2, max_length=500)
+    target_company_id: int | None = Field(default=None, gt=0)
 
     @field_validator("reason")
     @classmethod

@@ -247,7 +247,11 @@ def invoice_dict(item: Invoice) -> dict:
         "adjustment_amount": money_string(adjustment_cents),
         "outstanding_amount": money_string(outstanding_cents),
         "language": item.language,
-        "company_name": item.company.name if item.company else None,
+        "company_name": item.receiving_company.name if item.receiving_company else None,
+        "payee_company_id": item.receiving_company_id,
+        "can_correct_company": (item.lifecycle_status == "ISSUED" and not item.payments
+                                and not item.payment_allocations and not item.adjustments
+                                and item.original_correction is None),
         "fc_name": item.fc.name if item.fc else None,
         "issue_recovery": issue_recovery,
         "void_reason": item.void_reason,
@@ -279,6 +283,9 @@ def invoice_correction_dict(item: InvoiceCorrection) -> dict:
         correction_payments[allocation.payment_id] = allocation.payment
     return {
         "id": item.id,
+        "target_company_id": item.target_company_id,
+        "target_company_name": item.target_company.name if item.target_company else None,
+        "original_company_name": original.receiving_company.name,
         "status": item.status,
         "reason": item.reason,
         "opened_at": item.opened_at.isoformat(),

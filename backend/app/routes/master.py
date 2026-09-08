@@ -21,6 +21,7 @@ from ..models import (
     Invoice,
     InvoiceLine,
     InvoiceSequence,
+    InvoiceCorrection,
     Platform,
     QuarterlySettlement,
     SettlementAccountLine,
@@ -362,7 +363,8 @@ def delete_company(company_id: int, db: Session = Depends(get_db)) -> dict:
                 .where(QuarterlySettlement.company_id == company_id)
                 .limit(1),
             ),
-            ("Invoice", select(Invoice.id).where(Invoice.company_id == company_id).limit(1)),
+            ("Invoice", select(Invoice.id).where((Invoice.company_id == company_id) | (Invoice.payee_company_id == company_id)).limit(1)),
+            ("Invoice收款公司更正", select(InvoiceCorrection.id).where(InvoiceCorrection.target_company_id == company_id).limit(1)),
             (
                 "Invoice编号序列",
                 select(InvoiceSequence.id).where(InvoiceSequence.company_id == company_id).limit(1),

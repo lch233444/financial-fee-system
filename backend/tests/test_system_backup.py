@@ -7,6 +7,7 @@ import sqlite3
 import warnings
 import zipfile
 from collections.abc import Callable
+from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -237,7 +238,7 @@ def _seed_payment_and_refund_proofs() -> dict[str, object]:
         db.commit()
         invoice_id = invoice.id
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with closing(sqlite3.connect(settings.database_path)) as connection, connection:
         trigger_names = (
             "trg_invoice_validate_issue",
             "trg_invoice_lifecycle_transition",
@@ -475,7 +476,7 @@ def test_data_package_rebases_all_persisted_file_paths_for_another_computer(
     assert target_invoice_pdf.read_bytes() == invoice_pdf.read_bytes()
     assert target_extra_export.read_bytes() == extra_export.read_bytes()
 
-    with sqlite3.connect(target_settings.database_path) as connection:
+    with closing(sqlite3.connect(target_settings.database_path)) as connection, connection:
         assert connection.execute(
             "SELECT stored_path FROM statement_imports WHERE id = ?", (statement.id,)
         ).fetchone() == (str(target_statement_path),)
@@ -655,7 +656,7 @@ def test_backup_creation_rejects_missing_or_tampered_financial_proof(
 
 def test_archive_context_rejects_legacy_payment_without_proof(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy-null-proof.sqlite3"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.executescript(
             """
             CREATE TABLE payments (id INTEGER PRIMARY KEY, proof_attachment_id INTEGER);
@@ -749,8 +750,25 @@ def test_successful_restore_staging_schedules_shutdown_and_blocks_later_writes()
     assert fake.events == ["request", "execute"]
 
 
-def test_backup_restore_preserves_database_files_and_hashes() -> None:
+def test_backup_restore_preserves_database_files_and_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
     init_db()
+    # Keep references so garbage collection cannot hide a leaked fixture
+    # connection and make Windows directory replacement depend on test order.
+    connections: list[sqlite3.Connection] = []
+    original_connect = sqlite3.connect
+
+    def track_connection(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", track_connection)
+        _seed_payment_and_refund_proofs()
+    assert connections
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
     settings = get_settings()
     attachment = settings.data_root / "attachments" / "backup-roundtrip.txt"
     attachment.write_text("original attachment", encoding="utf-8")
@@ -1209,7 +1227,7 @@ def test_restore_accepts_complete_supported_7f_database(
     alembic_config.set_main_option("sqlalchemy.url", legacy_settings.database_url)
     command.upgrade(alembic_config, "7f3c2a91b6e4")
 
-    with sqlite3.connect(legacy_settings.database_path) as connection:
+    with closing(sqlite3.connect(legacy_settings.database_path)) as connection, connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
         ).fetchone() == (53,)
@@ -1254,7 +1272,7 @@ def test_restore_rejects_9d_head_with_incomplete_trigger_set(
     alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
     alembic_config.set_main_option("sqlalchemy.url", legacy_settings.database_url)
     command.upgrade(alembic_config, "9d2f6a8c4b13")
-    with sqlite3.connect(legacy_settings.database_path) as connection:
+    with closing(sqlite3.connect(legacy_settings.database_path)) as connection, connection:
         connection.execute("DROP TRIGGER trg_settlement_validate_finalize")
 
     def replace_with_incomplete_9d_database(files: dict[str, bytes], manifest: dict) -> None:

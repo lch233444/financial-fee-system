@@ -761,19 +761,19 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
         assert issued.status_code == 200, issued.text
 
         expected_english = (
-            "PAYMENT NOTICE",
+            "Service Fee Payment Notice",
             "CLIENT NAME",
             "SERVICE FEE PAYABLE",
             "PAYMENT DUE DATE",
             "19 Oct 2026",
-            "PAYMENT METHODS",
+            "Payment methods",
             "Bank transfer",
             "Cheque",
             "Bank: Sample Bank",
             "Payable to Sample Financial Services Limited",
         )
         expected_chinese = (
-            "繳費單", "客戶名稱", "應繳服務費", "付款期限", "19/10/2026",
+            "服務費繳款通知書", "客戶名稱", "應繳服務費", "付款期限", "19/10/2026",
             "付款方式", "銀行轉賬", "支票",
         )
 

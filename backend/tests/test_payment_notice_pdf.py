@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -70,4 +71,36 @@ def test_long_payment_instructions_flow_across_pages_without_lost_lines(tmp_path
     for line in instructions:
         assert line in text
     assert "Payable to Example Company" in text
+    assert text.count("HKD 1,280.50") == 1
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("long_field_first", [False, True])
+def test_labelled_bank_details_preserve_long_values_and_unstructured_text(tmp_path, language, long_field_first) -> None:
+    long_holder = "示例戶名" * 900
+    bank_lines = ["Bank: Example <Bank> & Partners", f"Account name: {long_holder}"]
+    if long_field_first:
+        bank_lines.reverse()
+    notice = _notice(
+        bank=(
+            "\n".join(bank_lines) + "\n"
+            "Account number: 000-123-456\n"
+            "https://example.test/pay?ref=A&B\n"
+            "Reference: keep this free-text instruction."
+        ),
+        cheque="Payable to Example Company",
+    )
+    path = generate_invoice_pdf(invoice=notice, output_path=tmp_path / "bank.pdf", language=language)
+    pages = PdfReader(path).pages
+    text = " ".join(" ".join(page.extract_text() for page in pages).split())
+    assert len(pages) > 1
+    assert "示例戶名" in "".join(pages[0].extract_text().split())
+    assert "Bank: Example <Bank> & Partners" in text
+    # Continuation page numbers are separate from the bank field content.
+    body_text = "".join(re.sub(r"(?m)^(?:Page|頁) \d+\s*$", "", page.extract_text()) for page in pages)
+    assert long_holder in "".join(body_text.split())
+    assert "Account number: 000-123-456" in text
+    assert "https://example.test/pay?ref=A&B" in text
+    assert "Reference: keep this free-text instruction." in text
+    assert "Payable to Example Company" in pages[-1].extract_text()
     assert text.count("HKD 1,280.50") == 1

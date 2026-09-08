@@ -5,13 +5,14 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.platypus import (
+    CondPageBreak,
     HRFlowable,
     KeepTogether,
     Paragraph,
@@ -31,11 +32,11 @@ PALE = colors.HexColor("#F3F7FA")
 TEXT = colors.HexColor("#1D2935")
 MUTED = colors.HexColor("#657786")
 
-INVOICE_NAVY = colors.HexColor("#102A43")
-INVOICE_GOLD = colors.HexColor("#C7A35A")
-INVOICE_PALE = colors.HexColor("#F7F5F0")
-INVOICE_TEXT = colors.HexColor("#1F2933")
-INVOICE_MUTED = colors.HexColor("#657786")
+INVOICE_TEXT = colors.HexColor("#25282B")
+INVOICE_MUTED = colors.HexColor("#686D72")
+INVOICE_RULE = colors.HexColor("#B4B8BB")
+INVOICE_INK = colors.HexColor("#193D52")
+INVOICE_TINT = colors.HexColor("#F1F5F7")
 
 
 def _register_chinese_font() -> str:
@@ -58,6 +59,26 @@ def _register_chinese_font() -> str:
 
 def _money(cents: int) -> str:
     return f"HKD {from_cents(int(cents)):,.2f}"
+
+
+def _invoice_fonts(needs_chinese: bool) -> tuple[str, str]:
+    if not needs_chinese:
+        return "Helvetica", "Helvetica-Bold"
+    # Prefer the Windows Traditional Chinese family for customer notices.
+    # Register real bold glyphs instead of rendering every level at one weight.
+    for family, regular_file, bold_file in (
+        ("MicrosoftJhengHei", "msjh.ttc", "msjhbd.ttc"),
+        ("MicrosoftYaHei", "msyh.ttc", "msyhbd.ttc"),
+    ):
+        try:
+            for name, filename in ((family, regular_file), (f"{family}-Bold", bold_file)):
+                if name not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(TTFont(name, str(Path(r"C:\Windows\Fonts") / filename)))
+            return family, f"{family}-Bold"
+        except (OSError, TTFError):
+            continue
+    font = _register_chinese_font()
+    return font, "Helvetica-Bold" if font == "Helvetica" else font
 
 
 def _labels(language: str) -> dict[str, str]:
@@ -173,49 +194,54 @@ def generate_invoice_pdf(
             client.name,
         )
     )
-    font = (
-        _register_chinese_font()
-        if not is_english or not dynamic_text.isascii()
-        else "Helvetica"
-    )
-    bold_font = "Helvetica-Bold" if font == "Helvetica" else font
+    font, bold_font = _invoice_fonts(not is_english or not dynamic_text.isascii())
     body = ParagraphStyle(
         "notice-body",
         fontName=font,
-        fontSize=10,
+        fontSize=9.5,
         leading=16,
         textColor=INVOICE_TEXT,
         wordWrap="CJK",
         splitLongWords=True,
     )
     small = ParagraphStyle(
-        "notice-small", parent=body, fontSize=9, leading=14, textColor=INVOICE_MUTED,
+        "notice-small", parent=body, fontSize=8.5, leading=13, textColor=INVOICE_MUTED,
     )
     heading = ParagraphStyle(
         "notice-heading", parent=body, fontName=bold_font,
-        fontSize=11, leading=16, textColor=INVOICE_NAVY, keepWithNext=True,
+        fontSize=10, leading=16, textColor=INVOICE_INK, keepWithNext=True,
     )
     payment_heading = ParagraphStyle(
-        "notice-payment-heading", parent=heading, spaceAfter=4 * mm,
+        "notice-payment-heading", parent=heading, fontSize=12, spaceAfter=5 * mm,
     )
+    method_heading = ParagraphStyle("notice-method-heading", parent=heading, keepWithNext=False)
     company_style = ParagraphStyle(
-        "notice-company", parent=heading, fontSize=15, leading=21,
+        "notice-company", parent=heading, fontSize=16, leading=23, spaceAfter=2 * mm,
     )
     title_style = ParagraphStyle(
-        "notice-title", parent=heading, fontSize=21, leading=26, alignment=TA_RIGHT,
+        "notice-title", parent=heading, fontSize=21, leading=29,
+        alignment=TA_CENTER, spaceAfter=2 * mm,
+    )
+    subtitle_style = ParagraphStyle(
+        "notice-subtitle", parent=small, fontName="Helvetica", fontSize=8,
+        alignment=TA_CENTER, spaceAfter=10 * mm,
     )
     value = ParagraphStyle(
-        "notice-value", parent=heading, fontSize=14, leading=21, keepWithNext=False,
+        "notice-value", parent=body, fontSize=11.5, leading=18,
     )
+    right_small = ParagraphStyle("notice-small-right", parent=small, alignment=TA_RIGHT)
+    right_value = ParagraphStyle("notice-value-right", parent=value, alignment=TA_RIGHT)
     amount = ParagraphStyle(
-        "notice-amount", parent=value, fontSize=28, leading=36, alignment=TA_RIGHT,
+        "notice-amount", parent=value, fontName=bold_font,
+        fontSize=23, leading=30, alignment=TA_RIGHT, textColor=INVOICE_INK,
     )
     copy = {
-        "title": "PAYMENT NOTICE" if is_english else "繳費單",
+        "title": "Service Fee Payment Notice" if is_english else "服務費繳款通知書",
+        "subtitle": "" if is_english else "SERVICE FEE PAYMENT NOTICE",
         "client": "CLIENT NAME" if is_english else "客戶名稱",
         "due": "PAYMENT DUE DATE" if is_english else "付款期限",
         "fee": "SERVICE FEE PAYABLE" if is_english else "應繳服務費",
-        "payment": "PAYMENT METHODS" if is_english else "付款方式",
+        "payment": "Payment methods" if is_english else "付款方式",
         "bank": "Bank transfer" if is_english else "銀行轉賬",
         "cheque": "Cheque" if is_english else "支票",
         "contact": (
@@ -234,68 +260,100 @@ def generate_invoice_pdf(
     )
     doc = SimpleDocTemplate(
         str(output_path), pagesize=A4,
-        leftMargin=18 * mm, rightMargin=18 * mm,
-        topMargin=20 * mm, bottomMargin=20 * mm,
+        leftMargin=22 * mm, rightMargin=22 * mm,
+        topMargin=22 * mm, bottomMargin=24 * mm,
         title=copy["title"], author=company.name,
     )
     # SimpleDocTemplate's frame adds 6 pt of inner padding on each side.
     content_width = doc.width - 12
-    header = Table(
-        [[p(company.name, company_style), p(copy["title"], title_style)]],
-        colWidths=[content_width * 105 / 174, content_width * 69 / 174],
-    )
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (0, 0), 8 * mm),
-        ("RIGHTPADDING", (1, 0), (1, 0), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
-    ]))
-    story: list = [header]
+    story: list = [p(company.name, company_style)]
     for text in (company.address, company.contact):
         if text and text.strip():
             story.append(p(text, small))
     story.extend([
         Spacer(1, 6 * mm),
-        HRFlowable(width="100%", thickness=0.9, color=INVOICE_GOLD),
-        Spacer(1, 10 * mm),
+        HRFlowable(width="100%", thickness=1.8, color=INVOICE_INK),
+        Spacer(1, 1 * mm),
+        HRFlowable(width="100%", thickness=0.4, color=INVOICE_RULE),
+        Spacer(1, 9 * mm),
+        p(copy["title"], title_style),
+        p(copy["subtitle"], subtitle_style) if copy["subtitle"]
+        else Spacer(1, subtitle_style.leading + subtitle_style.spaceAfter),
     ])
 
     customer = Table(
-        [[p(copy["client"], small), p(copy["due"], small)],
-         [p(client.name, value), p(due_date, value)]],
-        colWidths=[content_width * 110 / 174, content_width * 64 / 174],
+        [[p(copy["client"], small), p(copy["due"], right_small)],
+         [p(client.name, value), p(due_date, right_value)]],
+        colWidths=[content_width * 0.65, content_width * 0.35],
     )
     customer.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
+        ("BOX", (0, 0), (-1, -1), 0.5, INVOICE_RULE),
+        ("LINEAFTER", (0, 0), (0, -1), 0.5, INVOICE_RULE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
+        ("TOPPADDING", (0, 0), (-1, 0), 4 * mm),
+        ("TOPPADDING", (0, 1), (-1, 1), 1.5 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 0),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 5 * mm),
     ]))
-    story.extend([customer, Spacer(1, 8 * mm)])
+    story.extend([customer, Spacer(1, 7 * mm)])
 
     # One total, taken from the Invoice amount. Do not re-sum live settlements,
     # subtract later payments or display per-account financial calculations.
-    fee_card = Table(
-        [[p(copy["fee"], heading)], [p(_money(invoice.amount_cents), amount)]],
-        colWidths=[content_width],
+    fee_row = Table(
+        [[p(copy["fee"], heading), p(_money(invoice.amount_cents), amount)]],
+        colWidths=[content_width * 0.45, content_width * 0.55],
     )
-    fee_card.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), INVOICE_PALE),
-        ("LINEABOVE", (0, 0), (-1, 0), 1, INVOICE_GOLD),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8 * mm),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8 * mm),
-        ("TOPPADDING", (0, 0), (-1, 0), 6 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 1 * mm),
-        ("TOPPADDING", (0, 1), (-1, 1), 0),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 6 * mm),
+    fee_row.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, -1), INVOICE_TINT),
+        ("LINEABOVE", (0, 0), (-1, -1), 1, INVOICE_INK),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, INVOICE_RULE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 6 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6 * mm),
     ]))
+    method_min_height = method_heading.leading + 2 * body.leading + 4 * mm
     story.extend([
-        KeepTogether([fee_card]), Spacer(1, 12 * mm),
+        fee_row, Spacer(1, 11 * mm),
+        CondPageBreak(payment_heading.leading + payment_heading.spaceAfter + 5 * mm + method_min_height),
         p(copy["payment"], payment_heading),
+        HRFlowable(width="100%", thickness=0.5, color=INVOICE_RULE),
+        Spacer(1, 5 * mm),
     ])
+    # Company payment instructions remain free text. Align only explicitly
+    # labelled bank fields; never infer missing bank data or alter prose/URLs.
+    bank_labels = {
+        "銀行", "银行", "銀行名稱", "银行名称", "收款銀行", "收款银行",
+        "收款戶名", "收款户名", "戶名", "户名", "賬戶名稱", "账户名称",
+        "銀行賬號", "银行账号", "賬號", "账号", "帳號", "帳戶名稱",
+        "bank", "bank name", "account", "account name", "account number", "account no.",
+        "account no", "swift", "swift code",
+    }
+
+    def payment_line(line: str) -> Paragraph | Table:
+        for separator in ("：", ":"):
+            label, found, detail = line.partition(separator)
+            if found and label.strip().lower() in bank_labels and detail.strip():
+                row = Table(
+                    [[p(label + separator, small), p(detail.strip())]],
+                    colWidths=[34 * mm, content_width - 34 * mm],
+                    splitInRow=1,
+                )
+                row.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 3 * mm),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 0),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#DEE5E9")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
+                ]))
+                return row
+        return p(line)
+
     has_payment_method = False
     for label, text in (
         (copy["bank"], company.bank_information),
@@ -303,24 +361,33 @@ def generate_invoice_pdf(
     ):
         if text and text.strip():
             if has_payment_method:
-                story.append(Spacer(1, 6 * mm))
+                story.append(Spacer(1, 7 * mm))
             has_payment_method = True
-            # Keep headings with their first content lines, but allow long
-            # payment instructions to flow across pages without clipping.
-            story.append(p(label, heading))
+            # Reserve room for the label and first lines without binding an
+            # entire long table to the heading (which strands the first page).
+            story.extend([CondPageBreak(method_min_height), p(label, method_heading)])
             for line in text.splitlines():
-                story.append(p(line) if line.strip() else Spacer(1, body.leading))
+                story.append(payment_line(line) if line.strip() else Spacer(1, body.leading))
     if not has_payment_method:
         story.append(p(copy["contact"]))
 
-    def continuation_footer(canvas, document) -> None:
+    def page_furniture(canvas, document) -> None:
         canvas.saveState()
+        left = doc.leftMargin + 6
+        right = A4[0] - doc.rightMargin - 6
+        canvas.setStrokeColor(INVOICE_RULE)
+        canvas.setLineWidth(0.4)
+        canvas.line(left, 18 * mm, right, 18 * mm)
+        canvas.setStrokeColor(INVOICE_INK)
+        canvas.setLineWidth(1.8)
+        canvas.line(left, 18 * mm, left + 18 * mm, 18 * mm)
         canvas.setFont(font, 8)
         canvas.setFillColor(INVOICE_MUTED)
-        canvas.drawRightString(192 * mm, 10 * mm, f"{copy['page']} {document.page}")
+        if document.page > 1:
+            canvas.drawRightString(right, 12 * mm, f"{copy['page']} {document.page}")
         canvas.restoreState()
 
-    doc.build(story, onLaterPages=continuation_footer)
+    doc.build(story, onFirstPage=page_furniture, onLaterPages=page_furniture)
     return output_path
 
 

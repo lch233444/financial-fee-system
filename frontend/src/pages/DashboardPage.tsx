@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound, WalletCards } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Banknote, BriefcaseBusiness, Calculator, CircleDollarSign, FileScan, ReceiptText, UsersRound, WalletCards } from "lucide-react";
 import { api } from "../api";
 import { ErrorBanner, Field, Loading, Money, PageHeader, Panel } from "../components";
 
@@ -23,7 +23,7 @@ type FCReport = {
   service_fee_generated: string;
 };
 
-export default function DashboardPage() {
+export default function DashboardPage({ navigate }: { navigate?: (page: "imports" | "settlements" | "invoices") => void }) {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [quarter, setQuarter] = useState("");
@@ -54,13 +54,14 @@ export default function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="经营概览" subtitle={`${periodLabel} · Dashboard与FC统计使用相同期间口径`} />
-      <Panel title="统计期间" subtitle="Quarter留空时统计所选年度全年">
+      <PageHeader title="经营概览" subtitle="掌握服务费、收款进度与客户管理情况。" />
+
+      <div className="dashboard-period"><div><strong>{periodLabel}</strong><span>期间服务费及收款统计</span></div>
         <div className="settlement-controls dashboard-period-controls">
-          <Field label="Year"><input type="number" min="2000" max="2200" value={year} onChange={(event) => setYear(Number(event.target.value))} /></Field>
-          <Field label="Quarter"><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">全部季度</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select></Field>
+          <Field label="统计年度"><select value={year} onChange={(event) => setYear(Number(event.target.value))}>{Array.from({ length: 201 }, (_, index) => 2200 - index).map((value) => <option key={value} value={value}>{value}年</option>)}</select></Field>
+          <Field label="统计季度"><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">全年 · 全部季度</option><option value="1">Q1 · 第一季度</option><option value="2">Q2 · 第二季度</option><option value="3">Q3 · 第三季度</option><option value="4">Q4 · 第四季度</option></select></Field>
         </div>
-      </Panel>
+      </div>
       {error ? <ErrorBanner message={error} /> : null}
       {!dashboard && !error ? <Loading /> : null}
       {dashboard ? <><div className="stats-grid">
@@ -72,9 +73,15 @@ export default function DashboardPage() {
         <article className="stat-card"><span className="stat-icon red"><AlertTriangle /></span><div><small>逾期账单</small><strong>{dashboard.overdue_invoices}</strong><span>Overdue Invoice</span></div></article>
       </div>
 
+      {navigate ? <div className="quick-actions">
+        <button onClick={() => navigate("imports")}><FileScan size={23} aria-hidden="true" /><span><strong>导入客户账单</strong><small>上传文件，核对余额与账户</small></span><ArrowUpRight size={18} aria-hidden="true" /></button>
+        <button onClick={() => navigate("settlements")}><Calculator size={23} aria-hidden="true" /><span><strong>处理季度结算</strong><small>按账户计算并确认服务费</small></span><ArrowUpRight size={18} aria-hidden="true" /></button>
+        <button onClick={() => navigate("invoices")}><ReceiptText size={23} aria-hidden="true" /><span><strong>开票与收款</strong><small>出具缴费单，登记付款</small></span><ArrowUpRight size={18} aria-hidden="true" /></button>
+      </div> : null}
+
       <Panel title="FC服务统计" subtitle={`${periodLabel} · Service Fee按Settlement锁定时的FC归属汇总，不把Company收款列为FC业绩`}>
         {fcs.length ? (
-          <div className="table-wrap">
+          <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap">
             <table>
               <thead><tr><th>FC</th><th>Company</th><th>当前管理客户</th><th>期间收费客户</th><th>产生Service Fee</th></tr></thead>
               <tbody>

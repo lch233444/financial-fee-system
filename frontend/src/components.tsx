@@ -1,9 +1,11 @@
-import type { PropsWithChildren } from "react";
+import { type PropsWithChildren, useEffect, useId, useRef } from "react";
+import { AlertCircle, ArrowUpRight, Inbox, LoaderCircle } from "lucide-react";
 
 export function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="page-header">
       <div>
+        <span className="page-eyebrow">FINANCIAL FEE / WORKSPACE</span>
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>
@@ -11,12 +13,13 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle: strin
   );
 }
 
-export function Panel({ title, subtitle, children, className = "" }: PropsWithChildren<{ title: string; subtitle?: string; className?: string }>) {
+export function Panel({ title, subtitle, children, className = "", id }: PropsWithChildren<{ title: string; subtitle?: string; className?: string; id?: string }>) {
+  const titleId = useId();
   return (
-    <section className={`panel ${className}`}>
+    <section className={`panel ${className}`} id={id} aria-labelledby={titleId} tabIndex={id ? -1 : undefined}>
       <div className="panel-heading">
         <div>
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {subtitle ? <p>{subtitle}</p> : null}
         </div>
       </div>
@@ -39,6 +42,7 @@ export function Field({ label, hint, children, group = false }: PropsWithChildre
 export function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="empty-state">
+      <span className="empty-state-icon"><Inbox size={23} aria-hidden="true" /></span>
       <strong>{title}</strong>
       <span>{detail}</span>
     </div>
@@ -78,9 +82,26 @@ export function Money({ value, emphasis = false }: { value: string | number; emp
 }
 
 export function Loading() {
-  return <div className="loading">正在读取本地数据...</div>;
+  return <div className="loading" role="status"><LoaderCircle size={22} aria-hidden="true" /><span>正在读取本地数据…</span></div>;
 }
 
 export function ErrorBanner({ message }: { message: string }) {
-  return <div className="error-banner">{message}</div>;
+  const element = useRef<HTMLDivElement>(null);
+  useEffect(() => { element.current?.focus(); }, [message]);
+  return <div ref={element} tabIndex={-1} className="error-banner" role="alert"><AlertCircle size={20} aria-hidden="true" /><div><strong>请检查后继续</strong><span>{message}</span></div></div>;
+}
+
+/** Page-local navigation does not change the app route or unmount any form. */
+export function SectionNav({ items }: { items: Array<{ id: string; label: string }> }) {
+  return <nav className="section-nav" aria-label="本页分区"><span>本页</span>{items.map((item) => <button type="button" key={item.id} onClick={() => {
+    const target = document.getElementById(item.id);
+    target?.scrollIntoView({ behavior: "auto", block: "start" });
+    target?.focus({ preventScroll: true });
+  }}>{item.label}<ArrowUpRight size={14} aria-hidden="true" /></button>)}</nav>;
+}
+
+export function Pagination({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (page: number) => void }) {
+  const last = Math.max(1, Math.ceil(total / pageSize));
+  if (last <= 1) return null;
+  return <div className="pagination"><span role="status">第 {page} / {last} 页 · 共 {total} 条</span><div><button className="ghost" disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</button><button className="ghost" disabled={page >= last} onClick={() => onChange(page + 1)}>下一页</button></div></div>;
 }

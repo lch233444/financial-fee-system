@@ -1,4 +1,4 @@
-import SearchableSelect from "../SearchableSelect";
+import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
@@ -16,8 +16,8 @@ import {
   postJson,
   recognizeStatementWithAi,
 } from "../api";
-import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge } from "../components";
-import { useApiList } from "../hooks";
+import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, Pagination, SectionNav } from "../components";
+import { useApiList, usePagination } from "../hooks";
 import type { Account, AiAssistantStatus, BalanceSnapshot, StatementImport } from "../types";
 import { accountIdentityLabel, SOL_MODEL_ID } from "../types";
 
@@ -245,7 +245,7 @@ function HoldingsSourceTable({ title, holdings, selected }: { title: string; hol
       <div><strong>{title}</strong><span>{holdings.length}项持仓</span></div>
       {selected ? <b><CheckCircle2 size={13} />当前入账来源</b> : null}
     </div>
-    {holdings.length ? <div className="table-wrap"><table><thead><tr><th>Fund</th><th>Market Value</th><th>Gain/Loss</th><th>Units</th><th>Unit Price</th></tr></thead><tbody>{holdings.map((holding, index) => <tr key={`${holding.fund_name}-${index}`}><td>{holding.fund_name || "-"}</td><td>{holding.market_value || "-"}</td><td>{holding.investment_gain_loss || "-"}</td><td>{holding.units || "-"}</td><td>{holding.unit_price || "-"}</td></tr>)}</tbody></table></div> : <div className="holding-source-empty">该来源没有识别到持仓项目</div>}
+    {holdings.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Fund</th><th>Market Value</th><th>Gain/Loss</th><th>Units</th><th>Unit Price</th></tr></thead><tbody>{holdings.map((holding, index) => <tr key={`${holding.fund_name}-${index}`}><td>{holding.fund_name || "-"}</td><td>{holding.market_value || "-"}</td><td>{holding.investment_gain_loss || "-"}</td><td>{holding.units || "-"}</td><td>{holding.unit_price || "-"}</td></tr>)}</tbody></table></div> : <div className="holding-source-empty">该来源没有识别到持仓项目</div>}
   </div>;
 }
 
@@ -268,6 +268,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const imports = useApiList<StatementImport>("/api/statement-imports");
   const accounts = useApiList<Account>("/api/accounts");
   const snapshots = useApiList<BalanceSnapshot>("/api/balance-snapshots");
+  const [importSearch, setImportSearch] = useState("");
+  const [importStatus, setImportStatus] = useState("");
+  const filteredImports = imports.data.filter((item) => matchesSearch(item.original_name, importSearch) && (!importStatus || item.status === importStatus));
+  const importPages = usePagination(filteredImports, `${importSearch}:${importStatus}`, 12);
   const [selected, setSelected] = useState<StatementImport | null>(null);
   const [uploading, setUploading] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
@@ -512,11 +516,12 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       />
       {(localError || imports.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || accounts.error || snapshots.error} /> : null}
 
-      <Panel title="上传eMPF文件" subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
+      <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} />
+      <Panel id="statement-upload" title="上传eMPF文件" subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
           <UploadCloud size={32} />
           <div><strong>选择客人账单、余额页面或供款凭证</strong><span>先在本机分类并执行OCR；非余额文件不会生成余额快照</span></div>
-          <input name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required />
+          <input aria-label="选择账单文件" name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required />
           <button className="primary" type="submit" disabled={statementWriteBusy}>{uploading ? "正在执行本地OCR..." : "上传并本地识别"}</button>
         </form>
       </Panel>
@@ -536,23 +541,25 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       </Panel>
 
       <div className="import-layout">
-        <Panel title="导入记录" className="import-list-panel">
-          {imports.loading ? <Loading /> : imports.data.length ? <div className="import-list">{imports.data.map((item) => {
+        <Panel id="statement-records" title="导入记录" className="import-list-panel">
+          <div className="list-search"><Field label="搜索导入文件"><input type="search" value={importSearch} onChange={(event) => setImportSearch(event.target.value)} placeholder="文件名称…" /></Field><Field label="复核状态"><select value={importStatus} onChange={(event) => setImportStatus(event.target.value)}><option value="">全部记录</option><option value="NEEDS_REVIEW">待复核</option><option value="CONFIRMED">已入账</option></select></Field></div>
+          {imports.loading ? <Loading /> : filteredImports.length ? <div className="import-list">{importPages.rows.map((item) => {
             const type = String(item.extracted?.document_type || "unknown");
             const solType = String(item.ai_recognition?.values?.document_type ?? item.ai_recognition?.extracted?.document_type ?? "");
             const typeLabel = type === "unknown" && solType === "empf_account_page" ? "本地未知 · Sol余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
             return <div key={item.id} className={`import-list-item ${selected?.id === item.id ? "active" : ""}`}>
-              <button className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
+              <button aria-pressed={selected?.id === item.id} className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
               <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "撤销并删除误入账记录（须填写原因且未进入Settlement）" : "删除未确认导入记录"} aria-label={`删除导入记录 #${item.id}`} disabled={statementWriteBusy} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
             </div>;
-          })}</div> : <EmptyState title="暂无导入记录" detail="上传第一份eMPF文件开始。" />}
+          })}</div> : <EmptyState title={importSearch || importStatus ? "没有匹配的导入记录" : "暂无导入记录"} detail={importSearch || importStatus ? "更换关键词或复核状态后重试。" : "上传第一份eMPF文件开始。"} />}
+          <Pagination {...importPages} />
         </Panel>
 
         <Panel title="原始文件" subtitle={selected ? selected.original_name : "选择一条记录查看"}>
-          {selected ? <iframe className="document-preview" src={`/api/statement-imports/${selected.id}/file`} title="原始账单预览" sandbox="" /> : <EmptyState title="尚未选择文件" detail="左侧选择导入记录后可查看原图。" />}
+          {selected ? <><div className="document-open"><a className="text-link" href={`/api/statement-imports/${selected.id}/file`} target="_blank" rel="noreferrer">打开原件 ↗</a><small>预览未显示时，可直接打开文件查看。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <iframe className="document-preview" src={`/api/statement-imports/${selected.id}/file`} title="原始账单预览" sandbox="" />}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
         </Panel>
 
-        <Panel title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接写入余额或流水">
+        <Panel id="statement-review" title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接写入余额或流水">
           {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-receipt">
             <header><CheckCircle2 /><div><strong>该账单已经复核并生成余额快照</strong><span>原始账单、人工确认值、账户和Snapshot均已关联保留</span></div>{confirmedAccount ? <StatusBadge value={confirmedAccount.status} /> : null}</header>
             <div className="confirmed-trace-grid">

@@ -57,6 +57,7 @@ test("未收款Invoice明确选择另一家公司后提交，刷新后保留原�
   await screen.findByRole("button", { name: "建立或查看替代账单" });
   expect(db.posts).toEqual([{ path: "/api/invoices/1/corrections", body: { target_company_id: 2, reason: "更正本张账单收款公司" } }]);
   expect(screen.queryByText(/请先在Settlement页按版本链作废/)).toBeNull();
+  fireEvent.focus(screen.getByRole("combobox", { name: "客户季度Invoice组合" }));
   expect(screen.getByRole("option", { name: /陳大文.*120.00/ })).toBeTruthy();
 });
 

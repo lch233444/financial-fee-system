@@ -48,6 +48,16 @@ export function todayIso(value = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+export function usePagination<T>(items: T[], resetKey: string, pageSize = 20) {
+  const [selection, setSelection] = useState({ key: resetKey, page: 1 });
+  const page = Math.min(selection.key === resetKey ? selection.page : 1, Math.max(1, Math.ceil(items.length / pageSize)));
+  return {
+    page, pageSize, total: items.length,
+    rows: items.slice((page - 1) * pageSize, page * pageSize),
+    onChange: (next: number) => setSelection({ key: resetKey, page: next }),
+  };
+}
+
 export function quarterDates(year: number, quarter: number): [string, string] {
   const values: Record<number, [string, string]> = {
     1: [`${year}-01-01`, `${year}-03-31`],

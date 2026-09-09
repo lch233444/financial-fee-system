@@ -37,6 +37,11 @@ function mockDatabase() {
 
 function fill(form: HTMLElement, values: Record<string, string>) {
   for (const [name, value] of Object.entries(values)) {
+    if (name === "client_id") {
+      fireEvent.focus(within(form).getByRole("combobox", { name: "新增账户客户" }));
+      fireEvent.click(screen.getByRole("option", { name: "原客户" }));
+      continue;
+    }
     const input = form.querySelector(`[name="${name}"]`)!;
     expect(input).not.toBeNull();
     fireEvent.change(input, { target: { value } });
@@ -73,7 +78,7 @@ describe("保存成功后立即更新页面", () => {
   ])("$button：列表和依赖选项同时更新", async ({ button, path, values, text }) => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
-    await screen.findByRole("option", { name: "原客户" });
+    await screen.findByText("原客户");
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     fireEvent.submit(form);

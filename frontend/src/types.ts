@@ -79,6 +79,7 @@ export type BalanceSnapshot = {
 export type StatementImport = {
   id: number;
   original_name: string;
+  mime_type?: string;
   status: string;
   extracted: Record<string, unknown>;
   reviewed?: Record<string, unknown> | null;

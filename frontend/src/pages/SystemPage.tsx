@@ -16,7 +16,7 @@ import {
   startAiAssistantLogin,
   withFinancialSystemRequestHeader,
 } from "../api";
-import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge } from "../components";
+import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, SectionNav } from "../components";
 import type { AiAssistantStatus } from "../types";
 import { SOL_MODEL_ID } from "../types";
 
@@ -198,10 +198,11 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   return (
     <>
       <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整数据包交接" />
+      <SectionNav items={[{ id: "system-backup", label: "导出数据包" }, { id: "system-restore", label: "导入数据包" }, { id: "system-assistant", label: "Sol登录" }]} />
       {error ? <ErrorBanner message={error} /> : null}
-      {info ? <div className="system-grid"><article><FolderLock /><span><small>数据根目录 Data Root</small><strong>{info.data_root}</strong></span></article><article><HardDrive /><span><small>SQLite Database</small><strong>{info.database_path}</strong></span></article><article><ArchiveRestore /><span><small>Excel Template</small><strong>{info.template_exists ? info.template_path : "模板未找到"}</strong></span></article><article><DatabaseBackup /><span><small>访问范围</small><strong>{info.local_only ? "仅本机 127.0.0.1" : "请检查网络配置"}</strong></span></article></div> : null}
+      {info ? <><div className="system-grid"><article><FolderLock aria-hidden="true" /><span><small>业务数据保存位置</small><strong>{info.data_root}</strong></span></article><article><DatabaseBackup aria-hidden="true" /><span><small>运行范围与导出模板</small><strong>{info.local_only ? "仅本机运行" : "请检查网络配置"} · {info.template_exists ? "Excel模板已就绪" : "Excel模板未找到"}</strong></span></article></div><details className="technical-details"><summary>查看数据库与模板位置</summary><div><p><HardDrive size={16} aria-hidden="true" /><span><strong>数据库</strong>{info.database_path}</span></p><p><ArchiveRestore size={16} aria-hidden="true" /><span><strong>Excel模板</strong>{info.template_path}</span></p></div></details></> : null}
 
-      <Panel title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI API Key">
+      <Panel id="system-assistant" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI API Key">
         <div className="assistant-settings">
           <div className="assistant-settings-main">
             <div className="assistant-settings-icon"><BrainCircuit /></div>
@@ -225,8 +226,8 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       </Panel>
 
       <div className="split-layout">
-        <Panel title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} /><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
-        <Panel title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><input name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
+        <Panel id="system-backup" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} /><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel id="system-restore" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
       </div>
     </>
   );

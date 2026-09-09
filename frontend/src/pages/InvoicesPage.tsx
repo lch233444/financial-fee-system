@@ -2,9 +2,10 @@ import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CheckCircle2, FileDown, FilePlus2, ReceiptText, RotateCcw } from "lucide-react";
 import { api, download, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge } from "../components";
-import { todayIso, useApiList } from "../hooks";
+import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, SectionNav, Pagination } from "../components";
+import { todayIso, useApiList, usePagination } from "../hooks";
 import { settlementSourcesFollowOriginal } from "../invoiceSources";
+import { useFormAction } from "../useFormAction";
 import type { Company, Invoice, InvoiceCorrection, Settlement } from "../types";
 
 type UploadedAttachment = {
@@ -98,7 +99,7 @@ function InvoiceLifecycleBadge({ value }: { value: Invoice["lifecycle_status"] }
 
 function AccountLineTable({ lines }: { lines: InvoiceCandidateLine[] }) {
   return lines.length ? (
-    <div className="table-wrap invoice-account-lines">
+    <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap invoice-account-lines">
       <table>
         <thead><tr><th>Platform</th><th>Sub Account / Scheme</th><th>账户期间</th><th>锁定Service Fee</th></tr></thead>
         <tbody>{lines.map((line) => (
@@ -123,8 +124,12 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [candidateKey, setCandidateKey] = useState("");
   const [invoiceSearch, setInvoiceSearch] = useState("");
-  const visibleInvoices = invoices.data.filter((item) => matchesSearch(`${item.client_name ?? ""} ${item.invoice_number ?? ""}`, invoiceSearch));
+  const [invoiceFilter, setInvoiceFilter] = useState("");
+  const visibleInvoices = invoices.data.filter((item) => matchesSearch(`${item.client_name ?? ""} ${item.invoice_number ?? ""}`, invoiceSearch)
+    && (!invoiceFilter || (invoiceFilter === "OVERDUE" ? item.is_overdue : invoiceFilter === "PAID" || invoiceFilter === "UNPAID" ? item.lifecycle_status === "ISSUED" && item.payment_status === invoiceFilter : item.lifecycle_status === invoiceFilter)));
+  const invoicePages = usePagination(visibleInvoices, `${invoiceSearch}:${invoiceFilter}`);
   const [error, setError] = useState("");
+  const draftAction = useFormAction(setError, notify);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [correctionBusy, setCorrectionBusy] = useState(false);
   const [invoiceVoidBusy, setInvoiceVoidBusy] = useState(false);
@@ -149,7 +154,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
   const hasIncompleteHistoricalFunds = Boolean(
     selected && selected.payment_status === "UNPAID" && selected.payments.length,
   );
-  const invoiceMutationBusy = paymentBusy || correctionBusy || invoiceVoidBusy || issueBusy || Boolean(recoveryBusy);
+  const invoiceMutationBusy = draftAction.pending || paymentBusy || correctionBusy || invoiceVoidBusy || issueBusy || Boolean(recoveryBusy);
   const correctionContextReady = !corrections.loading
     && !settlements.loading
     && !corrections.error
@@ -323,27 +328,30 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
     && retainedTotalCents + moneyToCents(correctionDifference) === moneyToCents(selectedReplacementCandidate.amount),
   );
 
-  async function createDraft(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedCandidate) {
-      setError("请选择可建立Invoice的客户季度组合");
-      return;
-    }
-    const data = new FormData(event.currentTarget);
-    try {
-      setError("");
-      const result = await postJson<Invoice>("/api/invoices", {
-        client_id: selectedCandidate.clientId,
-        year: selectedCandidate.year,
-        quarter: selectedCandidate.quarter,
-        fee_plan_id: selectedCandidate.feePlanId,
-        language: data.get("language"),
-      });
-      await invoices.reload();
-      setSelectedId(result.id);
-      setCandidateKey("");
-      notify("Invoice Draft已建立");
-    } catch (err) { setError(err instanceof Error ? err.message : "建立失败"); }
+  function createDraft(event: FormEvent<HTMLFormElement>) {
+    if (!selectedCandidate) { event.preventDefault(); setError("请选择可建立Invoice的客户季度组合"); return; }
+    return draftAction.submit(event, {
+      save: async (data) => {
+        const result = await postJson<Invoice>("/api/invoices", {
+          client_id: selectedCandidate.clientId, year: selectedCandidate.year,
+          quarter: selectedCandidate.quarter, fee_plan_id: selectedCandidate.feePlanId,
+          language: data.get("language"),
+        });
+        setSelectedId(result.id);
+      },
+      afterSave: () => setCandidateKey(""),
+      refresh: invoices.reload,
+      message: "Invoice Draft已建立",
+    });
+  }
+
+  function showInvoice(id: number) {
+    setSelectedId(id);
+    window.setTimeout(() => {
+      const panel = document.getElementById("invoice-detail");
+      panel?.scrollIntoView?.({ block: "start" });
+      panel?.focus({ preventScroll: true });
+    }, 0);
   }
 
   async function issue(event: FormEvent<HTMLFormElement>) {
@@ -730,11 +738,14 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
   return (
     <>
       <PageHeader title="Invoice与收款" subtitle="按客户、季度和收费计划汇总已锁定的Sub Account收费；跨Platform只在Invoice阶段合并" />
+      <SectionNav items={[{ id: "invoice-directory", label: "账单清单" }, { id: "invoice-create", label: "建立账单" }, { id: "invoice-detail", label: "选中账单" }, { id: "invoice-corrections", label: "更正记录" }]} />
       {error || invoices.error || settlements.error || corrections.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error} /> : null}
+      <Panel id="invoice-directory" title="Invoice清单"><div className="list-search"><Field label="搜索Invoice客户或编号"><input type="search" value={invoiceSearch} onChange={(event) => setInvoiceSearch(event.target.value)} placeholder="输入客户名称或账单编号…" /></Field><Field label="账单状态"><select value={invoiceFilter} onChange={(event) => setInvoiceFilter(event.target.value)}><option value="">全部账单</option><option value="UNPAID">已出具 · 未付款</option><option value="OVERDUE">已逾期</option><option value="PAID">已付清</option><option value="DRAFT">草稿</option><option value="ISSUING">出具中</option><option value="VOID">已作废</option></select></Field><small role="status">显示 {visibleInvoices.length} / {invoices.data.length} 张Invoice</small></div>{invoices.loading ? <Loading /> : invoices.error ? null : visibleInvoices.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Invoice No.</th><th>Client / Period</th><th>来源</th><th>Issue / Due</th><th>Amount</th><th>Payment</th><th>Lifecycle</th></tr></thead><tbody>{invoicePages.rows.map((item) => <tr key={item.id} className={selectedId === item.id ? "selected clickable" : "clickable"} onClick={() => { if (!invoiceMutationBusy) showInvoice(item.id); }} onKeyDown={(event) => { if (!invoiceMutationBusy && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); showInvoice(item.id); } }} role="button" tabIndex={invoiceMutationBusy ? -1 : 0} aria-selected={selectedId === item.id} aria-label={`查看${item.invoice_number || `Draft #${item.id}`}`}><td><strong>{item.invoice_number || `Draft #${item.id}`}</strong></td><td>{item.client_name || "未识别Client"}<small className="cell-note">{item.year} Q{item.quarter} · {item.fc_name || "未识别FC"}</small></td><td>{item.source_count}份Settlement<small className="cell-note">{item.account_lines.length}行账户明细</small></td><td>{item.issue_date || "-"}<small className="cell-note">Due {item.due_date || "-"}</small></td><td><Money value={item.amount} /></td><td><StatusBadge value={item.payment_status} />{item.is_overdue ? <small className="cell-note overdue-note">已逾期</small> : null}</td><td><InvoiceLifecycleBadge value={item.lifecycle_status} /></td></tr>)}</tbody></table></div> : <EmptyState title={invoiceSearch.trim() ? "未找到匹配的Invoice" : "暂无Invoice"} detail={invoiceSearch.trim() ? "请更换客户名称、编号或清空搜索。" : "先Finalized一个产生Service Fee的客户季度组合。"} />}<Pagination {...invoicePages} /></Panel>
+
       <div className="split-layout invoices-top">
-        <Panel title="建立Invoice Draft" subtitle="系统自动纳入该客户季度全部未占用的Finalized Settlement；不由前端传入金额或来源清单">
+        <Panel id="invoice-create" title="建立Invoice Draft" subtitle="汇总客户同季度已确认的账户收费；跨平台合并出具一张缴费单">
           <form className="form-grid" onSubmit={(e) => void createDraft(e)}>
-            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoices.loading || settlements.loading || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={setCandidateKey} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
+            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoiceMutationBusy || invoices.loading || settlements.loading || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={setCandidateKey} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
             <Field label="默认PDF语言"><select name="language" defaultValue="zh"><option value="zh">中文</option><option value="en">English</option></select></Field>
             {candidateState.lateSettlementGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.lateSettlementGroupCount} 个客户季度已有有效Invoice，但后来又出现未纳入的Settlement。迟到Settlement需先更正或作废原Invoice后重开，系统不会建立第二张有效季度Invoice。</div> : null}
             {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结Company/FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
@@ -742,11 +753,11 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
               <header><div><strong>{selectedCandidate.clientName} · {selectedCandidate.year} Q{selectedCandidate.quarter}</strong><span>{selectedCandidate.companyName} · {selectedCandidate.fcName} · {selectedCandidate.feePlanName}</span></div><div><small>{selectedCandidate.sourceCount}份Settlement</small><Money value={moneyFromCents(selectedCandidate.totalCents)} emphasis /></div></header>
               <AccountLineTable lines={selectedCandidate.accountLines} />
             </div> : invoices.loading || settlements.loading ? <Loading /> : candidateState.candidates.length ? null : <EmptyState title="暂无可建立的客户季度Invoice" detail="需要同组Finalized Settlement的锁定Service Fee合计大于0，且冻结Company/FC一致。" />}
-            <button className="primary" type="submit" disabled={!selectedCandidate}><FilePlus2 size={17} />建立Draft</button>
+            <button className="primary" type="submit" disabled={invoiceMutationBusy || !selectedCandidate}><FilePlus2 size={17} />{draftAction.pending ? "正在建立…" : "建立Draft"}</button>
           </form>
         </Panel>
-        <Panel title="选中Invoice">
-          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name || "未识别Client"} · {selected.company_name || "未识别Company"} · {selected.year} Q{selected.quarter} · {selected.fee_plan_name || "未识别Fee Plan"}</span></div><InvoiceLifecycleBadge value={selected.lifecycle_status} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>计入本单现金 <Money value={selected.paid_amount} /></span><span>公司差额 <Money value={selected.adjustment_amount} /></span><span>未结 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} />{selected.is_overdue ? <span className="status status-overdue">已逾期</span> : null}</div>{selected.payments.length ? <div className="table-wrap compact-table payment-ledger"><table><thead><tr><th>Payment</th><th>Date / Method</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>{selected.payments.map((payment) => <tr key={payment.id}><td>#{payment.id}</td><td>{payment.payment_date}<small className="cell-note">{payment.method}</small></td><td><Money value={payment.amount} /></td><td><a className="text-link" href={`/api/attachments/${payment.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${payment.id}付款凭证`}>查看付款凭证</a></td></tr>)}</tbody></table></div> : null}<AccountLineTable lines={selected.account_lines} /></div> : <EmptyState title="尚未选择Invoice" detail="从下方列表选择一条记录。" />}
+        <Panel id="invoice-detail" title="选中Invoice">
+          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name || "未识别Client"} · {selected.company_name || "未识别Company"} · {selected.year} Q{selected.quarter} · {selected.fee_plan_name || "未识别Fee Plan"}</span></div><InvoiceLifecycleBadge value={selected.lifecycle_status} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>计入本单现金 <Money value={selected.paid_amount} /></span><span>公司差额 <Money value={selected.adjustment_amount} /></span><span>未结 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} />{selected.is_overdue ? <span className="status status-overdue">已逾期</span> : null}</div>{selected.payments.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap compact-table payment-ledger"><table><thead><tr><th>Payment</th><th>Date / Method</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>{selected.payments.map((payment) => <tr key={payment.id}><td>#{payment.id}</td><td>{payment.payment_date}<small className="cell-note">{payment.method}</small></td><td><Money value={payment.amount} /></td><td><a className="text-link" href={`/api/attachments/${payment.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${payment.id}付款凭证`}>查看付款凭证</a></td></tr>)}</tbody></table></div> : null}<AccountLineTable lines={selected.account_lines} /></div> : <EmptyState title="尚未选择Invoice" detail="从上方清单选择账单，查看明细并办理收款。" />}
         </Panel>
       </div>
 
@@ -821,15 +832,15 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
             <span>退款 {selectedCorrection.refunds.length} 条</span>
             <span>公司差额 {selectedCorrection.adjustments.length} 条</span>
           </div>
-          {selectedCorrection.allocations.length ? <div className="table-wrap correction-record-table"><table><thead><tr><th>Payment</th><th>Entry</th><th>Invoice</th><th>金额</th></tr></thead><tbody>{selectedCorrection.allocations.map((allocation) => <tr key={allocation.id}><td>#{allocation.payment_id}</td><td>{allocation.entry_type === "APPLY" ? "留存分配" : "冲正"}</td><td>#{allocation.invoice_id}</td><td><Money value={allocation.amount} /></td></tr>)}</tbody></table></div> : null}
-          {selectedCorrection.refunds.length ? <div className="table-wrap correction-record-table"><table><thead><tr><th>Payment</th><th>退款日期 / 方式</th><th>金额 / 原因</th><th>凭证</th></tr></thead><tbody>{selectedCorrection.refunds.map((refund) => <tr key={refund.id}><td>#{refund.payment_id}</td><td>{refund.refund_date}<small className="cell-note">{refund.method}</small></td><td><Money value={refund.amount} /><small className="cell-note">{refund.reason}</small></td><td><a className="text-link" href={`/api/attachments/${refund.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${refund.payment_id}退款凭证`}>查看退款凭证</a></td></tr>)}</tbody></table></div> : null}
-          {selectedCorrection.adjustments.length ? <div className="table-wrap correction-record-table"><table><thead><tr><th>Invoice</th><th>差额类型</th><th>金额</th><th>原因</th></tr></thead><tbody>{selectedCorrection.adjustments.map((adjustment) => <tr key={adjustment.id}><td>#{adjustment.invoice_id}</td><td>公司承担差额</td><td><Money value={adjustment.amount} /></td><td>{adjustment.reason}</td></tr>)}</tbody></table></div> : null}
+          {selectedCorrection.allocations.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap correction-record-table"><table><thead><tr><th>Payment</th><th>Entry</th><th>Invoice</th><th>金额</th></tr></thead><tbody>{selectedCorrection.allocations.map((allocation) => <tr key={allocation.id}><td>#{allocation.payment_id}</td><td>{allocation.entry_type === "APPLY" ? "留存分配" : "冲正"}</td><td>#{allocation.invoice_id}</td><td><Money value={allocation.amount} /></td></tr>)}</tbody></table></div> : null}
+          {selectedCorrection.refunds.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap correction-record-table"><table><thead><tr><th>Payment</th><th>退款日期 / 方式</th><th>金额 / 原因</th><th>凭证</th></tr></thead><tbody>{selectedCorrection.refunds.map((refund) => <tr key={refund.id}><td>#{refund.payment_id}</td><td>{refund.refund_date}<small className="cell-note">{refund.method}</small></td><td><Money value={refund.amount} /><small className="cell-note">{refund.reason}</small></td><td><a className="text-link" href={`/api/attachments/${refund.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${refund.payment_id}退款凭证`}>查看退款凭证</a></td></tr>)}</tbody></table></div> : null}
+          {selectedCorrection.adjustments.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap correction-record-table"><table><thead><tr><th>Invoice</th><th>差额类型</th><th>金额</th><th>原因</th></tr></thead><tbody>{selectedCorrection.adjustments.map((adjustment) => <tr key={adjustment.id}><td>#{adjustment.invoice_id}</td><td>公司承担差额</td><td><Money value={adjustment.amount} /></td><td>{adjustment.reason}</td></tr>)}</tbody></table></div> : null}
         </>}
       </Panel> : null}
 
-      <Panel title="Invoice更正清单" subtitle="OPEN记录可直接进入原Invoice完成更正；连续更正的每一轮独立保留，不需要手工输入Correction或Payment ID。">{corrections.loading ? <Loading /> : corrections.data.length ? <div className="table-wrap"><table><thead><tr><th>Correction</th><th>原Invoice</th><th>替代Invoice</th><th>现金处理</th><th>Status</th><th>操作</th></tr></thead><tbody>{corrections.data.map((correction) => <tr key={correction.id}><td>#{correction.id}<small className="cell-note">{correction.opened_at.slice(0, 10)}</small></td><td>{correction.original_invoice.invoice_number || `#${correction.original_invoice.id}`}</td><td>{correction.replacement_invoice?.invoice_number || "等待替代单"}</td><td>{correction.payments.length}笔可处置Payment<small className="cell-note">{correction.refunds.length}笔退款 · {correction.adjustments.length}笔差额</small></td><td><span className={`status ${correction.status === "OPEN" ? "status-draft" : "status-confirmed"}`}>{correction.status === "OPEN" ? "处理中" : "已完成"}</span></td><td><button className="ghost correction-open-button" type="button" disabled={invoiceMutationBusy} onClick={() => setSelectedId(correction.original_invoice.id)}>{correction.status === "OPEN" ? "继续处理" : "查看记录"}</button></td></tr>)}</tbody></table></div> : <EmptyState title="暂无Invoice更正" detail="只有受控错单更正会出现在这里。" />}</Panel>
+      <Panel id="invoice-corrections" title="Invoice更正清单" subtitle="OPEN记录可直接进入原Invoice完成更正；连续更正的每一轮独立保留，不需要手工输入Correction或Payment ID。">{corrections.loading ? <Loading /> : corrections.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Correction</th><th>原Invoice</th><th>替代Invoice</th><th>现金处理</th><th>Status</th><th>操作</th></tr></thead><tbody>{corrections.data.map((correction) => <tr key={correction.id}><td>#{correction.id}<small className="cell-note">{correction.opened_at.slice(0, 10)}</small></td><td>{correction.original_invoice.invoice_number || `#${correction.original_invoice.id}`}</td><td>{correction.replacement_invoice?.invoice_number || "等待替代单"}</td><td>{correction.payments.length}笔可处置Payment<small className="cell-note">{correction.refunds.length}笔退款 · {correction.adjustments.length}笔差额</small></td><td><span className={`status ${correction.status === "OPEN" ? "status-draft" : "status-confirmed"}`}>{correction.status === "OPEN" ? "处理中" : "已完成"}</span></td><td><button className="ghost correction-open-button" type="button" disabled={invoiceMutationBusy} onClick={() => showInvoice(correction.original_invoice.id)}>{correction.status === "OPEN" ? "继续处理" : "查看记录"}</button></td></tr>)}</tbody></table></div> : <EmptyState title="暂无Invoice更正" detail="只有受控错单更正会出现在这里。" />}</Panel>
 
-      <Panel title="Invoice清单"><div className="list-search"><Field label="搜索Invoice客户或编号"><input type="search" value={invoiceSearch} onChange={(event) => setInvoiceSearch(event.target.value)} placeholder="输入客户名称或账单编号…" /></Field><small role="status">显示 {visibleInvoices.length} / {invoices.data.length} 张Invoice</small></div>{invoices.loading ? <Loading /> : invoices.error ? null : visibleInvoices.length ? <div className="table-wrap"><table><thead><tr><th>Invoice No.</th><th>Client / Period</th><th>来源</th><th>Issue / Due</th><th>Amount</th><th>Payment</th><th>Lifecycle</th></tr></thead><tbody>{visibleInvoices.map((item) => <tr key={item.id} className={selectedId === item.id ? "selected clickable" : "clickable"} onClick={() => { if (!invoiceMutationBusy) setSelectedId(item.id); }} onKeyDown={(event) => { if (!invoiceMutationBusy && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setSelectedId(item.id); } }} role="button" tabIndex={invoiceMutationBusy ? -1 : 0} aria-selected={selectedId === item.id} aria-label={`查看${item.invoice_number || `Draft #${item.id}`}`}><td><strong>{item.invoice_number || `Draft #${item.id}`}</strong></td><td>{item.client_name || "未识别Client"}<small className="cell-note">{item.year} Q{item.quarter} · {item.fc_name || "未识别FC"}</small></td><td>{item.source_count}份Settlement<small className="cell-note">{item.account_lines.length}行账户明细</small></td><td>{item.issue_date || "-"}<small className="cell-note">Due {item.due_date || "-"}</small></td><td><Money value={item.amount} /></td><td><StatusBadge value={item.payment_status} />{item.is_overdue ? <small className="cell-note overdue-note">已逾期</small> : null}</td><td><InvoiceLifecycleBadge value={item.lifecycle_status} /></td></tr>)}</tbody></table></div> : <EmptyState title={invoiceSearch.trim() ? "未找到匹配的Invoice" : "暂无Invoice"} detail={invoiceSearch.trim() ? "请更换客户名称、编号或清空搜索。" : "先Finalized一个产生Service Fee的客户季度组合。"} />}</Panel>
+
     </>
   );
 }

@@ -2,8 +2,8 @@ import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, patchJson, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge } from "../components";
-import { useApiList } from "../hooks";
+import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, SectionNav, Pagination, Loading } from "../components";
+import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel } from "../types";
 import type { Account, Client, Company, FC, FeePlan, Platform } from "../types";
@@ -18,7 +18,9 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const [clientCompanyId, setClientCompanyId] = useState("");
   const [accountClientId, setAccountClientId] = useState("");
   const [clientSearch, setClientSearch] = useState("");
-  const visibleClients = clients.data.filter((item) => matchesSearch(item.name, clientSearch));
+  const [clientStatus, setClientStatus] = useState("");
+  const visibleClients = clients.data.filter((item) => matchesSearch(`${item.name} ${item.company_name || ""} ${item.fc_name || ""}`, clientSearch) && (!clientStatus || item.status === clientStatus));
+  const clientPages = usePagination(visibleClients, `${clientSearch}:${clientStatus}`, 10);
   const [draftClientId, setDraftClientId] = useState("");
   const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
@@ -59,39 +61,32 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
     });
   }
 
-  async function completeDraftClient(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedDraftClient) return;
-    const data = new FormData(event.currentTarget);
-    setLocalError("");
-    try {
-      await patchJson(`/api/clients/${selectedDraftClient.id}`, {
+  function completeDraftClient(event: FormEvent<HTMLFormElement>) {
+    if (!selectedDraftClient) { event.preventDefault(); return; }
+    return formAction.submit(event, {
+      save: (data) => patchJson(`/api/clients/${selectedDraftClient.id}`, {
         company_id: Number(data.get("company_id")), fc_id: Number(data.get("fc_id")),
         name: data.get("name"), management_start_date: data.get("start_date"),
         contact: data.get("contact") || null, remark: data.get("remark") || null, status: "ACTIVE",
-      });
-      setDraftClientId("");
-      setDraftClientCompanyId("");
-      await Promise.all([clients.reload(), accounts.reload()]);
-      notify("待确认Client已补全并激活");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "Client补全失败"); }
+      }),
+      afterSave: () => { setDraftClientId(""); setDraftClientCompanyId(""); },
+      refresh: () => Promise.all([clients.reload(), accounts.reload()]),
+      message: "待确认Client已补全并激活",
+    });
   }
 
-  async function completeDraftAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedDraftAccount) return;
-    const data = new FormData(event.currentTarget);
-    setLocalError("");
-    try {
-      await patchJson(`/api/accounts/${selectedDraftAccount.id}`, {
+  function completeDraftAccount(event: FormEvent<HTMLFormElement>) {
+    if (!selectedDraftAccount) { event.preventDefault(); return; }
+    return formAction.submit(event, {
+      save: (data) => patchJson(`/api/accounts/${selectedDraftAccount.id}`, {
         platform_id: Number(data.get("platform_id")), fee_plan_id: Number(data.get("fee_plan_id")),
         scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
         end_date: data.get("end_date") || null, remark: data.get("remark") || null, status: "ACTIVE",
-      });
-      setDraftAccountId("");
-      await accounts.reload();
-      notify("待确认Sub Account已补全并激活");
-    } catch (err) { setLocalError(err instanceof Error ? err.message : "Sub Account补全失败"); }
+      }),
+      afterSave: () => setDraftAccountId(""),
+      refresh: accounts.reload,
+      message: "待确认Sub Account已补全并激活",
+    });
   }
 
   async function deleteProfile(kind: "Client" | "Sub Account", path: string, id: number, label: string) {
@@ -150,12 +145,30 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   return (
     <>
       <PageHeader title="客户与账户" subtitle="一个Client可有多个Sub Account；每个账户独立计算HWM，组合层只汇总结果" />
+      <SectionNav items={[{ id: "client-directory", label: "客户清单" }, { id: "client-create", label: "新增客户" }, { id: "account-create", label: "新增账户" }, { id: "client-activate", label: "补全待确认资料" }]} />
       {error ? <ErrorBanner message={error} /> : null}
+      <Panel id="client-directory" title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
+        <div className="list-search"><Field label="搜索客户"><input type="search" value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="客户名称、公司或FC…" /></Field><Field label="客户状态"><select value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
+        {clientSearch.trim() && !visibleClients.length ? <EmptyState title="未找到匹配的客户" detail="请更换关键词或清空搜索。" /> : null}
+        {clients.loading || accounts.loading ? <Loading /> : clients.data.length ? (
+          <div className="client-list">
+            {clientPages.rows.map((client) => {
+              const rows = accounts.data.filter((account) => account.client_id === client.id);
+              return <article className="client-card" key={client.id}>
+                <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
+                {rows.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
+              </article>;
+            })}
+          </div>
+        ) : <EmptyState title="暂无客户" detail="可手工建立，也可由eMPF账单识别创建待确认档案。" />}
+        <Pagination {...clientPages} />
+      </Panel>
+
       <div className="split-layout">
-        <Panel title="新增Client" subtitle="正式启用前必须关联Company、FC和管理开始日期">
+        <Panel id="client-create" title="新增Client" subtitle="正式启用前必须关联Company、FC和管理开始日期">
           <form className="form-grid" onSubmit={(e) => void submitClient(e)}>
             <Field label="Company"><select name="company_id" value={clientCompanyId} required onChange={(e) => setClientCompanyId(e.target.value)}><option value="" disabled>请选择</option>{companies.data.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
-            <Field label="FC"><select name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.filter((x) => !clientCompanyId || x.company_id === Number(clientCompanyId)).map((x) => <option key={x.id} value={x.id}>{x.name} ({x.code})</option>)}</select></Field>
+            <Field label="FC"><select key={clientCompanyId} name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.filter((x) => !clientCompanyId || x.company_id === Number(clientCompanyId)).map((x) => <option key={x.id} value={x.id}>{x.name} ({x.code})</option>)}</select></Field>
             <Field label="Client Name"><input name="name" required /></Field>
             <Field label="Management Start Date"><input name="start_date" type="date" required /></Field>
             <Field label="联系方式"><input name="contact" /></Field>
@@ -163,11 +176,11 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存Client"}</button>
           </form>
         </Panel>
-        <Panel title="新增Sub Account" subtitle="币种固定为HKD">
+        <Panel id="account-create" title="新增Sub Account" subtitle="币种固定为HKD">
           <form className="form-grid" onSubmit={(e) => void submitAccount(e)}>
             <Field group label="Client"><SearchableSelect label="新增账户客户" name="client_id" value={accountClientId} required onChange={setAccountClientId} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
             <Field label="Platform"><select name="platform_id" defaultValue="" required><option value="" disabled>请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-            <Field label="Fee Plan"><select name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.filter((x) => !selectedAccountClient?.company_id || x.company_id === selectedAccountClient.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+            <Field label="Fee Plan"><select key={accountClientId} name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.filter((x) => !selectedAccountClient?.company_id || x.company_id === selectedAccountClient.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Account Number"><input name="account_number" required /></Field>
             <Field label="Scheme Name"><input name="scheme_name" /></Field>
             <Field label="开始管理日期"><input name="start_date" type="date" required /></Field>
@@ -178,7 +191,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       </div>
 
       <div className="split-layout">
-        <Panel title="补全待确认Client" subtitle="OCR建立的Draft必须补齐归属和开始日期后才能激活">
+        <Panel id="client-activate" title="补全待确认Client" subtitle="OCR建立的Draft必须补齐归属和开始日期后才能激活">
           <Field group label="选择Draft Client">
             <SearchableSelect label="待确认客户" value={draftClientId}
               onChange={(value) => {
@@ -191,12 +204,12 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
           {selectedDraftClient ? (
             <form className="form-grid" key={selectedDraftClient.id} onSubmit={(event) => void completeDraftClient(event)}>
               <Field label="Company"><select name="company_id" value={draftClientCompanyId} required onChange={(event) => setDraftClientCompanyId(event.target.value)}><option value="" disabled>请选择</option>{companies.data.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></Field>
-              <Field label="FC"><select name="fc_id" defaultValue={selectedDraftClient.fc_id ?? ""} required><option value="" disabled>请选择</option>{fcs.data.filter((item) => item.company_id === Number(draftClientCompanyId)).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></Field>
+              <Field label="FC"><select key={draftClientCompanyId} name="fc_id" defaultValue={selectedDraftClient.company_id === Number(draftClientCompanyId) ? selectedDraftClient.fc_id ?? "" : ""} required><option value="" disabled>请选择</option>{fcs.data.filter((item) => item.company_id === Number(draftClientCompanyId)).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></Field>
               <Field label="Client Name"><input name="name" defaultValue={selectedDraftClient.name} required /></Field>
               <Field label="Management Start Date"><input name="start_date" type="date" defaultValue={selectedDraftClient.management_start_date ?? ""} required /></Field>
               <Field label="联系方式"><input name="contact" defaultValue={selectedDraftClient.contact ?? ""} /></Field>
               <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftClient.remark ?? ""} /></Field>
-              <button className="primary" type="submit">补全并激活Client</button>
+              <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中…" : "补全并激活Client"}</button>
             </form>
           ) : <small>当前共有 {clients.data.filter((item) => item.status === "DRAFT").length} 个待确认Client。</small>}
         </Panel>
@@ -212,27 +225,13 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
               <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} required /></Field>
               <Field label="实际结束日期（如适用）" hint="若账单日期等于退出日，保存后系统会重核该Snapshot的Closing资格"><input name="end_date" type="date" defaultValue={selectedDraftAccount.end_date ?? ""} /></Field>
               <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftAccount.remark ?? ""} /></Field>
-              <button className="primary" type="submit" disabled={selectedDraftAccountClient?.status !== "ACTIVE"}>补全并激活Sub Account</button>
+              <button className="primary" type="submit" disabled={formAction.pending || selectedDraftAccountClient?.status !== "ACTIVE"}>{formAction.pending ? "保存中…" : "补全并激活Sub Account"}</button>
             </form>
           ) : <small>当前共有 {accounts.data.filter((item) => item.status === "DRAFT").length} 个待确认Sub Account。</small>}
         </Panel>
       </div>
 
-      <Panel title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
-        <div className="list-search"><Field label="搜索客户"><input type="search" value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="输入客户名称…" /></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
-        {clientSearch.trim() && !visibleClients.length ? <EmptyState title="未找到匹配的客户" detail="请更换关键词或清空搜索。" /> : null}
-        {clients.data.length ? (
-          <div className="client-list">
-            {visibleClients.map((client) => {
-              const rows = accounts.data.filter((account) => account.client_id === client.id);
-              return <article className="client-card" key={client.id}>
-                <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
-                {rows.length ? <div className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
-              </article>;
-            })}
-          </div>
-        ) : <EmptyState title="暂无客户" detail="可手工建立，也可由eMPF账单识别创建待确认档案。" />}
-      </Panel>
+
     </>
   );
 }

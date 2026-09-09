@@ -706,13 +706,13 @@ def test_settlement_and_invoice_pdfs_use_frozen_company_after_client_reassignmen
         invoice_text = _pdf_text(invoice_pdf.content)
         normalized_invoice_text = " ".join(invoice_text.split())
         assert data["company"]["name"] in normalized_invoice_text
-        assert issued.json()["invoice_number"] not in "".join(invoice_text.split())
+        assert "".join(issued.json()["invoice_number"].split()) in "".join(invoice_text.split())
         assert 'ORIGINAL <BANK> & "Desk" PDF829' in normalized_invoice_text
         assert replacement_company["name"] not in invoice_text
         assert "NEW BANK PDF829" not in invoice_text
 
 
-def test_bilingual_payment_notices_keep_chinese_company_and_internal_number() -> None:
+def test_bilingual_payment_notices_show_chinese_company_and_issued_number() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         company_name = "香港顾问有限公司"
         data = _group(client, "CJK829", platform_count=1, company_name=company_name)
@@ -731,7 +731,7 @@ def test_bilingual_payment_notices_keep_chinese_company_and_internal_number() ->
             assert response.status_code == 200, response.text
             normalized_text = "".join(_pdf_text(response.content).split())
             assert company_name in normalized_text
-            assert invoice_number not in normalized_text
+            assert invoice_number in normalized_text
             assert "record-" in response.headers["content-disposition"]
 
 
@@ -762,6 +762,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
 
         expected_english = (
             "Service Fee Payment Notice",
+            "INVOICE NO.",
             "CLIENT NAME",
             "SERVICE FEE PAYABLE",
             "PAYMENT DUE DATE",
@@ -774,7 +775,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
         )
         expected_chinese = (
             "服務費繳款通知書", "客戶名稱", "應繳服務費", "付款期限", "19/10/2026",
-            "付款方式", "銀行轉賬", "支票",
+            "付款方式", "銀行轉賬", "支票", "賬單編號",
         )
 
         for language, expected in (("en", expected_english), ("zh", expected_chinese)):
@@ -797,7 +798,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
                 assert value in normalized_text
             assert normalized_text.count("HKD 40.00") == 1
             for value in (
-                "SUB ACCOUNT", "PERIOD", "SUBTOTAL", "INVOICE NO.", "Issue Date",
+                "SUB ACCOUNT", "PERIOD", "SUBTOTAL", "Issue Date",
                 "HWM", "2026 Q3", "20.00", data["plan"]["name"],
                 *(account["account_number"] for account in data["accounts"]),
             ):

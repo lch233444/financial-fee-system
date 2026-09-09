@@ -19,6 +19,7 @@ def _notice(*, bank="Bank: Example Bank\nAccount: 000-123-456", cheque=None):
             bank_information=bank, cheque_information=cheque,
         ),
         client=SimpleNamespace(name="Example <Client> & Family"),
+        invoice_number="Example <Company> & Partners-TW-20260909-12",
         amount_cents=128050, due_date=date(2026, 9, 30),
     )
 
@@ -33,9 +34,26 @@ def test_notice_uses_total_without_calculation_data(tmp_path, language) -> None:
     text = " ".join(pages[0].extract_text().split())
     assert "Example <Company> & Partners" in text
     assert "Example <Client> & Family" in text
+    assert _notice().invoice_number in text
+    assert "INVOICE NO." in text if language == "en" else "賬單編號" in text
     assert text.count("HKD 1,280.50") == 1
     assert "000-123-456" in text
     assert "Cheque" not in text and "支票" not in text
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_notice_preserves_long_issued_number_and_uses_chinese_font(tmp_path, language) -> None:
+    notice = _notice()
+    # Even when current company/client names are ASCII, an issued identifier
+    # can contain Chinese and must be printed unchanged, without truncation.
+    notice.invoice_number = "香港示例<收款公司>&國際財務顧問有限公司" * 6 + "-TW-20260909-12345"
+    path = generate_invoice_pdf(invoice=notice, output_path=tmp_path / "number.pdf", language=language)
+    pages = PdfReader(path).pages
+    assert len(pages) == 1
+    compact = "".join(pages[0].extract_text().split())
+    assert notice.invoice_number in compact
+    assert compact.count(notice.invoice_number) == 1
+    assert compact.count("HKD1,280.50") == 1
 
 
 @pytest.mark.parametrize(

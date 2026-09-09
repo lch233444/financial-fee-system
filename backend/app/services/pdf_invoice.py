@@ -192,6 +192,7 @@ def generate_invoice_pdf(
             company.bank_information,
             company.cheque_information,
             client.name,
+            invoice.invoice_number,
         )
     )
     font, bold_font = _invoice_fonts(not is_english or not dynamic_text.isascii())
@@ -231,6 +232,10 @@ def generate_invoice_pdf(
     )
     right_small = ParagraphStyle("notice-small-right", parent=small, alignment=TA_RIGHT)
     right_value = ParagraphStyle("notice-value-right", parent=value, alignment=TA_RIGHT)
+    reference_value = ParagraphStyle(
+        "notice-reference", parent=body, fontName=bold_font,
+        fontSize=10, leading=15, alignment=TA_RIGHT, textColor=INVOICE_INK,
+    )
     amount = ParagraphStyle(
         "notice-amount", parent=value, fontName=bold_font,
         fontSize=23, leading=30, alignment=TA_RIGHT, textColor=INVOICE_INK,
@@ -239,6 +244,7 @@ def generate_invoice_pdf(
         "title": "Service Fee Payment Notice" if is_english else "服務費繳款通知書",
         "subtitle": "" if is_english else "SERVICE FEE PAYMENT NOTICE",
         "client": "CLIENT NAME" if is_english else "客戶名稱",
+        "invoice_no": "INVOICE NO." if is_english else "賬單編號 Invoice No.",
         "due": "PAYMENT DUE DATE" if is_english else "付款期限",
         "fee": "SERVICE FEE PAYABLE" if is_english else "應繳服務費",
         "payment": "Payment methods" if is_english else "付款方式",
@@ -280,6 +286,19 @@ def generate_invoice_pdf(
         p(copy["subtitle"], subtitle_style) if copy["subtitle"]
         else Spacer(1, subtitle_style.leading + subtitle_style.spaceAfter),
     ])
+
+    reference = Table(
+        [[p(copy["invoice_no"], small), p(invoice.invoice_number, reference_value)]],
+        colWidths=[content_width * 0.27, content_width * 0.73],
+    )
+    reference.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.extend([reference, Spacer(1, 4 * mm)])
 
     customer = Table(
         [[p(copy["client"], small), p(copy["due"], right_small)],

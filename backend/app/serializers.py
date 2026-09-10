@@ -217,13 +217,20 @@ def invoice_dict(item: Invoice) -> dict:
         "year": item.year,
         "quarter": item.quarter,
         "fee_plan_id": item.fee_plan_id,
-        "fee_plan_name": item.fee_plan.name if item.fee_plan else None,
+        "fee_plan_name": " / ".join(dict.fromkeys(
+            source.settlement.fee_plan.name for source in sources
+            if source.settlement and source.settlement.fee_plan
+        )) or (item.fee_plan.name if item.fee_plan else None),
+        "fee_plan_ids": sorted({source.settlement.fee_plan_id for source in sources if source.settlement}),
         "source_count": len(sources),
         "account_lines": [
             {
                 "id": line.id,
                 "settlement_id": line.source_settlement_id,
                 "platform_name": line.platform_name_snapshot,
+                "fee_plan_id": line.source_settlement.fee_plan_id,
+                "fee_plan_name": line.source_settlement.fee_plan.name,
+                "fee_rate_percent": line.source_settlement.fee_rate_bps / 100,
                 "account_number": line.account_number_snapshot,
                 "scheme_name": (
                     line.source_account_line.account.scheme_name

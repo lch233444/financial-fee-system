@@ -298,11 +298,10 @@ class Invoice(TimestampMixin, Base):
     __tablename__ = "invoices"
     __table_args__ = (
         Index(
-            "uq_invoices_active_client_period_plan",
+            "uq_invoices_active_client_period",
             "client_id",
             "year",
             "quarter",
-            "fee_plan_id",
             unique=True,
             sqlite_where=text("lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')"),
         ),
@@ -315,6 +314,7 @@ class Invoice(TimestampMixin, Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True)
     year: Mapped[int] = mapped_column(Integer, index=True)
     quarter: Mapped[int] = mapped_column(Integer, index=True)
+    # Compatibility anchor only; the authoritative plans belong to each source.
     fee_plan_id: Mapped[int] = mapped_column(
         ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True
     )

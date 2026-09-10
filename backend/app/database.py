@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import MetaData, create_engine, event, inspect, text
+from sqlalchemy import Index, MetaData, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import application_root, get_settings
@@ -82,6 +82,15 @@ def init_db() -> None:
         for table in Base.metadata.sorted_tables:
             table.to_metadata(bootstrap_metadata)
         bootstrap_invoice = bootstrap_metadata.tables["invoices"]
+        # Missing legacy tables must also get the pre-0.2.27 invoice index.
+        # The real migration installs the client-quarter index after its preflight.
+        for index in list(bootstrap_invoice.indexes):
+            if index.name == "uq_invoices_active_client_period":
+                bootstrap_invoice.indexes.remove(index)
+        Index("uq_invoices_active_client_period_plan",
+              bootstrap_invoice.c.client_id, bootstrap_invoice.c.year,
+              bootstrap_invoice.c.quarter, bootstrap_invoice.c.fee_plan_id,
+              unique=True, sqlite_where=text("lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')"))
         payee_column = bootstrap_invoice.c.payee_company_id
         for foreign_key in list(payee_column.foreign_keys):
             bootstrap_invoice.constraints.discard(foreign_key.constraint)
@@ -320,8 +329,7 @@ def init_db() -> None:
         )
         invoice_indexes_complete = {
             "uq_invoice_sources_active_settlement",
-            "uq_invoices_active_client_period_plan",
-        }.issubset(index_names)
+        }.issubset(index_names) and bool({"uq_invoices_active_client_period_plan", "uq_invoices_active_client_period"} & index_names)
         from .services.settlement_boundary_contract import (
             settlement_boundary_trigger_sql_is_current as _boundary_sql_is_current,
             settlement_boundary_trigger_sql_is_legacy as _boundary_sql_is_legacy,
@@ -509,7 +517,15 @@ def init_db() -> None:
                             if not (has_payee and has_target and payee_shape_valid
                                     and payee_trigger_sql_is_current(trigger_sql)):
                                 raise RuntimeError("未版本化数据库的收款公司字段或保护不完整；已停止启动")
-                            command.stamp(alembic_config, PAYEE_REVISION)
+                            from .services.invoice_group_contract import INVOICE_GROUP_REVISION, invoice_group_schema_is_current
+                            if "uq_invoices_active_client_period" in index_names:
+                                with engine.connect() as group_connection:
+                                    if not invoice_group_schema_is_current(group_connection):
+                                        raise RuntimeError("未版本化数据库的客户季度合并保护不完整；已停止启动")
+                                command.stamp(alembic_config, INVOICE_GROUP_REVISION)
+                            else:
+                                command.stamp(alembic_config, PAYEE_REVISION)
+                                command.upgrade(alembic_config, "head")
                         else:
                             command.stamp(alembic_config, "e8b2c6d91a04")
                             command.upgrade(alembic_config, "head")
@@ -648,3 +664,7 @@ def init_db() -> None:
         payee_shape_valid = payee_schema_is_current(payee_connection)
     if not payee_trigger_sql_is_current(current_trigger_sql) or not payee_shape_valid:
         raise RuntimeError("数据库Invoice收款公司保护不完整；系统已停止启动")
+    from .services.invoice_group_contract import invoice_group_schema_is_current
+    with engine.connect() as group_connection:
+        if not invoice_group_schema_is_current(group_connection):
+            raise RuntimeError("数据库客户季度合并保护不完整；系统已停止启动")

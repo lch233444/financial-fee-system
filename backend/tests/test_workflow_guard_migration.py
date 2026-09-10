@@ -20,7 +20,7 @@ from app.services.workflow_guard_contract import workflow_trigger_sql_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 
 PREVIOUS = "d4f8a1c73b29"
-HEAD = "a2e6c9d74f31"
+HEAD = "b7e2d9a41c60"
 
 
 def _seed_history(settings, *, finalize_q3=True):

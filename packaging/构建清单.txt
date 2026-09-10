@@ -1,9 +1,9 @@
-金融计划收费计算系统 MVP 0.2.26 Windows运行版构建清单
-文档修订：2026-09-09；依据当前scripts/build-windows.ps1；候选及正式切换证据见项目说明书。
+金融计划收费计算系统 MVP 0.2.27 Windows运行版构建清单
+文档修订：2026-09-10；依据当前scripts/build-windows.ps1；候选及正式切换证据见项目说明书。
 
 一、当前构建契约
-- 应用版本：0.2.26；Windows ProductVersion：0.2.26；FileVersion：0.2.26.0。
-- 数据库head：a2e6c9d74f31；目标57个Trigger；结构数量不能替代业务验收。
+- 应用版本：0.2.27；Windows ProductVersion：0.2.27；FileVersion：0.2.27.0。
+- 数据库目标head：b7e2d9a41c60；目标57个Trigger；结构数量不能替代业务验收。
 - 固定候选输出：release/FinancialFeeSystem。构建开始清理上一候选，不能把真实数据放入该目录。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
@@ -78,3 +78,9 @@
 - 后端423/423、前端40/40、Windows构建和依赖/模板契约通过；423个候选文件提升时一致。最终文档另同步并核验。
 - 正式目录F:\财务系统\金融计划收费系统_Windows运行版_0.2.26_20260909\FinancialFeeSystem；持久配置F:\备份，8000 loopback、health/OpenAPI和18个静态资源通过。
 - 合成账单双语编号、金额一次、重复下载同一归档及实际渲染通过。原正式记录和10个归档文件不变，无迁移，不覆盖旧PDF；完整备份及恢复/切换证据统一见主说明书11.5节。
+
+十一、0.2.27多计划合并候选（2026-09-10，尚未正式切换）
+- 构建时间2026-09-10 12:23:29 +08:00；ProductVersion 0.2.27，FileVersion 0.2.27.0；EXE SHA-256 17EDBF5DB9F39065F248C6EBF4E816F05100A4BAAD686EDDA6AD2851FD127AF2。
+- 完整后端433/433、前端44/44及生产/Windows构建通过；源dist与候选19个前端文件一致，18个HTTP静态资源及缓存契约通过。
+- 8018/8019合成完整流程、同版本整体恢复、25张业务表及两份PDF保留、100现金＋20公司差额及再次备份通过；新head b7e2d9a41c60、完整性ok、外键0、57个Trigger。双语PDF渲染、内置浏览器及关闭末页退出通过。
+- 候选保留于F:\财务系统\金融计划收费系统_Windows候选版_0.2.27_20260910\FinancialFeeSystem；正式数据迁移未执行。业务规则、迁移前提和完整证据统一见主说明书11.6节。

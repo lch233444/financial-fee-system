@@ -52,6 +52,7 @@ export function accountIdentityLabel(account: Account) {
     account.platform_name || "待确认Platform",
     account.account_number,
     account.scheme_name?.trim() || null,
+    account.fee_plan_name ? `收费计划 ${account.fee_plan_name}` : "未分配收费计划",
   ].filter(Boolean).join(" · ");
 }
 export type BalanceSnapshot = {
@@ -221,10 +222,14 @@ export type Invoice = {
   quarter: number;
   fee_plan_id: number;
   fee_plan_name: string | null;
+  fee_plan_ids?: number[];
   source_count: number;
   account_lines: Array<{
     id: number;
     settlement_id: number;
+    fee_plan_id?: number;
+    fee_plan_name?: string;
+    fee_rate_percent?: number;
     platform_name: string;
     account_number: string;
     scheme_name: string | null;

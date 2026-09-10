@@ -34,10 +34,10 @@ test("结算选齐客户、平台和计划后才显示相应账户及可辨认�
   };
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] || []))));
   render(<SettlementsPage notify={vi.fn()} />);
-  await screen.findByRole("option", { name: "测试平台" });
+  await waitFor(() => expect((screen.getByRole("combobox", { name: "结算客户" }) as HTMLInputElement).disabled).toBe(false));
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
   fireEvent.focus(screen.getByRole("combobox", { name: "结算客户" }));
-  fireEvent.click(screen.getByRole("option", { name: "测试客户" }));
+  fireEvent.click(await screen.findByRole("option", { name: "测试客户" }));
   fireEvent.change(screen.getByRole("combobox", { name: "Platform", exact: true }), { target: { value: "1" } });
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "Fee Plan", exact: true }), { target: { value: "1" } });

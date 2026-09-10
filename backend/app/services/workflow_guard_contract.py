@@ -41,7 +41,8 @@ def workflow_trigger_sql_is_current(trigger_sql: dict[str, str]) -> bool:
         "settlement_missing_previous_quarter" in finalize
         and "immediate.year * 4 + immediate.quarter = new.year * 4 + new.quarter - 1" in finalize
         and "invoice_correction_late_source_group_invalid" in correction
-        and "replacement_settlement.platform_id in (" in correction
+        and ("replacement_settlement.platform_id in (" in correction
+             or "(replacement_settlement.platform_id, replacement_settlement.fee_plan_id) in (" in correction)
         and "having count(distinct original_source.id) > 1" in correction
         and "having count(distinct lineage.replacement_source_id) != 1" in correction
     )

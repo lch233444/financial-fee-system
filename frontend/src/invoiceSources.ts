@@ -8,18 +8,19 @@ export function settlementSourcesFollowOriginal(originalIds: number[], replaceme
     && new Set(replacementIds).size === originalIds.length
     && replacementIds.every((id) => originalIds.includes(id) && settlementById.get(id)?.status === "FINALIZED");
   const original = originals[0]!;
-  const originalPlatforms = new Set(originals.map((item) => item!.platform_id));
+  const sourceGroup = (item: Settlement) => `${item.platform_id}:${item.fee_plan_id}`;
+  const originalGroups = new Set(originals.map((item) => sourceGroup(item!)));
   const originalIdSet = new Set(originalIds);
   const matched = new Set<number>();
-  const platforms = new Set<number>();
+  const groups = new Set<string>();
   for (const id of replacementIds) {
     let current = settlementById.get(id);
     if (!current || current.status !== "FINALIZED"
       || current.client_id !== original.client_id || current.year !== original.year
-      || current.quarter !== original.quarter || current.fee_plan_id !== original.fee_plan_id
-      || platforms.has(current.platform_id)) return false;
-    platforms.add(current.platform_id);
-    if (!originalPlatforms.has(current.platform_id)) continue;
+      || current.quarter !== original.quarter
+      || groups.has(sourceGroup(current))) return false;
+    groups.add(sourceGroup(current));
+    if (!originalGroups.has(sourceGroup(current))) continue;
     const visited = new Set<number>([current.id]);
     let found = false;
     while (current?.replaces_settlement_id != null) {

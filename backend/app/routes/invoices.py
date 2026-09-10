@@ -73,7 +73,8 @@ def _invoice_query():
         selectinload(Invoice.payment_allocations).selectinload(PaymentAllocation.payment),
         selectinload(Invoice.payment_allocations).selectinload(PaymentAllocation.correction),
         selectinload(Invoice.adjustments).selectinload(InvoiceAdjustment.correction),
-        selectinload(Invoice.sources).selectinload(InvoiceSource.settlement),
+        selectinload(Invoice.sources).selectinload(InvoiceSource.settlement).selectinload(QuarterlySettlement.fee_plan),
+        selectinload(Invoice.lines).selectinload(InvoiceLine.source_settlement).selectinload(QuarterlySettlement.fee_plan),
         selectinload(Invoice.lines)
         .selectinload(InvoiceLine.source_account_line)
         .selectinload(SettlementAccountLine.account),
@@ -212,7 +213,7 @@ def _replacement_sources_follow_original(
 
 
 def _open_correction_for_group(
-    db: Session, *, client_id: int, year: int, quarter: int, fee_plan_id: int
+    db: Session, *, client_id: int, year: int, quarter: int
 ) -> InvoiceCorrection | None:
     return db.scalar(
         _correction_query()
@@ -222,7 +223,6 @@ def _open_correction_for_group(
             Invoice.client_id == client_id,
             Invoice.year == year,
             Invoice.quarter == quarter,
-            Invoice.fee_plan_id == fee_plan_id,
         )
         .order_by(InvoiceCorrection.id)
         .limit(1)
@@ -235,7 +235,6 @@ def _validate_open_correction_sources(
     client_id: int,
     year: int,
     quarter: int,
-    fee_plan_id: int,
     settlements: list[QuarterlySettlement],
 ) -> InvoiceCorrection | None:
     correction = _open_correction_for_group(
@@ -243,7 +242,6 @@ def _validate_open_correction_sources(
         client_id=client_id,
         year=year,
         quarter=quarter,
-        fee_plan_id=fee_plan_id,
     )
     if correction and not settlements_follow_original(db, correction.original_invoice, settlements,
                                                       same_sources=correction.target_company_id is not None):
@@ -271,7 +269,6 @@ def _pending_replacement_correction(
         client_id=invoice.client_id,
         year=invoice.year,
         quarter=invoice.quarter,
-        fee_plan_id=invoice.fee_plan_id,
     )
     if (
         correction is None
@@ -307,12 +304,11 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
             Invoice.client_id == payload.client_id,
             Invoice.year == payload.year,
             Invoice.quarter == payload.quarter,
-            Invoice.fee_plan_id == payload.fee_plan_id,
             Invoice.lifecycle_status.in_(ACTIVE_INVOICE_STATUSES),
         )
     )
     if existing_group is not None:
-        raise HTTPException(status_code=409, detail="该客户、季度和Fee Plan已有有效Invoice")
+        raise HTTPException(status_code=409, detail="该客户和季度已有有效Invoice")
 
     settlements = db.scalars(
         _draft_settlement_query()
@@ -320,19 +316,17 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
             QuarterlySettlement.client_id == payload.client_id,
             QuarterlySettlement.year == payload.year,
             QuarterlySettlement.quarter == payload.quarter,
-            QuarterlySettlement.fee_plan_id == payload.fee_plan_id,
             QuarterlySettlement.status == "FINALIZED",
         )
-        .order_by(QuarterlySettlement.platform_id, QuarterlySettlement.id)
+        .order_by(QuarterlySettlement.platform_id, QuarterlySettlement.fee_plan_id, QuarterlySettlement.id)
     ).unique().all()
     if not settlements:
-        raise HTTPException(status_code=404, detail="该客户、季度和Fee Plan没有Finalized Settlement")
+        raise HTTPException(status_code=404, detail="该客户和季度没有Finalized Settlement")
     correction = _validate_open_correction_sources(
         db,
         client_id=payload.client_id,
         year=payload.year,
         quarter=payload.quarter,
-        fee_plan_id=payload.fee_plan_id,
         settlements=settlements,
     )
 
@@ -341,7 +335,7 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
     if None in company_ids or None in fc_ids:
         raise HTTPException(status_code=400, detail="Finalized Settlement缺少冻结Company或FC")
     if len(company_ids) != 1 or len(fc_ids) != 1:
-        raise HTTPException(status_code=409, detail="跨Platform Settlement的冻结Company或FC不一致，不能合并Invoice")
+        raise HTTPException(status_code=409, detail="跨平台、跨收费计划Settlement的冻结Company或FC不一致，不能合并Invoice")
     if any(
         not settlement.fee_plan
         or settlement.fee_plan.company_id != settlement.company_id
@@ -354,7 +348,6 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         settlement.client_id != payload.client_id
         or settlement.year != payload.year
         or settlement.quarter != payload.quarter
-        or settlement.fee_plan_id != payload.fee_plan_id
         for settlement in settlements
     ):
         raise HTTPException(status_code=409, detail="Settlement分组与Invoice请求不一致")
@@ -372,10 +365,10 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
     anchor = settlements[0]
     item = Invoice(
         settlement_id=anchor.id,
+        fee_plan_id=anchor.fee_plan_id,
         client_id=payload.client_id,
         year=payload.year,
         quarter=payload.quarter,
-        fee_plan_id=payload.fee_plan_id,
         company_id=anchor.company_id,
         payee_company_id=(correction.target_company_id or correction.original_invoice.receiving_company_id) if correction else None,
         fc_id=anchor.fc_id,
@@ -523,7 +516,6 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
                 QuarterlySettlement.client_id == invoice.client_id,
                 QuarterlySettlement.year == invoice.year,
                 QuarterlySettlement.quarter == invoice.quarter,
-                QuarterlySettlement.fee_plan_id == invoice.fee_plan_id,
                 QuarterlySettlement.status == "FINALIZED",
             )
         ).all()
@@ -544,7 +536,6 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
             settlement.client_id != invoice.client_id
             or settlement.year != invoice.year
             or settlement.quarter != invoice.quarter
-            or settlement.fee_plan_id != invoice.fee_plan_id
             or settlement.company_id != invoice.company_id
             or settlement.fc_id != invoice.fc_id
         ):
@@ -566,7 +557,6 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
         client_id=invoice.client_id,
         year=invoice.year,
         quarter=invoice.quarter,
-        fee_plan_id=invoice.fee_plan_id,
         settlements=[source.settlement for source in invoice.sources if source.active],
     )
     if correction:
@@ -1215,9 +1205,8 @@ def complete_invoice_correction(
         replacement.client_id != original.client_id
         or replacement.year != original.year
         or replacement.quarter != original.quarter
-        or replacement.fee_plan_id != original.fee_plan_id
     ):
-        raise HTTPException(status_code=409, detail="替代Invoice与原Invoice的Client、年度、季度或Fee Plan不一致")
+        raise HTTPException(status_code=409, detail="替代Invoice与原Invoice的Client、年度或季度不一致")
     if not _replacement_sources_follow_original(db, original, replacement):
         raise HTTPException(status_code=409, detail="替代Invoice的活动Settlement来源未通过完整replaces链覆盖原来源")
     expected_company_id = correction.target_company_id or original.receiving_company_id

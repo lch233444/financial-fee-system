@@ -222,7 +222,8 @@ class InvoiceDraftCreate(BaseModel):
     client_id: int
     year: int = Field(ge=2000, le=2200)
     quarter: int = Field(ge=1, le=4)
-    fee_plan_id: int
+    # Legacy callers may send this field; it never filters the client-quarter bill.
+    fee_plan_id: int | None = Field(default=None, deprecated=True)
     language: Literal["zh", "en"] = "zh"
 
 

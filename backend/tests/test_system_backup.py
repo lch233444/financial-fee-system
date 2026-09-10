@@ -1154,11 +1154,11 @@ def test_restore_rejects_same_name_nonunique_active_invoice_index(tmp_path: Path
 
     def forge_invoice_index(files: dict[str, bytes], manifest: dict) -> None:
         def mutate(connection: sqlite3.Connection) -> None:
-            connection.execute("DROP INDEX uq_invoices_active_client_period_plan")
+            connection.execute("DROP INDEX uq_invoices_active_client_period")
             connection.execute(
                 """
-                CREATE INDEX uq_invoices_active_client_period_plan
-                ON invoices (client_id, year, quarter, fee_plan_id)
+                CREATE INDEX uq_invoices_active_client_period
+                ON invoices (client_id, year, quarter)
                 WHERE lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')
                 """
             )

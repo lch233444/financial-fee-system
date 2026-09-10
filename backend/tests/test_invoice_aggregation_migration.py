@@ -17,7 +17,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "a2e6c9d74f31"
+HEAD_REVISION = "b7e2d9a41c60"
 PREVIOUS_REVISION = "a6d1f4c28b73"
 
 
@@ -79,7 +79,7 @@ def test_empty_database_upgrades_to_invoice_aggregation_head(tmp_path, monkeypat
     assert revision == HEAD_REVISION
     assert "WHERE active = 1" in schema_objects["uq_invoice_sources_active_settlement"]
     assert "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')" in schema_objects[
-        "uq_invoices_active_client_period_plan"
+        "uq_invoices_active_client_period"
     ]
     assert "invoice_sources" in schema_objects["trg_settlement_validate_void"]
     assert "invoice_lines" in schema_objects["trg_invoice_validate_issue"]

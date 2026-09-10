@@ -352,3 +352,10 @@ img.document-preview { object-fit: contain; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Keep the financial scope visible beside both inputs and frozen results. */
+.settlement-scope { display: grid; gap: 6px; margin: 18px 0; padding: 16px 20px; border-inline-start: 3px solid var(--blue); background: var(--subtle); border-radius: 8px; }
+.settlement-scope > span { font-size: 13px; line-height: 1.6; }
+@media (max-width: 1500px) {
+  .split-layout.invoices-top { grid-template-columns: minmax(0, 1fr); }
+}

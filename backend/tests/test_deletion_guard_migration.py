@@ -20,7 +20,7 @@ from app.services.settlement_boundary_contract import (
 
 PREVIOUS_REVISION = "7f3c2a91b6e4"
 DELETE_GUARD_REVISION = "c1a7d5e9b402"
-HEAD_REVISION = "a2e6c9d74f31"
+HEAD_REVISION = "b7e2d9a41c60"
 DELETE_GUARD_TRIGGERS = {
     "trg_client_delete_no_cascade",
     "trg_account_delete_no_cascade",

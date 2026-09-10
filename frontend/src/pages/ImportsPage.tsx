@@ -511,7 +511,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   return (
     <>
       <PageHeader
-        title="eMPF账单导入"
+        title="余额快照导入"
         subtitle="本地OCR + Sol独立识别 · 冲突直接交由财务确认"
       />
       {(localError || imports.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || accounts.error || snapshots.error} /> : null}
@@ -526,7 +526,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         </form>
       </Panel>
 
-      <Panel title="ChatGPT Pro 辅助识别" subtitle={`固定使用 ${SOL_MODEL_ID}；不切换其他模型，冲突或失败直接转人工`} className="ai-assistant-panel">
+      <Panel title="AI大模型辅助识别" className="ai-assistant-panel">
         <div className="ai-assistant-strip">
           <div className="ai-assistant-icon"><BrainCircuit /></div>
           <div className="ai-assistant-copy">

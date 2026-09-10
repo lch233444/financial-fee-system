@@ -18,7 +18,7 @@ type Page = "dashboard" | "setup" | "clients" | "imports" | "transactions" | "se
 const navigation = [
   { id: "dashboard", label: "经营概览", sub: "Overview", icon: Gauge, group: "工作台" },
   { id: "clients", label: "客户与账户", sub: "Clients & accounts", icon: UsersRound, group: "日常财务" },
-  { id: "imports", label: "账单导入", sub: "Statement review", icon: FileScan, group: "日常财务" },
+  { id: "imports", label: "余额快照导入", sub: "Statement review", icon: FileScan, group: "日常财务" },
   { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "日常财务" },
   { id: "settlements", label: "季度结算", sub: "Quarterly settlement", icon: Calculator, group: "日常财务" },
   { id: "invoices", label: "Invoice与收款", sub: "Invoices & payments", icon: ReceiptText, group: "日常财务" },

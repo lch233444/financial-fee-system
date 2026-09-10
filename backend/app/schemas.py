@@ -427,6 +427,12 @@ class StatementConfirmRequest(BaseModel):
     # The legacy field name remains for saved-client and audit compatibility.
     luna_document_type_reviewed: bool | None = None
     holdings: list[StatementHoldingInput] | None = Field(default=None, max_length=200)
+    holdings_difference_reason: str | None = Field(default=None, min_length=2, max_length=500)
+
+    @field_validator("holdings_difference_reason")
+    @classmethod
+    def validate_holdings_difference_reason(cls, value: str | None) -> str | None:
+        return _require_meaningful_reason(value) if value is not None else None
 
     @field_validator("total_balance")
     @classmethod

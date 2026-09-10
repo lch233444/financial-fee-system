@@ -1350,6 +1350,27 @@ def _confirm_statement_locked(
             detail="Sol识别存在冲突、不确定或校验异常；财务必须勾选已逐项人工核对后才能入账",
         )
 
+    recognized_holdings = _normalized_holdings(extracted.get("holdings"))
+    ai_holdings = _normalized_holdings(
+        ai_values.get("holdings") if isinstance(ai_values, dict) else None
+    )
+    submitted_holdings = (
+        _normalized_holdings([holding.model_dump(mode="json") for holding in payload.holdings])
+        if payload.holdings is not None
+        else None
+    )
+    confirmed_holdings = submitted_holdings if submitted_holdings is not None else recognized_holdings
+    if len(confirmed_holdings) < max(len(recognized_holdings), len(ai_holdings)):
+        if not payload.holdings_difference_reason:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"将保存{len(confirmed_holdings)}项持仓，但本地OCR有{len(recognized_holdings)}项、"
+                        f"Sol有{len(ai_holdings)}项；请核对原件并选择完整持仓。"
+                        "若较少的明细才正确，必须单独填写持仓差异原因；统一差异勾选不能代替。"),
+            )
+    elif payload.holdings_difference_reason is not None:
+        raise HTTPException(status_code=400, detail="持仓数量未减少，不应提交持仓差异原因")
+
     account: SubAccount | None = None
     if payload.account_id:
         account = db.get(SubAccount, payload.account_id)
@@ -1419,16 +1440,6 @@ def _confirm_statement_locked(
     ):
         raise HTTPException(status_code=409, detail="账单Scheme与选定Sub Account不一致")
 
-    recognized_holdings = _normalized_holdings(extracted.get("holdings"))
-    ai_holdings = _normalized_holdings(
-        ai_values.get("holdings") if isinstance(ai_values, dict) else None
-    )
-    submitted_holdings = (
-        _normalized_holdings([holding.model_dump(mode="json") for holding in payload.holdings])
-        if payload.holdings is not None
-        else None
-    )
-    confirmed_holdings = submitted_holdings if submitted_holdings is not None else recognized_holdings
     if submitted_holdings is None:
         holdings_source = "LOCAL_OCR_DEFAULT"
     elif submitted_holdings == recognized_holdings:
@@ -1468,6 +1479,7 @@ def _confirm_statement_locked(
                 "ai_conflicts_reviewed",
                 "luna_document_type_reviewed",
                 "holdings",
+                "holdings_difference_reason",
             },
         ),
         "document_type": "empf_account_page",
@@ -1485,6 +1497,9 @@ def _confirm_statement_locked(
         "confirmed_count": len(confirmed_holdings),
         "changed": recognized_holdings != confirmed_holdings,
     }
+    if payload.holdings_difference_reason is not None:
+        changes["holdings"]["difference_reason"] = payload.holdings_difference_reason
+        reviewed_values["holdings_difference_reason"] = payload.holdings_difference_reason
     item.reviewed_json = reviewed_values
     confirmed_at = datetime.now(timezone.utc)
     item.revision_log_json = [

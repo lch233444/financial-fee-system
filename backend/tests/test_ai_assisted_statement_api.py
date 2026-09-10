@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.routes import statements
 from app.routes.ai_assistant import FINANCIAL_REQUEST_HEADER
+from app.schemas import StatementHoldingInput
 from app.services.entity_ids import allocate_entity_id
 from app.services.codex_app_server import (
     FIXED_AI_MODEL,
@@ -451,6 +452,80 @@ def test_confirmed_local_holdings_are_canonically_audited_as_selected() -> None:
                 "confirmed_count": 1,
                 "changed": False,
             }
+
+
+@pytest.mark.parametrize("selection", ["omitted", "null", "empty", "partial"])
+def test_holdings_cannot_be_lost_through_generic_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch, selection: str,
+) -> None:
+    with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
+        import_id = _create_statement()
+        account_number = f"HOLD{uuid4().hex[:12]}"
+        scheme_name = f"Synthetic Holdings {uuid4().hex[:12]}"
+        ai_values = {**_ai_values(), "account_number": account_number, "scheme_name": scheme_name, "holdings": [
+            StatementHoldingInput(fund_name="SYNTHETIC FUND A", market_value="6000.00").model_dump(),
+            StatementHoldingInput(fund_name="SYNTHETIC FUND B", market_value="3736.57").model_dump(),
+        ]}
+        fake = FakeRecognitionClient(ai_values)
+        _install_fake(monkeypatch, fake)
+        assert client.post(f"/api/statement-imports/{import_id}/ai-recognize").status_code == 200
+        payload = {
+            **_ocr_values(), "account_number": account_number, "scheme_name": scheme_name,
+            "ai_conflicts_reviewed": True,
+        }
+        payload.pop("holdings")
+        if selection != "omitted":
+            payload["holdings"] = {"null": None, "empty": [], "partial": ai_values["holdings"][:1]}[selection]
+        before = _financial_counts()
+        rejected = client.post(f"/api/statement-imports/{import_id}/confirm", json=payload)
+        assert rejected.status_code == 409, rejected.text
+        assert "持仓差异原因" in rejected.json()["detail"]
+        assert _financial_counts() == before
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert item.status == "NEEDS_REVIEW"
+            assert item.confirmed_snapshot_id is None
+            assert item.reviewed_json is None
+
+        # A subsequent explicit selection saves both rows; the blocked attempt
+        # neither creates a snapshot nor changes the single audited AI result.
+        accepted = client.post(f"/api/statement-imports/{import_id}/confirm", json={
+            **payload, "holdings": ai_values["holdings"],
+        })
+        assert accepted.status_code == 200, accepted.text
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert db.get(BalanceSnapshot, item.confirmed_snapshot_id).holdings_json == ai_values["holdings"]
+            assert item.revision_log_json[-1]["changes"]["holdings"]["source"] == "SOL_SELECTED"
+        assert len(fake.calls) == 1
+
+
+@pytest.mark.parametrize("reason", [None, "  ", "  x  ", "原件已核对，另一来源为重复识别"])
+def test_rejecting_false_positive_holdings_requires_specific_audited_reason(reason: str | None) -> None:
+    with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
+        import_id = _create_statement()
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            item.extracted_json = {**item.extracted_json, "holdings": [{"fund_name": "SYNTHETIC DUPLICATE"}]}
+            db.commit()
+        payload = {
+            **_ocr_values(), "account_number": f"MANUAL{uuid4().hex[:12]}",
+            "scheme_name": f"Synthetic Manual {uuid4().hex[:12]}",
+            "holdings": [], "holdings_difference_reason": reason,
+        }
+        response = client.post(f"/api/statement-imports/{import_id}/confirm", json=payload)
+        if reason is None or len(reason.strip()) < 2:
+            assert response.status_code == (409 if reason is None else 422), response.text
+            return
+        assert response.status_code == 200, response.text
+        with SessionLocal() as db:
+            item = db.get(StatementImport, import_id)
+            assert item.reviewed_json["holdings_difference_reason"] == reason
+            assert db.get(BalanceSnapshot, item.confirmed_snapshot_id).holdings_json == []
+            audit = db.scalar(select(AuditEvent).where(
+                AuditEvent.action == "STATEMENT_CONFIRMED", AuditEvent.entity_id == import_id,
+            ))
+            assert audit.details_json["changes"]["holdings"]["difference_reason"] == reason
 
 
 def test_non_balance_document_cannot_create_balance_snapshot() -> None:

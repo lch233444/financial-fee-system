@@ -284,10 +284,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const deleteBusyRef = useRef(false);
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
+  const [holdingsDifferenceReason, setHoldingsDifferenceReason] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
   const holdings = (selected?.extracted?.holdings as Holding[] | undefined) || [];
   const aiHoldings = ((selected?.ai_recognition?.values?.holdings ?? selected?.ai_recognition?.extracted?.holdings) as Holding[] | undefined) || [];
+  const selectedHoldings = holdingsSource === "sol" ? aiHoldings : holdings;
+  const holdingsReduced = selectedHoldings.length < Math.max(holdings.length, aiHoldings.length);
+  const holdingsReasonValid = holdingsDifferenceReason.trim().length >= 2 && holdingsDifferenceReason.trim().length <= 500;
   const recognized = recognitionSucceeded(selected);
   const comparisonRows = recognized ? comparisonFields.map((field) => ({ field, conflict: fieldHasConflict(selected, field) })) : [];
   const reviewIssues = buildReviewIssues(selected);
@@ -329,8 +333,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setConflictsAcknowledged(false);
     setSolDocumentTypeReviewed(false);
     setHoldingsSource("ocr");
+    setHoldingsDifferenceReason("");
     setSelectedAccountId("");
   }, [selected?.id]);
+
+  function chooseHoldings(source: HoldingsSource) {
+    setHoldingsSource(source);
+    setHoldingsDifferenceReason("");
+  }
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -343,7 +353,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       await imports.reload();
       setSelected(result);
       setReviewValues(initialReviewValues(result));
-      setHoldingsSource("ocr");
+      chooseHoldings("ocr");
       if (result.upload_recovery_pending) {
         setLocalError("账单记录已安全处理，但上传对账标记仍待系统清理；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录");
         notify(result.duplicate
@@ -368,7 +378,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       setSelected(result);
       setReviewValues(initialReviewValues(result));
       setConflictsAcknowledged(false);
-      setHoldingsSource("ocr");
+      chooseHoldings("ocr");
       await imports.reload();
       notify(result.ai_recognition ? "本地OCR已重新执行；将继续与原Sol结果比较，不会再次调用模型" : "本地OCR已重新执行，可运行一次Sol辅助识别");
     } catch (err) {
@@ -386,7 +396,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     try {
       const result = await recognizeStatementWithAi(selected.id);
       setSelected(result);
-      setHoldingsSource("ocr");
+      chooseHoldings("ocr");
       await imports.reload();
       const reviewIssueTotal = buildReviewIssues(result).length;
       notify(reviewIssueTotal ? `Sol识别完成，有${reviewIssueTotal}项需人工复核` : "Sol与本地OCR结果一致，请财务最终复核");
@@ -469,6 +479,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || uploading || recognizing || reviewing || deletingId !== null) return;
+    if (holdingsReduced && !holdingsReasonValid) {
+      setLocalError("所选持仓数量少于识别候选。请核对原件并选择完整明细；若较少的明细才正确，必须填写持仓差异原因。");
+      return;
+    }
     if (reviewIssueCount > 0 && !conflictsAcknowledged) {
       setLocalError("Sol与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
       return;
@@ -494,7 +508,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         total_balance: reviewValues.total_balance,
         account_id: selectedExistingAccount?.id ?? null,
         account_platform_id: selectedExistingAccount?.platform_id ?? null,
-        holdings: holdingsSource === "sol" ? aiHoldings : holdings,
+        holdings: selectedHoldings,
+        holdings_difference_reason: holdingsReduced ? holdingsDifferenceReason.trim() : null,
         ai_conflicts_reviewed: reviewIssueCount > 0 && conflictsAcknowledged,
         luna_document_type_reviewed: usesSolBalanceClassification && solDocumentTypeReviewed,
       });
@@ -573,7 +588,9 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               <span><small>Snapshot金额</small><b>HKD {confirmedSnapshot?.total_balance || confirmedValue(selected, "total_balance") || "-"}</b></span>
               <span><small>Closing资格</small><b>{confirmedSnapshot ? (confirmedSnapshot.eligible_for_closing ? "可作为季末/退出日Closing" : "普通快照，不可作为Closing") : "加载中"}</b></span>
             </div>
-            {confirmedHoldings.length ? <div className="holdings-source-review confirmed-holdings"><HoldingsSourceTable title="已确认入账持仓（凭证记录）" holdings={confirmedHoldings} selected /></div> : <small className="confirmed-audit-reference">该Snapshot没有保存持仓明细；季度收费只使用余额及资金流水，不使用持仓项目计算。</small>}
+            {confirmedSnapshot && !confirmedHoldings.length && (holdings.length || aiHoldings.length) && !selected.reviewed?.holdings_difference_reason ? <div className="warning-list" role="alert"><p>历史持仓遗漏：识别候选中有明细，但该快照保存了0项，且没有单独的差异原因。请核对原件与子账户资料；已结算或签发的记录不能直接覆盖。</p></div> : null}
+            {confirmedHoldings.length ? <div className="holdings-source-review confirmed-holdings"><HoldingsSourceTable title="已确认入账持仓（凭证记录）" holdings={confirmedHoldings} selected /></div> : <small className="confirmed-audit-reference">该Snapshot保存了0项基金持仓。收费单位是已登记的Sub Account，各自使用余额、流水、收费计划及HWM计算。</small>}
+            {selected.reviewed?.holdings_difference_reason ? <p className="confirmed-audit-reference">持仓差异原因：{String(selected.reviewed.holdings_difference_reason)}</p> : null}
             <p className="confirmed-next-step">{!confirmedAccount || !confirmedSnapshot
               ? "正在加载已关联的账户与Snapshot资料。"
               : confirmedAccount.status === "DRAFT"
@@ -584,7 +601,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：Snapshot #{selected.confirmed_snapshot_id}</small> : null}
           </div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
             {usesSolBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={solDocumentTypeReviewed} onChange={(event) => setSolDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Sol的文档类型进入人工复核，Sol不会自动生成余额快照。</small></span></label> : null}
-            <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(...Object.values(selected.confidence || { all: 0 })) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition) || statementWriteBusy} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : reviewing ? "处理中..." : "重新执行本地OCR"}</button></div>
+            <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(0, ...Object.values(selected.confidence || {})) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition) || statementWriteBusy} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : reviewing ? "处理中..." : "重新执行本地OCR"}</button></div>
             {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
             {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Sol：{warning}</p>)}</div> : null}
             {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Sol识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不会切换其他模型，请直接人工复核。</span></div> : null}
@@ -608,7 +625,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                   </div>;
                 })}
               </div>
-              {holdings.length || aiHoldings.length ? <p className="holdings-comparison">持仓项目数量：本地OCR {holdings.length} 项 · Sol {aiHoldings.length} 项。持仓只作凭证记录，不参与季度收费计算。</p> : null}
+              {holdings.length || aiHoldings.length ? <p className="holdings-comparison">基金持仓：本地OCR {holdings.length} 项 · Sol {aiHoldings.length} 项。各收费子账户须在“客户与账户”独立登记和分配计划；识别基金不会自动建立收费子账户。</p> : null}
               {reviewIssueCount ? <div className="ai-review-register">
                 <div className="ai-review-register-heading"><strong>完整人工复核清单</strong><span>{reviewIssueCount}项 · 包含持仓路径与数学校验</span></div>
                 <div className="ai-review-register-row header"><span>字段 / 检查</span><span>本地OCR</span><span>Sol</span><span>复核原因</span></div>
@@ -635,19 +652,24 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             <div className="readonly-grid"><span><small>累计净供款（仅参考）</small><b>{value(selected, "lifetime_net_contributions") || "未识别"}</b></span><span><small>累计投资盈亏（仅参考）</small><b>{value(selected, "lifetime_gain_loss") || "未识别"}</b></span></div>
             {holdings.length || selected.ai_recognition ? <div className="holdings-source-review">
               <div className="holdings-source-toolbar">
-                <div><strong>选择正式保存的持仓来源</strong><span>默认采用本地OCR；系统绝不会自动采用Sol持仓。</span></div>
+                <div><strong>选择正式保存的持仓来源</strong><span>请对照原件选择；Sol结果需主动采用后才会保存。</span></div>
                 <div className="holdings-source-buttons" role="group" aria-label="持仓入账来源">
-                  <button type="button" className={holdingsSource === "ocr" ? "active" : ""} onClick={() => setHoldingsSource("ocr")}><CheckCircle2 size={13} />采用本地持仓</button>
-                  {selected.ai_recognition ? <button type="button" className={holdingsSource === "sol" ? "active" : ""} onClick={() => setHoldingsSource("sol")}><Sparkles size={13} />采用Sol持仓</button> : null}
+                  <button type="button" aria-pressed={holdingsSource === "ocr"} className={holdingsSource === "ocr" ? "active" : ""} onClick={() => chooseHoldings("ocr")}><CheckCircle2 size={13} />采用本地持仓（{holdings.length}项）</button>
+                  {selected.ai_recognition ? <button type="button" aria-pressed={holdingsSource === "sol"} className={holdingsSource === "sol" ? "active" : ""} onClick={() => chooseHoldings("sol")}><Sparkles size={13} />采用Sol持仓（{aiHoldings.length}项）</button> : null}
                 </div>
               </div>
+              <p role="status">将保存：{selectedHoldings.length}项基金持仓 · 来源：{holdingsSource === "sol" ? "Sol（人工选择）" : "本地OCR"}</p>
+              {holdingsReduced ? <div className="warning-list">
+                <p>所选来源只有{selectedHoldings.length}项，另一来源有更多明细。请先核对原件，避免漏存；统一差异勾选不能代替此项处理。</p>
+                <Field label="持仓差异原因" hint="仅当较少的明细才正确时填写，例如另一来源重复或误识别；2至500字，随入账记录保留。"><textarea name="holdings_difference_reason" value={holdingsDifferenceReason} minLength={2} maxLength={500} required aria-invalid={!holdingsReasonValid} onChange={(event) => setHoldingsDifferenceReason(event.target.value)} /></Field>
+              </div> : null}
               <div className={selected.ai_recognition ? "holdings-source-grid" : "holdings-source-grid single"}>
                 <HoldingsSourceTable title="本地OCR持仓" holdings={holdings} selected={holdingsSource === "ocr"} />
                 {selected.ai_recognition ? <HoldingsSourceTable title="Sol持仓" holdings={aiHoldings} selected={holdingsSource === "sol"} /> : null}
               </div>
             </div> : null}
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={statementWriteBusy || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            <button className="primary" type="submit" disabled={statementWriteBusy || (holdingsReduced && !holdingsReasonValid) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

@@ -40,6 +40,7 @@ from ..services.codex_app_server import (
     get_codex_app_server,
 )
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
+from ..services.client_identity import normalized_client_name
 from ..services.statement_parser import DOCUMENT_TYPE_LABELS, OCR_PARSER_VERSION, parse_empf_statement
 from ..services.statement_delete_recovery import (
     reconcile_statement_delete_commit_outcome,
@@ -1371,6 +1372,13 @@ def _confirm_statement_locked(
     elif payload.holdings_difference_reason is not None:
         raise HTTPException(status_code=400, detail="持仓数量未减少，不应提交持仓差异原因")
 
+    requested_client = db.get(Client, payload.client_id) if payload.client_id is not None else None
+    if payload.client_id is not None:
+        if requested_client is None:
+            raise HTTPException(status_code=404, detail="所选客户不存在，请刷新后重新选择")
+        if normalized_client_name(requested_client.name) != normalized_client_name(payload.client_name):
+            raise HTTPException(status_code=409, detail="Client Name与所选客户不一致，请核对原件和客户归属")
+
     account: SubAccount | None = None
     if payload.account_id:
         account = db.get(SubAccount, payload.account_id)
@@ -1382,12 +1390,16 @@ def _confirm_statement_locked(
             raise HTTPException(status_code=409, detail="所选Sub Account的Platform已变化，请刷新后重新选择")
         if account.account_number != payload.account_number:
             raise HTTPException(status_code=400, detail="Account Number与指定账户不一致")
+        if requested_client is not None and account.client_id != requested_client.id:
+            raise HTTPException(status_code=409, detail="所选子账户不属于所选客户，请重新核对")
     elif payload.account_platform_id is not None:
         raise HTTPException(status_code=400, detail="未选择Sub Account时不能单独提交Platform")
     else:
         candidates = db.scalars(
             select(SubAccount).where(SubAccount.account_number == payload.account_number)
         ).all()
+        if requested_client is not None:
+            candidates = [candidate for candidate in candidates if candidate.client_id == requested_client.id]
         if len(candidates) == 1:
             account = candidates[0]
         elif len(candidates) > 1:
@@ -1407,16 +1419,37 @@ def _confirm_statement_locked(
                 )
 
     created_draft = False
+    created_client = False
     if not account:
+        client = requested_client
+        if client is not None and client.status == "CLOSED":
+            raise HTTPException(status_code=409, detail="已关闭客户不能新增子账户")
+        if client is None:
+            matching_ids = [
+                client_id for client_id, name in db.execute(select(Client.id, Client.name))
+                if normalized_client_name(name) == normalized_client_name(payload.client_name)
+            ]
+            if matching_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail="已有同名客户，请在客户归属中选择已有客户，再新增他的子账户；若确为不同的人，请先建立独立客户档案后明确选择",
+                )
         platform = _platform_for_statement(db, payload.scheme_name, payload.trustee)
-        client = Client(
-            id=_next_entity_id(db, Client),
-            name=payload.client_name,
-            status="DRAFT",
-            remark="由eMPF账单导入创建，待补全Company和FC",
-        )
-        db.add(client)
-        db.flush()
+        if db.scalar(select(SubAccount.id).where(
+            SubAccount.platform_id == platform.id,
+            SubAccount.account_number == payload.account_number,
+        )) is not None:
+            raise HTTPException(status_code=409, detail="该平台账户已属于其他客户，请核对客户归属和账户号码")
+        if client is None:
+            client = Client(
+                id=_next_entity_id(db, Client),
+                name=payload.client_name,
+                status="DRAFT",
+                remark="由eMPF账单导入创建，待补全Company和FC",
+            )
+            db.add(client)
+            db.flush()
+            created_client = True
         account = SubAccount(
             id=_next_entity_id(db, SubAccount),
             client_id=client.id,
@@ -1431,7 +1464,7 @@ def _confirm_statement_locked(
         db.add(account)
         db.flush()
         created_draft = True
-    elif account.client.name.strip().casefold() != payload.client_name.strip().casefold():
+    elif normalized_client_name(account.client.name) != normalized_client_name(payload.client_name):
         raise HTTPException(status_code=409, detail="Account Number已存在，但Client Name不一致")
     elif (
         payload.scheme_name
@@ -1475,6 +1508,7 @@ def _confirm_statement_locked(
             mode="json",
             exclude={
                 "account_id",
+                "client_id",
                 "account_platform_id",
                 "ai_conflicts_reviewed",
                 "luna_document_type_reviewed",
@@ -1509,6 +1543,7 @@ def _confirm_statement_locked(
             "changes": changes,
             "ai_review_acknowledged": bool(payload.ai_conflicts_reviewed),
             "luna_document_type_reviewed": bool(payload.luna_document_type_reviewed),
+            "client_id": account.client_id,
         },
     ]
     item.status = "CONFIRMED"
@@ -1522,6 +1557,9 @@ def _confirm_statement_locked(
             entity_id=item.id,
             details_json={
                 "account_id": account.id,
+                "client_id": account.client_id,
+                "created_client": created_client,
+                "created_account": created_draft,
                 "snapshot_id": snapshot.id,
                 "changes": changes,
                 "ai_status": item.ai_status,
@@ -1537,6 +1575,8 @@ def _confirm_statement_locked(
     return {
         "statement_import": _statement_dict(item),
         "account_id": account.id,
+        "client_id": account.client_id,
+        "created_client": created_client,
         "created_draft": created_draft,
         "snapshot": {
             "id": snapshot.id,

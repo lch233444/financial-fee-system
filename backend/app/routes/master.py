@@ -32,11 +32,13 @@ from ..models import (
 from ..money import money_string, to_cents
 from ..services.calculation import is_quarter_end
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
+from ..services.client_identity import normalized_client_name
 from ..schemas import (
     AccountCreate,
     AccountUpdate,
     BalanceSnapshotCreate,
     ClientCreate,
+    ClientMergeRequest,
     ClientUpdate,
     CompanyCreate,
     FCCreate,
@@ -604,6 +606,72 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         setattr(item, key, value)
     db.commit()
     return {"id": item.id, **payload.model_dump(exclude_unset=True, mode="json")}
+
+
+@router.post("/clients/{client_id}/merge")
+def merge_client(client_id: int, payload: ClientMergeRequest, db: Session = Depends(get_db)) -> dict:
+    """Merge explicitly confirmed duplicate identities before any settlement.
+
+    Account IDs, plans, snapshots, imports and their history remain intact.
+    A deletion audit also prevents the retired customer ID from being reused.
+    """
+    _begin_immediate(db)
+    if client_id == payload.target_client_id:
+        raise HTTPException(status_code=400, detail="不能将客户合并到自己")
+    source, target = db.get(Client, client_id), db.get(Client, payload.target_client_id)
+    if source is None or target is None:
+        raise HTTPException(status_code=404, detail="来源或保留客户不存在，请刷新后核对")
+    if normalized_client_name(source.name) != normalized_client_name(target.name):
+        raise HTTPException(status_code=409, detail="客户姓名不一致，不能作为重复客户合并")
+    if "CLOSED" in (source.status, target.status) or (source.status == "ACTIVE" and target.status != "ACTIVE"):
+        raise HTTPException(status_code=409, detail="请保留有效客户档案；已关闭客户不能在此合并")
+    fields = ("company_id", "fc_id", "management_start_date", "contact")
+    conflicts = [field for field in fields if getattr(source, field) is not None
+                 and getattr(target, field) is not None and getattr(source, field) != getattr(target, field)]
+    if conflicts:
+        raise HTTPException(status_code=409, detail=f"客户资料冲突，不能直接合并：{'、'.join(conflicts)}")
+    ids = (source.id, target.id)
+    if (db.scalar(select(QuarterlySettlement.id).where(QuarterlySettlement.client_id.in_(ids)).limit(1))
+        or db.scalar(select(Invoice.id).where(Invoice.client_id.in_(ids)).limit(1))
+        or db.scalar(select(SettlementAccountLine.id).join(SubAccount, SettlementAccountLine.account_id == SubAccount.id)
+                     .where(SubAccount.client_id.in_(ids)).limit(1))):
+        raise HTTPException(status_code=409, detail="客户已存在结算或Invoice记录，不能直接合并或改写历史归属")
+    if _logical_reference_labels(db, entity_id=source.id, entity_types=("CLIENT",)):
+        raise HTTPException(status_code=409, detail="来源客户有直接关联的附件或导出记录，不能直接合并")
+
+    def values(client: Client) -> dict:
+        return {column.name: (value.isoformat() if hasattr(value, "isoformat") else value)
+                for column in Client.__table__.columns
+                for value in (getattr(client, column.name),)}
+
+    source_values, target_before = values(source), values(target)
+    accounts = db.scalars(select(SubAccount).where(SubAccount.client_id == source.id).order_by(SubAccount.id)).all()
+    moved_ids = [account.id for account in accounts]
+    company_id = target.company_id if target.company_id is not None else source.company_id
+    if company_id is not None and any(account.fee_plan_id is not None
+                                     and account.fee_plan.company_id != company_id for account in accounts):
+        raise HTTPException(status_code=409, detail="子账户收费计划与保留客户的Company不一致，不能合并")
+    for field in fields:
+        if getattr(target, field) is None:
+            setattr(target, field, getattr(source, field))
+    for account in accounts:
+        account.client_id = target.id
+    db.flush()
+    result = _execute_controlled_delete(db, model=Client, item_id=source.id, entity_name="Client")
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="来源客户状态发生变化，合并未完成")
+    details = {"source_client": source_values, "target_before": target_before,
+               "target_client_id": target.id, "moved_account_ids": moved_ids, "reason": payload.reason}
+    db.add(AuditEvent(action="CLIENT_MERGED", entity_type="CLIENT", entity_id=target.id, details_json=details))
+    db.add(AuditEvent(action="MASTER_DATA_DELETED", entity_type="MASTER_DATA", entity_id=None, details_json={
+        "deleted_entity_type": "CLIENT", "deleted_entity_id": client_id,
+        "name": source_values["name"], "previous_status": source_values["status"],
+        "merged_into_client_id": target.id, "reason": payload.reason,
+    }))
+    _commit_controlled_delete(db, model=Client, item_id=client_id, entity_name="Client", deleted_entity_type="CLIENT")
+    return {"status": "merged", "source_client_id": client_id, "target_client_id": target.id,
+            "moved_account_ids": moved_ids}
 
 
 @router.delete("/clients/{client_id}")

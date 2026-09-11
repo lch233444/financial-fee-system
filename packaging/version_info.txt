@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 2, 29, 0),
-    prodvers=(0, 2, 29, 0),
+    filevers=(0, 2, 30, 0),
+    prodvers=(0, 2, 30, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,11 +15,11 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('FileDescription', 'Financial Fee System'),
-          StringStruct('FileVersion', '0.2.29.0'),
+          StringStruct('FileVersion', '0.2.30.0'),
           StringStruct('InternalName', 'FinancialFeeSystem'),
           StringStruct('OriginalFilename', 'FinancialFeeSystem.exe'),
           StringStruct('ProductName', 'Financial Fee System'),
-          StringStruct('ProductVersion', '0.2.29')
+          StringStruct('ProductVersion', '0.2.30')
         ]
       )
     ]),

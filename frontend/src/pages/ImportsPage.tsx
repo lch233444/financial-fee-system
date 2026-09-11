@@ -18,7 +18,7 @@ import {
 } from "../api";
 import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, Pagination, SectionNav } from "../components";
 import { useApiList, usePagination } from "../hooks";
-import type { Account, AiAssistantStatus, BalanceSnapshot, StatementImport } from "../types";
+import type { Account, AiAssistantStatus, BalanceSnapshot, Client, StatementImport } from "../types";
 import { accountIdentityLabel, SOL_MODEL_ID } from "../types";
 
 type Holding = {
@@ -267,6 +267,7 @@ function DocumentRoutingNotice({ record }: { record: StatementImport }) {
 export default function ImportsPage({ notify }: { notify: (message: string) => void }) {
   const imports = useApiList<StatementImport>("/api/statement-imports");
   const accounts = useApiList<Account>("/api/accounts");
+  const clients = useApiList<Client>("/api/clients");
   const snapshots = useApiList<BalanceSnapshot>("/api/balance-snapshots");
   const [importSearch, setImportSearch] = useState("");
   const [importStatus, setImportStatus] = useState("");
@@ -286,6 +287,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
   const [holdingsDifferenceReason, setHoldingsDifferenceReason] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
   const holdings = (selected?.extracted?.holdings as Holding[] | undefined) || [];
   const aiHoldings = ((selected?.ai_recognition?.values?.holdings ?? selected?.ai_recognition?.extracted?.holdings) as Holding[] | undefined) || [];
@@ -305,6 +307,11 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const confirmedAccount = accounts.data.find((item) => item.id === selected?.confirmed_account_id);
   const confirmedSnapshot = snapshots.data.find((item) => item.id === selected?.confirmed_snapshot_id);
   const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId));
+  const selectedClient = clients.data.find((item) => item.id === Number(selectedClientId));
+  const normalizedName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+  const matchingClients = clients.data.filter((item) => normalizedName(item.name) === normalizedName(reviewValues.client_name));
+  const needsClientSelection = !selectedClientId && !selectedExistingAccount && matchingClients.length > 0
+    && !accounts.data.some((item) => item.account_number === reviewValues.account_number);
   const confirmedHoldings = (confirmedSnapshot?.holdings as Holding[] | undefined) || [];
   const statementWriteBusy = uploading || recognizing || reviewing || deletingId !== null;
 
@@ -335,7 +342,17 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setHoldingsSource("ocr");
     setHoldingsDifferenceReason("");
     setSelectedAccountId("");
+    setSelectedClientId("");
   }, [selected?.id]);
+
+  useEffect(() => {
+    setSelectedClientId("");
+    setSelectedAccountId("");
+  }, [reviewValues.client_name]);
+
+  useEffect(() => {
+    setSelectedAccountId("");
+  }, [reviewValues.account_number, reviewValues.scheme_name]);
 
   function chooseHoldings(source: HoldingsSource) {
     setHoldingsSource(source);
@@ -479,6 +496,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || uploading || recognizing || reviewing || deletingId !== null) return;
+    if (clients.loading || accounts.loading || clients.error || accounts.error) {
+      setLocalError("客户或账户清单未能完整加载，请重新载入后核对归属。");
+      return;
+    }
+    if (needsClientSelection) {
+      setLocalError("已发现同名客户，请先选择客户归属，再新增他的子账户。");
+      return;
+    }
     if (holdingsReduced && !holdingsReasonValid) {
       setLocalError("所选持仓数量少于识别候选。请核对原件并选择完整明细；若较少的明细才正确，必须填写持仓差异原因。");
       return;
@@ -498,9 +523,11 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         statement_import: StatementImport;
         account_id: number;
         created_draft: boolean;
+        created_client: boolean;
         snapshot: { id: number; as_of_date: string; total_balance: string; eligible_for_closing: boolean };
       }>(`/api/statement-imports/${selected.id}/confirm`, {
         client_name: reviewValues.client_name,
+        client_id: selectedClientId ? Number(selectedClientId) : null,
         account_number: reviewValues.account_number,
         scheme_name: reviewValues.scheme_name || null,
         trustee: reviewValues.trustee || null,
@@ -514,8 +541,9 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         luna_document_type_reviewed: usesSolBalanceClassification && solDocumentTypeReviewed,
       });
       setSelected(result.statement_import);
-      await Promise.all([imports.reload(), accounts.reload(), snapshots.reload()]);
-      notify(result.created_draft ? "已入账并创建待确认客户/账户档案" : "余额快照已正式入账");
+      await Promise.all([imports.reload(), clients.reload(), accounts.reload(), snapshots.reload()]);
+      notify(result.created_client ? "已入账并创建客户及子账户草稿"
+        : result.created_draft ? "已为已有客户新增子账户草稿，余额快照已入账" : "余额快照已正式入账");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "确认入账失败");
     } finally {
@@ -529,7 +557,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         title="余额快照导入"
         subtitle="本地OCR + Sol独立识别 · 冲突直接交由财务确认"
       />
-      {(localError || imports.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || accounts.error || snapshots.error} /> : null}
+      {(localError || imports.error || clients.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || clients.error || accounts.error || snapshots.error} /> : null}
 
       <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} />
       <Panel id="statement-upload" title="上传eMPF文件" subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
@@ -642,7 +670,20 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div> : null}
             </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Sol。本地OCR结果仍可由财务人工复核；运行Sol前请确认可以将此账单发送至OpenAI。</span></div>}
 
-            <Field group label="匹配已有Sub Account" hint="每次切换导入记录都会清空选择；请按Client、Platform、Account Number及Scheme核对"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId} onChange={setSelectedAccountId} placeholder="自动匹配 / 创建草稿" searchPlaceholder="搜索客户、账户号码或平台…" options={accounts.data.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>
+            <Field group label="客户归属" hint="同一位客户的不同账户归在同一个客户档案下；新增子账户时，请先选择已有客户。">
+              <SearchableSelect label="选择已有客户" name="client_id" value={selectedClientId}
+                disabled={statementWriteBusy || clients.loading || Boolean(clients.error)}
+                onChange={(id) => { setSelectedClientId(id); setSelectedAccountId(""); }}
+                placeholder="新客户 / 尚未选择已有客户" searchPlaceholder="搜索客户姓名、公司或FC…"
+                options={clients.data.filter((item) => item.status !== "CLOSED").map((item) => ({ value: String(item.id),
+                  label: [item.name, item.company_name || "待补全公司", item.fc_name || "待补全FC", `客户#${item.id}`, `${accounts.data.filter((account) => account.client_id === item.id).length}个子账户`].join(" · ") }))} />
+              {selectedClient ? <small>本次账户归属：{selectedClient.name} · 客户#{selectedClient.id}。新账户沿用该客户档案，收费计划仍按子账户分配。</small>
+                : needsClientSelection ? <small role="alert">发现{matchingClients.length}个同名客户档案，请先选择已有客户，再为他新增子账户。若确为不同的人，请先在“客户与账户”建立独立档案。</small> : null}
+            </Field>
+            <Field group label="匹配已有Sub Account" hint="账户已经登记时选择原账户；属于已有客户的新账户，选择上方客户后保留此项为空。"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId}
+              onChange={(id) => { setSelectedAccountId(id); const account = accounts.data.find((item) => item.id === Number(id)); if (account) setSelectedClientId(String(account.client_id)); }}
+              placeholder="自动匹配账户 / 新增子账户草稿" searchPlaceholder="搜索客户、账户号码或平台…"
+              options={accounts.data.filter((item) => !selectedClientId || item.client_id === Number(selectedClientId)).map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>
             <Field label="Client Name" hint={confidence(selected, "client_name")}><input name="client_name" required value={reviewValues.client_name} onChange={(event) => setReviewValues((current) => ({ ...current, client_name: event.target.value }))} /></Field>
             <Field label="Account Number" hint={confidence(selected, "account_number")}><input name="account_number" required value={reviewValues.account_number} onChange={(event) => setReviewValues((current) => ({ ...current, account_number: event.target.value }))} /></Field>
             <Field label="Scheme Name"><input name="scheme_name" value={reviewValues.scheme_name} onChange={(event) => setReviewValues((current) => ({ ...current, scheme_name: event.target.value }))} /></Field>
@@ -669,7 +710,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               </div>
             </div> : null}
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={statementWriteBusy || (holdingsReduced && !holdingsReasonValid) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            <button className="primary" type="submit" disabled={statementWriteBusy || clients.loading || accounts.loading || Boolean(clients.error || accounts.error) || needsClientSelection || (holdingsReduced && !holdingsReasonValid) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

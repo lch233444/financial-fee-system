@@ -138,6 +138,16 @@ class AccountCreate(BaseModel):
     remark: str | None = None
 
 
+class ClientMergeRequest(BaseModel):
+    target_client_id: int = Field(gt=0)
+    reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return _require_meaningful_reason(value)
+
+
 class AccountUpdate(BaseModel):
     platform_id: int | None = None
     fee_plan_id: int | None = None
@@ -411,7 +421,8 @@ class StatementDeleteRequest(BaseModel):
 
 
 class StatementConfirmRequest(BaseModel):
-    client_name: str = Field(min_length=1)
+    client_name: str = Field(min_length=1, max_length=200)
+    client_id: int | None = Field(default=None, gt=0)
     account_number: str = Field(min_length=1)
     scheme_name: str | None = None
     trustee: str | None = None
@@ -428,6 +439,14 @@ class StatementConfirmRequest(BaseModel):
     luna_document_type_reviewed: bool | None = None
     holdings: list[StatementHoldingInput] | None = Field(default=None, max_length=200)
     holdings_difference_reason: str | None = Field(default=None, min_length=2, max_length=500)
+
+    @field_validator("client_name")
+    @classmethod
+    def validate_client_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Client Name不能为空")
+        return value
 
     @field_validator("holdings_difference_reason")
     @classmethod

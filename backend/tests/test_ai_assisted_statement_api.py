@@ -54,6 +54,15 @@ FINANCIAL_MODELS = (
 AI_REQUEST_HEADERS = {FINANCIAL_REQUEST_HEADER: "1"}
 
 
+def _confirmation_client_id(client: TestClient, name: str = "SAMPLE CLIENT") -> int:
+    # These independent recognition scenarios share a database and a sample
+    # name. Explicitly select their customer instead of relying on the removed
+    # behavior that silently created another customer for every new account.
+    response = client.post("/api/clients", json={"name": name})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
 def _ocr_values(*, total_balance: str = "9736.57") -> dict:
     return {
         "document_type": "empf_account_page",
@@ -345,6 +354,7 @@ def test_holding_conflict_requires_explicit_finance_acknowledgement_before_confi
 
         confirm_payload = {
             "client_name": "SAMPLE CLIENT",
+            "client_id": _confirmation_client_id(client),
             "account_number": account_number,
             "scheme_name": scheme_name,
             "trustee": "Bank Consortium Trust Company Limited",
@@ -425,6 +435,7 @@ def test_confirmed_local_holdings_are_canonically_audited_as_selected() -> None:
             f"/api/statement-imports/{import_id}/confirm",
             json={
                 "client_name": "SAMPLE CLIENT",
+                "client_id": _confirmation_client_id(client),
                 "account_number": account_number,
                 "scheme_name": scheme_name,
                 "trustee": "Bank Consortium Trust Company Limited",
@@ -471,6 +482,7 @@ def test_holdings_cannot_be_lost_through_generic_acknowledgement(
         assert client.post(f"/api/statement-imports/{import_id}/ai-recognize").status_code == 200
         payload = {
             **_ocr_values(), "account_number": account_number, "scheme_name": scheme_name,
+            "client_id": _confirmation_client_id(client),
             "ai_conflicts_reviewed": True,
         }
         payload.pop("holdings")
@@ -510,6 +522,7 @@ def test_rejecting_false_positive_holdings_requires_specific_audited_reason(reas
             db.commit()
         payload = {
             **_ocr_values(), "account_number": f"MANUAL{uuid4().hex[:12]}",
+            "client_id": _confirmation_client_id(client),
             "scheme_name": f"Synthetic Manual {uuid4().hex[:12]}",
             "holdings": [], "holdings_difference_reason": reason,
         }
@@ -598,6 +611,7 @@ def test_unknown_local_type_can_use_sol_balance_type_only_after_explicit_review(
 
         payload = {
             "client_name": "SAMPLE CLIENT",
+            "client_id": _confirmation_client_id(client),
             "account_number": account_number,
             "scheme_name": scheme_name,
             "trustee": "Bank Consortium Trust Company Limited",

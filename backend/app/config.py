@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "0.2.28"
+APP_VERSION = "0.2.29"
 
 
 def application_root() -> Path:
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     )
     frontend_dist: Path = application_root() / "frontend" / "dist"
     tesseract_cmd: str | None = os.getenv("TESSERACT_CMD")
+    ocr_cache_root: Path | None = None
     # Codex is intentionally authenticated through the user's managed
     # ChatGPT session.  This application never accepts or stores an API key.
     codex_cmd: str | None = os.getenv("FINANCIAL_CODEX_CMD")

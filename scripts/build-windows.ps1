@@ -8,7 +8,8 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
-$TestTempRoot = Join-Path (Split-Path $ProjectRoot -Parent) ".ffsys-build-tmp"
+$TestTempRoot = Join-Path ([IO.Path]::GetPathRoot($ProjectRoot)) ".ffsys-build-tmp"
+$OcrWorkRoot = Join-Path ([IO.Path]::GetPathRoot($ProjectRoot)) ".ffsys-ocr-build"
 # Keep test resources bounded on Windows desktops with many logical CPUs.
 $env:OPENBLAS_NUM_THREADS = "1"
 $env:OMP_NUM_THREADS = "1"
@@ -19,7 +20,7 @@ $env:TMP = $TestTempRoot
 
 function Remove-BuildDirectory([string]$Target) {
     $Expected = [IO.Path]::GetFullPath($Target)
-    if ($Expected -notin @([IO.Path]::GetFullPath($ReleaseRoot), [IO.Path]::GetFullPath($TestTempRoot))) {
+    if ($Expected -notin @([IO.Path]::GetFullPath($ReleaseRoot), [IO.Path]::GetFullPath($TestTempRoot), [IO.Path]::GetFullPath($OcrWorkRoot))) {
         throw "拒绝清理未登记的构建目录：$Expected"
     }
     if (Test-Path -LiteralPath $Expected) {
@@ -138,11 +139,18 @@ $ActualTesseractHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $TesseractPa
 if ($ActualTesseractHash -ne $ExpectedTesseractHash) {
     throw "tools/Tesseract-OCR/tesseract.exe与已审计的SHA-256不一致，构建已停止。"
 }
+# Validate the entire pinned runtime before launching a native EXE. A missing
+# dependency must fail the build without opening Windows loader dialogs.
+& $VenvPython (Join-Path $PSScriptRoot "check-ocr-runtime.py") --runtime $BundledOcr --work-root $OcrWorkRoot --report (Join-Path $TestTempRoot "ocr-source.json")
+if ($LASTEXITCODE -ne 0) {
+    throw "OCR完整组件/语言启动校验失败，发布已停止。"
+}
 $TesseractVersionOutput = (& $TesseractPath --version 2>&1 | Select-Object -First 1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $TesseractVersionOutput -notmatch '^tesseract v5\.5\.3\.20260724$') {
     throw "Tesseract版本与已审计的5.5.3.20260724不一致。实际输出：$TesseractVersionOutput"
 }
 Copy-Item -LiteralPath $BundledOcr -Destination (Join-Path $ReleaseApp "Tesseract-OCR") -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\tesseract-runtime.json") -Destination (Join-Path $ReleaseApp "Tesseract-OCR\runtime-manifest.json") -Force
 
 # 只复制发布方已核验的官方Codex CLI；不在构建期间下载程序，
 # 也绝不复制用户登录令牌。
@@ -185,6 +193,13 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\发布说明.txt") -De
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\构建清单.txt") -Destination $ReleaseApp -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $ReleaseApp -Force
 
+# Exercise the actual frozen application, including an EXE-only cache and
+# later DLL loss, with generated PNG/JPEG/scanned-PDF files and isolated data.
+& $VenvPython (Join-Path $PSScriptRoot "check-ocr-runtime.py") --runtime (Join-Path $ReleaseApp "Tesseract-OCR") --work-root $OcrWorkRoot --app (Join-Path $ReleaseApp "FinancialFeeSystem.exe") --report (Join-Path $BuildAuditDir "ocr-smoke.json")
+if ($LASTEXITCODE -ne 0) {
+    throw "实际Windows程序OCR验收失败，发布已停止。"
+}
+
 $ReleaseFiles = @(Get-ChildItem -LiteralPath $ReleaseApp -Recurse -File)
 $ReleaseBytes = [long](($ReleaseFiles | Measure-Object -Property Length -Sum).Sum)
 $ExecutablePath = Join-Path $ReleaseApp "FinancialFeeSystem.exe"
@@ -215,9 +230,11 @@ Windows ProductVersion：$AppVersion
 Windows FileVersion：$ExpectedFileVersion
 Excel母版 SHA-256：$ActualTemplateHash
 Tesseract SHA-256：$ActualTesseractHash
+OCR全部运行文件哈希、PNG/JPEG/扫描PDF实际识别、缺失缓存修复和原件重新识别通过；详见docs/build-dependencies/ocr-smoke.json。
 后端完整测试、前端交互测试和前端生产构建已由本脚本先行通过。
 "@
 Set-Content -LiteralPath (Join-Path $ReleaseApp "构建结果.txt") -Value $BuildResult -Encoding UTF8
 Remove-BuildDirectory $TestTempRoot
+Remove-BuildDirectory $OcrWorkRoot
 
 Write-Host "Windows一键版已生成：$ReleaseApp"

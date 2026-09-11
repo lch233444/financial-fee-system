@@ -1,13 +1,13 @@
 # 本地构建工具
 
-文档修订：2026-09-08，适用应用0.2.23。`tools/`只保存开发机受信任运行组件，二进制和登录资料不进入Git。
+文档修订：2026-09-11，适用应用0.2.29。`tools/`只保存开发机受信任运行组件，二进制和登录资料不进入Git。
 
 ## 必需组件
 
 | 目录 | 当前构建要求 |
 |---|---|
 | `tools/Codex/` | Codex CLI 0.149.1及配套`codex-code-mode-host.exe`；两个EXE均校验有效OpenAI签名和固定哈希 |
-| `tools/Tesseract-OCR/` | Tesseract 5.5.3.20260724及所需运行文件/语言数据；校验EXE版本和固定哈希 |
+| `tools/Tesseract-OCR/` | Tesseract 5.5.3.20260724及全部运行文件/语言数据；按packaging/tesseract-runtime.json校验95个文件，包含DLL与eng/osd语言；构建后须通过真实EXE OCR验收 |
 
 完整SHA-256和构建门槛只在[构建清单](../packaging/构建清单.txt)维护；执行依据为[scripts/build-windows.ps1](../scripts/build-windows.ps1)。这些是当前构建使用的固定组件，不是推荐安装互联网上任意最新版本。
 

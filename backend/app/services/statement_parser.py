@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
-import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -15,6 +15,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageErr
 from pytesseract import Output
 
 from ..config import application_root, get_settings, installation_root
+from .ocr_runtime import OcrRuntimeError, check_tesseract, prepare_windows_runtime
 
 
 OCR_PARSER_VERSION = "2.0"
@@ -69,15 +70,18 @@ def _configure_tesseract() -> str | None:
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             executable = Path(candidate)
-            # The current Windows build of Tesseract cannot load its own data
-            # reliably when the executable lives below a non-ASCII path. Keep
-            # the installed copy beside the app, but run an ASCII-path cache.
-            if not str(executable).isascii():
-                cached_dir = Path(tempfile.gettempdir()) / "FinancialFeeSystem-OCR"
-                cached_executable = cached_dir / "tesseract.exe"
-                if not cached_executable.exists():
-                    shutil.copytree(executable.parent, cached_dir, dirs_exist_ok=True)
-                executable = cached_executable
+            if os.name == "nt":
+                # Keep native binaries on the business-data drive, outside
+                # the database and full data package, using an ASCII path.
+                cache_root = settings.ocr_cache_root or (
+                    Path(settings.data_root.resolve().anchor) / "FinancialFeeSystem-OCR"
+                )
+                executable = prepare_windows_runtime(executable, cache_root)
+                check_tesseract(executable)
+                # pytesseract splits config with posix=False on Windows and
+                # retains quotes around --tessdata-dir. Use the native runtime's
+                # environment setting instead, including for paths with spaces.
+                os.environ["TESSDATA_PREFIX"] = str(executable.parent / "tessdata")
             pytesseract.pytesseract.tesseract_cmd = str(executable)
             return str(executable)
     return None
@@ -137,14 +141,14 @@ def _preprocess(image: Image.Image) -> Image.Image:
 def _ocr(image: Image.Image, psm: int = 11) -> tuple[str, float]:
     language = "eng"
     try:
-        available = set(pytesseract.get_languages(config=""))
+        available = set(pytesseract.get_languages())
         requested = [name for name in ("eng", "chi_tra", "chi_sim") if name in available]
         if requested:
             language = "+".join(requested)
     except (OSError, pytesseract.TesseractError):
         language = "eng"
     config = f"--oem 3 --psm {psm}"
-    data = pytesseract.image_to_data(image, lang=language, config=config, output_type=Output.DICT)
+    data = pytesseract.image_to_data(image, lang=language, config=config, output_type=Output.DICT, timeout=30)
     words: list[str] = []
     confidences: list[float] = []
     for word, confidence in zip(data.get("text", []), data.get("conf", []), strict=False):
@@ -157,7 +161,7 @@ def _ocr(image: Image.Image, psm: int = 11) -> tuple[str, float]:
             words.append(word)
             if numeric_confidence >= 0:
                 confidences.append(numeric_confidence / 100)
-    text = pytesseract.image_to_string(image, lang=language, config=config)
+    text = pytesseract.image_to_string(image, lang=language, config=config, timeout=30)
     return text or " ".join(words), mean(confidences) if confidences else 0.0
 
 
@@ -745,6 +749,8 @@ def parse_empf_statement(path: Path) -> ParsedStatement:
         if truncated:
             parsed.warnings.append("PDF超过20页；扫描OCR只处理前20页，必须人工核对其余页面")
         return parsed
+    except OcrRuntimeError as exc:
+        return ParsedStatement(warnings=[str(exc), "关键字段未识别时禁止确认入账；本次未生成余额快照。"])
     except (OSError, RuntimeError, ValueError, UnidentifiedImageError, pytesseract.TesseractError):
         parsed = ParsedStatement()
         parsed.warnings = [

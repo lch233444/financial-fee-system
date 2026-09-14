@@ -18,6 +18,7 @@ New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
 $env:TEMP = $TestTempRoot
 $env:TMP = $TestTempRoot
 
+# Stop if the execution tool rejects cleanup; do not reissue it through another command or helper.
 function Remove-BuildDirectory([string]$Target) {
     $Expected = [IO.Path]::GetFullPath($Target)
     if ($Expected -notin @([IO.Path]::GetFullPath($ReleaseRoot), [IO.Path]::GetFullPath($TestTempRoot), [IO.Path]::GetFullPath($OcrWorkRoot))) {
@@ -28,7 +29,12 @@ function Remove-BuildDirectory([string]$Target) {
         if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw "拒绝清理重解析目录：$Expected"
         }
-        Remove-Item -LiteralPath $Expected -Recurse -Force
+        $ProtectedAttributes = [IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::ReadOnly -bor [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::System
+        $Entries = @($Item) + @(Get-ChildItem -LiteralPath $Expected -Recurse -Force -ErrorAction Stop)
+        if (@($Entries | Where-Object { ($_.Attributes -band $ProtectedAttributes) -ne 0 }).Count -gt 0) {
+            throw "构建目录含重解析点或受保护条目，停止清理：$Expected"
+        }
+        Remove-Item -LiteralPath $Expected -Recurse -ErrorAction Stop
     }
 }
 $ConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ProjectRoot "backend\app\config.py")
@@ -192,6 +198,7 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\启动金融计划收�
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\发布说明.txt") -Destination $ReleaseApp -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "packaging\构建清单.txt") -Destination $ReleaseApp -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $ReleaseApp -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "AGENTS.md") -Destination $ReleaseApp -Force
 
 # Exercise the actual frozen application, including an EXE-only cache and
 # later DLL loss, with generated PNG/JPEG/scanned-PDF files and isolated data.

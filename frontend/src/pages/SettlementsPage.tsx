@@ -65,7 +65,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
   const accountById = useMemo(() => new Map(accounts.data.map((account) => [account.id, account])), [accounts.data]);
   const groups = useMemo(() => settlementGroups(accounts.data, settlements.data, year, quarter), [accounts.data, settlements.data, year, quarter]);
-  const clientGroups = useMemo(() => groups.filter((group) => !clientId || group.accounts[0].client_id === Number(clientId)), [groups, clientId]);
+  const clientGroups = useMemo(() => groups.filter((group) => clientId && group.accounts[0].client_id === Number(clientId)), [groups, clientId]);
   const groupPages = usePagination(clientGroups, `${clientId}:${year}:${quarter}`, 10);
   const availablePlatforms = platforms.data.filter((platform) => clientId && clientGroups.some((group) => group.accounts[0].platform_id === platform.id));
   const availablePlans = plans.data.filter((plan) => clientId && platformId && clientGroups.some((group) => group.accounts[0].platform_id === Number(platformId) && group.accounts[0].fee_plan_id === plan.id));
@@ -131,6 +131,14 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   function invalidateResult() {
     resultRevisionRef.current += 1;
     setResult(null);
+  }
+
+  function resetCombination() {
+    invalidateResult();
+    setPlatformId("");
+    setPlanId("");
+    setLines({});
+    setError("");
   }
 
   function updateLine(accountId: number, patch: Partial<LineState[number]>) {
@@ -330,15 +338,34 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   return (
     <>
       <PageHeader title="季度结算" subtitle="每个Sub Account独立计算HWM和Service Fee；余额快照入账后仍须财务人工计算并Finalize" />
-      <SectionNav items={[{ id: "settlement-create", label: "建立结算" }, { id: "settlement-groups", label: "本季组合" }, { id: "settlement-history", label: "历史结算" }, { id: "settlement-export", label: "内部Excel" }]} />
+      <SectionNav items={[{ id: "settlement-groups", label: "本季组合" }, { id: "settlement-create", label: "建立结算" }, { id: "settlement-history", label: "历史结算" }, { id: "settlement-export", label: "内部Excel" }]} />
       {error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error ? <ErrorBanner message={error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error} /> : null}
-      <Panel id="settlement-create" title="建立结算组合" subtitle="首次账户需选择Beginning Snapshot并输入自己的Original HWM；自然季度首日可选择上一季末Snapshot；账单导入不会自动计算或Finalize">
+      <Panel id="settlement-groups" title="本季账户组合总览" subtitle={`${year} Q${quarter} · 按客户、平台和收费计划分组。先核对每组账户及凭证，再逐组计算；已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>
         <div className="settlement-controls">
-          <Field group label="Client"><SearchableSelect label="结算客户" disabled={settlementMutationBusy} value={clientId} onChange={(value) => { invalidateResult(); setClientId(value); setPlatformId(""); setPlanId(""); }} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
+          <Field label="结算年份"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { resetCombination(); setYear(Number(e.target.value) || currentYear); }} /></Field>
+          <Field label="结算季度"><select disabled={settlementMutationBusy} value={quarter} onChange={(e) => { resetCombination(); setQuarter(Number(e.target.value)); }}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field>
+          <Field group label="客户"><SearchableSelect label="结算客户" disabled={settlementMutationBusy} value={clientId} onChange={(value) => { resetCombination(); setClientId(value); }} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
+        </div>
+        {!clientId ? <EmptyState title="先搜索并选定客户" detail="选择年份、季度，再选定客户后查看该期间的账户组合。仅输入搜索文字不会展示账户。" /> : accounts.loading || settlements.loading ? <Loading /> : clientGroups.length ? <>
+          <div className="table-wrap" tabIndex={0} role="region" aria-label="本季客户平台计划组合"><table><thead><tr><th>客户</th><th>平台 / 收费计划</th><th>子账户</th><th>结算进度</th><th>已锁定服务费</th><th>操作</th></tr></thead><tbody>{groupPages.rows.map((group) => {
+            const first = group.accounts[0];
+            const settled = group.settlement;
+            const covered = settled?.status === "FINALIZED" ? group.accounts.filter((account) => settled.account_lines.some((line) => line.account_id === account.id)).length : 0;
+            const rate = settled ? settled.fee_rate * 100 : plans.data.find((plan) => plan.id === first.fee_plan_id)?.fee_rate_percent;
+            return <tr key={group.key} className={group.key === `${clientId}:${platformId}:${planId}` ? "selected" : ""}><td><strong>{first.client_name || clients.data.find((client) => client.id === first.client_id)?.name}</strong></td><td>{first.platform_name || platforms.data.find((platform) => platform.id === first.platform_id)?.name}<small className="cell-note">{first.fee_plan_name || plans.data.find((plan) => plan.id === first.fee_plan_id)?.name}{rate != null ? ` · ${rate}%${settled ? "（结算费率）" : ""}` : ""}</small></td><td>{group.accounts.map((account) => <small className="cell-note" key={account.id}>{account.account_number}{account.scheme_name ? ` · ${account.scheme_name}` : ""}</small>)}</td><td>{settled ? <StatusBadge value={settled.status} /> : "待计算"}<small className="cell-note">已锁定 {covered} / {group.accounts.length} 个账户{settled?.status === "FINALIZED" && covered < group.accounts.length ? " · 有账户遗漏" : ""}</small></td><td>{settled?.status === "FINALIZED" ? <Money value={settled.service_fee} /> : "待锁定"}</td><td><button className="ghost" disabled={settlementMutationBusy} onClick={() => {
+              if (settled) { showHistoricalResult(settled); return; }
+              invalidateResult(); setClientId(String(first.client_id)); setPlatformId(String(first.platform_id)); setPlanId(String(first.fee_plan_id));
+              const panel = document.getElementById("settlement-create"); panel?.scrollIntoView?.({ block: "start" }); panel?.focus({ preventScroll: true });
+            }}>{settled ? "查看结算" : "建立此组合"}</button></td></tr>;
+          })}</tbody></table></div><Pagination {...groupPages} />
+        </> : <EmptyState title="本季没有可计算账户" detail="核对账户是否Active、已分配平台和收费计划、开始管理日期是否落在本季或之前。" />}
+      </Panel>
+
+      <Panel id="settlement-create" title="建立结算组合" subtitle="先在上方选择年份、季度和客户，再建立对应的平台与收费计划组合。">
+        <p className="settlement-instructions">操作说明：核对本组账户及管理日期，逐账户选择余额快照并核对 HWM → 计算并复核费用及凭证 → Finalize 锁定计算 → 前往 Invoice 出具客户缴费单。首次 HWM 当前仍需填写；后续继承上期 Next HWM。锁定计算不代表已出具账单。</p>
+        <div className="settlement-controls">
           <Field label="Platform"><select disabled={settlementMutationBusy || !clientId} value={platformId} onChange={(e) => { invalidateResult(); setPlatformId(e.target.value); setPlanId(""); }}><option value="">请选择</option>{availablePlatforms.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="Fee Plan"><select disabled={settlementMutationBusy || !platformId} value={planId} onChange={(e) => { invalidateResult(); setPlanId(e.target.value); }}><option value="">请选择</option>{availablePlans.map((x) => <option key={x.id} value={x.id}>{x.name}{x.fee_rate_percent != null ? ` · ${x.fee_rate_percent}%` : ""}</option>)}</select></Field>
-          <Field label="Year"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { invalidateResult(); setYear(Number(e.target.value) || currentYear); setPlatformId(""); setPlanId(""); }} /></Field>
-          <Field label="Quarter"><select disabled={settlementMutationBusy} value={quarter} onChange={(e) => { invalidateResult(); setQuarter(Number(e.target.value)); setPlatformId(""); setPlanId(""); }}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field>
         </div>
         <div className="settlement-scope" role="status"><strong>{clientId ? clients.data.find((client) => client.id === Number(clientId))?.name : "先选择客户"} · {year} Q{quarter}</strong><span>{platformId ? platforms.data.find((platform) => platform.id === Number(platformId))?.name : "选择平台"} · {selectedPlan ? `${selectedPlan.name} · 利润收费 ${selectedPlan.fee_rate_percent}%` : "选择收费计划"}</span><span>当前组合 {groupAccounts.length} 个子账户 · 各账户独立HWM，亏损不抵消其他账户费用；最终按客户季度合并缴费单。</span></div>
         <div className="account-entry-table" tabIndex={0} role="region" aria-label="账户结算输入，可横向滚动">
@@ -364,22 +391,6 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
           }) : <EmptyState title="没有匹配账户" detail="选择完整的Client、Platform和Fee Plan后，系统只显示同组且已填写开始管理日期的Active账户。" />}
         </div>
         <div className="form-actions"><button className="primary" disabled={settlementMutationBusy || !clientId || !platformId || !planId || !groupAccounts.length} onClick={() => void calculate()}><Calculator size={17} />{busy ? "计算中..." : "计算并保存Draft"}</button></div>
-      </Panel>
-
-      <Panel id="settlement-groups" title="本季账户组合总览" subtitle={`${year} Q${quarter} · 按客户、平台和收费计划分组。先核对每组账户及凭证，再逐组计算；已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>
-        {accounts.loading || settlements.loading ? <Loading /> : clientGroups.length ? <>
-          <div className="table-wrap" tabIndex={0} role="region" aria-label="本季客户平台计划组合"><table><thead><tr><th>客户</th><th>平台 / 收费计划</th><th>子账户</th><th>结算进度</th><th>已锁定服务费</th><th>操作</th></tr></thead><tbody>{groupPages.rows.map((group) => {
-            const first = group.accounts[0];
-            const settled = group.settlement;
-            const covered = settled?.status === "FINALIZED" ? group.accounts.filter((account) => settled.account_lines.some((line) => line.account_id === account.id)).length : 0;
-            const rate = settled ? settled.fee_rate * 100 : plans.data.find((plan) => plan.id === first.fee_plan_id)?.fee_rate_percent;
-            return <tr key={group.key} className={group.key === `${clientId}:${platformId}:${planId}` ? "selected" : ""}><td><strong>{first.client_name || clients.data.find((client) => client.id === first.client_id)?.name}</strong></td><td>{first.platform_name || platforms.data.find((platform) => platform.id === first.platform_id)?.name}<small className="cell-note">{first.fee_plan_name || plans.data.find((plan) => plan.id === first.fee_plan_id)?.name}{rate != null ? ` · ${rate}%${settled ? "（结算费率）" : ""}` : ""}</small></td><td>{group.accounts.map((account) => <small className="cell-note" key={account.id}>{account.account_number}{account.scheme_name ? ` · ${account.scheme_name}` : ""}</small>)}</td><td>{settled ? <StatusBadge value={settled.status} /> : "待计算"}<small className="cell-note">已锁定 {covered} / {group.accounts.length} 个账户{settled?.status === "FINALIZED" && covered < group.accounts.length ? " · 有账户遗漏" : ""}</small></td><td>{settled?.status === "FINALIZED" ? <Money value={settled.service_fee} /> : "待锁定"}</td><td><button className="ghost" disabled={settlementMutationBusy} onClick={() => {
-              if (settled) { showHistoricalResult(settled); return; }
-              invalidateResult(); setClientId(String(first.client_id)); setPlatformId(String(first.platform_id)); setPlanId(String(first.fee_plan_id));
-              const panel = document.getElementById("settlement-create"); panel?.scrollIntoView?.({ block: "start" }); panel?.focus({ preventScroll: true });
-            }}>{settled ? "查看结算" : "建立此组合"}</button></td></tr>;
-          })}</tbody></table></div><Pagination {...groupPages} />
-        </> : <EmptyState title="本季没有可计算账户" detail="核对账户是否Active、已分配平台和收费计划、开始管理日期是否落在本季或之前。" />}
       </Panel>
 
       {result ? <Panel id="settlement-result" title={`计算结果 · v${result.version_no}`} subtitle={`${result.calculation_mode === "ACCOUNT_HWM" ? "账户级HWM" : "历史组合HWM"} · Formula ${result.formula_version} · ${result.status === "DRAFT" ? "尚未锁定" : result.status === "FINALIZED" ? "已锁定" : "已作废并冻结为历史"}`}>

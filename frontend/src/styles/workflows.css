@@ -842,6 +842,13 @@
   padding: 0 20px 18px;
    }
 
+.settlement-instructions {
+  margin: 0 20px 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .account-entry-table {
   margin: 0 20px 16px;
   border: 1px solid #dfe7eb;

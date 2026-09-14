@@ -11,7 +11,7 @@ from openpyxl.styles import Alignment
 from ..models import Invoice, QuarterlySettlement
 
 
-def _copy_row_style(sheet, source_row: int, target_row: int, max_col: int = 25) -> None:
+def _copy_row_style(sheet, source_row: int, target_row: int, max_col: int = 27) -> None:
     sheet.row_dimensions[target_row].height = sheet.row_dimensions[source_row].height
     for col in range(1, max_col + 1):
         source = sheet.cell(source_row, col)
@@ -38,13 +38,31 @@ def export_settlements_to_template(
     if "利润20%" not in workbook.sheetnames:
         raise ValueError("Excel模板缺少“利润20%”工作表")
     sheet = workbook["利润20%"]
+    sheet.title = "收费计算"
     invoices_by_settlement = invoices_by_settlement or {}
 
     # 清理模板中的示例数据和开发备注，但保留全部格式、列宽、打印
     # 设置及“Defer 延付利息（待确认）”工作表原样。
-    for (row, col), cell in list(sheet._cells.items()):
-        if row >= 3 and col <= 25 and cell.value is not None:
+    for (row, _col), cell in list(sheet._cells.items()):
+        if row >= 3 and cell.value is not None:
             cell.value = None
+
+    # Append plan details without shifting the established A:Y references.
+    for col, title, note in (
+        (26, "Fee Plan / 收费计划", "Name / Code"),
+        (27, "Fee Rate / 收费费率", "结算时费率"),
+    ):
+        for row in (1, 2, 3):
+            sheet.cell(row, col)._style = copy(sheet.cell(row, 22)._style)
+        sheet.cell(1, col, title)
+        sheet.cell(2, col, note)
+        for row in (1, 2):
+            sheet.cell(row, col).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    sheet.column_dimensions["Z"].width = 32
+    sheet.column_dimensions["AA"].width = 18
+    sheet.column_dimensions["V"].width = 22
+    sheet["V2"] = "MAX(J,0) × 本行费率\n金额以系统锁定值为准"
+    sheet["V2"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     export_lines = [
         (settlement, line)
@@ -71,6 +89,11 @@ def export_settlements_to_template(
         closing_cents = account_line.closing_cents if account_line is not None else settlement.closing_cents
         original_hwm_cents = account_line.original_hwm_cents if account_line is not None else settlement.original_hwm_cents
         service_fee_cents = account_line.service_fee_cents if account_line is not None else settlement.service_fee_cents
+        fee_rate_bps = (
+            account_line.fee_rate_bps
+            if account_line is not None and account_line.fee_rate_bps is not None
+            else settlement.fee_rate_bps
+        )
         sheet.cell(row, 1, index)
         company = invoice.receiving_company if invoice else None
         fc = settlement.fc or settlement.client.fc
@@ -100,6 +123,10 @@ def export_settlements_to_template(
         sheet.cell(row, 23, f"=MAX(T{row},P{row})")
         sheet.cell(row, 24, invoice.issue_date if invoice else None)
         sheet.cell(row, 25, invoice.due_date if invoice else None)
+        sheet.cell(row, 26, f"{settlement.fee_plan.name} ({settlement.fee_plan.code})")
+        sheet.cell(row, 26).alignment = Alignment(vertical="center", wrap_text=True)
+        sheet.cell(row, 27, int(fee_rate_bps) / 10_000)
+        sheet.cell(row, 27).number_format = "0.00%"
         for col in range(2, 9):
             cell = sheet.cell(row, col)
             cell.alignment = Alignment(
@@ -114,6 +141,9 @@ def export_settlements_to_template(
         sheet.cell(row, 10).number_format = "dd/mm/yyyy"
         sheet.cell(row, 24).number_format = "dd/mm/yyyy"
         sheet.cell(row, 25).number_format = "dd/mm/yyyy"
+
+    sheet.auto_filter.ref = f"A1:AA{max(2, len(export_lines) + 2)}"
+    sheet.print_area = f"A1:AA{max(2, len(export_lines) + 2)}"
 
     try:
         workbook.calculation.fullCalcOnLoad = True

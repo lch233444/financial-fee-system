@@ -34,7 +34,7 @@ def test_company_is_not_needed_until_bill_and_chosen_payee_drives_archive_and_ca
         before_excel = api.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert before_excel.status_code == 200
         workbook = load_workbook(BytesIO(before_excel.content))
-        assert workbook['利润20%']['B3'].value is None
+        assert workbook['收费计算']['B3'].value is None
         workbook.close()
         body = {'client_id': client['id'], 'year': 2026, 'quarter': 1}
         missing = api.post('/api/invoices', json=body)
@@ -51,8 +51,8 @@ def test_company_is_not_needed_until_bill_and_chosen_payee_drives_archive_and_ca
         after_excel = api.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert after_excel.status_code == 200
         workbook = load_workbook(BytesIO(after_excel.content))
-        assert workbook['利润20%']['B3'].value == company['name']
-        assert workbook['利润20%']['D3'].value == bill['invoice_number']
+        assert workbook['收费计算']['B3'].value == company['name']
+        assert workbook['收费计算']['D3'].value == bill['invoice_number']
         workbook.close()
         pdf = api.post(f"/api/invoices/{bill['id']}/pdf?language=en").content
         content = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(pdf)).pages)

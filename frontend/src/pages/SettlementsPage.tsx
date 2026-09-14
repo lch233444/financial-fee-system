@@ -59,6 +59,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const [exportYear, setExportYear] = useState(currentYear);
   const [exportQuarter, setExportQuarter] = useState("");
   const [exportClientId, setExportClientId] = useState("");
+  const [exportPlanId, setExportPlanId] = useState("");
   const [selectedExportIds, setSelectedExportIds] = useState<number[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
   const settlementMutationBusy = busy || finalizeBusy || deleteBusy || voidBusy;
@@ -84,8 +85,9 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
     item.status === "FINALIZED"
     && item.year === exportYear
     && (!exportQuarter || item.quarter === Number(exportQuarter))
-    && (!exportClientId || item.client_id === Number(exportClientId))),
-  [exportClientId, exportQuarter, exportYear, settlements.data]);
+    && (!exportClientId || item.client_id === Number(exportClientId))
+    && (!exportPlanId || item.fee_plan_id === Number(exportPlanId))),
+  [exportClientId, exportPlanId, exportQuarter, exportYear, settlements.data]);
 
   const selectedExportSettlements = useMemo(() => exportableSettlements.filter((item) =>
     selectedExportIds.includes(item.id)), [exportableSettlements, selectedExportIds]);
@@ -99,7 +101,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
   useEffect(() => {
     setSelectedExportIds([]);
-  }, [exportClientId, exportQuarter, exportYear]);
+  }, [exportClientId, exportPlanId, exportQuarter, exportYear]);
 
   useEffect(() => {
     setLines((previous) => {
@@ -323,7 +325,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       const period = exportQuarter ? `${exportYear}_Q${exportQuarter}` : `${exportYear}_全年`;
       const ids = [...exportIds].sort((a, b) => a - b).join(",");
       await download(
-        `/api/exports/excel?settlement_ids=${ids}`,
+        `/api/exports/excel?settlement_ids=${ids}${exportPlanId ? `&fee_plan_id=${exportPlanId}` : ""}`,
         `公司内部财务_${period}.xlsx`,
         { method: "POST" },
       );
@@ -406,6 +408,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
           <Field label="Year"><select value={exportYear} onChange={(e) => setExportYear(Number(e.target.value))}>{exportYears.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
           <Field label="Quarter"><select value={exportQuarter} onChange={(e) => setExportQuarter(e.target.value)}><option value="">全部季度</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select></Field>
           <Field group label="Client"><SearchableSelect label="导出客户" value={exportClientId} onChange={setExportClientId} placeholder="全部客户" options={clients.data.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
+          <Field group label="收费计划"><SearchableSelect label="导出收费计划" value={exportPlanId} onChange={setExportPlanId} placeholder="全部收费计划" options={plans.data.map((item) => ({ value: String(item.id), label: `${item.name} · ${item.code} · #${item.id}` }))} /></Field>
         </div>
         {exportableSettlements.length ? <>
           <div className="internal-export-toolbar">

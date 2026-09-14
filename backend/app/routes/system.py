@@ -215,6 +215,7 @@ def fc_report(
 @router.post("/exports/excel")
 def export_excel(
     settlement_ids: str = Query(..., description="Comma-separated settlement IDs"),
+    fee_plan_id: int | None = Query(default=None, gt=0),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     try:
@@ -230,6 +231,8 @@ def export_excel(
     ).unique().all()
     if len(settlements) != len(ids):
         raise HTTPException(status_code=400, detail="只能导出存在且Finalized的Settlement")
+    if fee_plan_id is not None and any(item.fee_plan_id != fee_plan_id for item in settlements):
+        raise HTTPException(status_code=400, detail="所选Settlement包含其他收费计划，请重新筛选并勾选")
     invoice_sources = db.execute(
         select(InvoiceSource.settlement_id, Invoice)
         .join(Invoice, Invoice.id == InvoiceSource.invoice_id)

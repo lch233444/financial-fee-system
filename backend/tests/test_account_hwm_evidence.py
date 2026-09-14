@@ -182,7 +182,7 @@ def test_each_account_fee_is_calculated_before_group_total() -> None:
         assert finalized.status_code == 200, finalized.text
         excel = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert excel.status_code == 200, excel.text
-        sheet = load_workbook(BytesIO(excel.content), data_only=False)["利润20%"]
+        sheet = load_workbook(BytesIO(excel.content), data_only=False)["收费计算"]
         assert [sheet["H3"].value, sheet["H4"].value] == ["OFFSET-1", "OFFSET-2"]
         assert [sheet["V3"].value, sheet["V4"].value] == [20, 0]
         repeated_excel = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
@@ -228,8 +228,8 @@ def test_internal_finance_excel_batches_selected_finalized_settlements() -> None
         )
         assert response.status_code == 200, response.text
         workbook = load_workbook(BytesIO(response.content), data_only=False)
-        assert workbook.sheetnames == ["利润20%", "Defer 延付利息（待确认）"]
-        sheet = workbook["利润20%"]
+        assert workbook.sheetnames == ["收费计算", "Defer 延付利息（待确认）"]
+        sheet = workbook["收费计算"]
         assert [sheet["E3"].value, sheet["E4"].value] == ["Client BATCHA", "Client BATCHB"]
         assert [sheet["H3"].value, sheet["H4"].value] == ["BATCHA-1", "BATCHB-1"]
         assert [sheet["V3"].value, sheet["V4"].value] == [20, 40]
@@ -317,7 +317,7 @@ def test_each_account_uses_its_own_starting_and_closing_dates() -> None:
 
         excel = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert excel.status_code == 200, excel.text
-        sheet = load_workbook(BytesIO(excel.content), data_only=False)["利润20%"]
+        sheet = load_workbook(BytesIO(excel.content), data_only=False)["收费计算"]
         assert sheet["I3"].value.strftime("%Y-%m-%d") == "2026-01-01"
         assert sheet["J3"].value.strftime("%Y-%m-%d") == "2026-03-31"
         assert sheet["I4"].value.strftime("%Y-%m-%d") == "2026-02-01"

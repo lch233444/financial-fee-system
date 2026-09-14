@@ -1,12 +1,12 @@
-金融计划收费计算系统 MVP 0.2.32 Windows运行版构建清单
-文档修订：2026-09-14；依据当前scripts/build-windows.ps1；本次候选及正式切换证据见项目说明书12.10节。
+金融计划收费计算系统 MVP 0.2.33 Windows运行版构建清单
+文档修订：2026-09-14；依据当前scripts/build-windows.ps1；本次候选及正式切换证据见项目说明书12.11节。
 
-0.2.32调整季度组合入口、选客后显示账户及切换清空行为，沿用0.2.31公司解绑及Schema。须前端交互测试、完整构建回归、隔离浏览器检查、完整备份与恢复及正式页面验收，沿用真实OCR门槛。构建目录清理先核对绝对路径及所有条目保护属性，采用普通删除，遇异常停止。下列旧版本记录仅为历史证据。
+0.2.33修复多计划Excel对应，增加收费计划筛选及导出范围校验，沿用0.2.31公司解绑及Schema。须前端交互测试、完整构建回归、隔离浏览器检查、完整备份与恢复及正式页面验收，沿用真实OCR门槛。构建目录清理先核对绝对路径及所有条目保护属性，采用普通删除，遇异常停止。下列旧版本记录仅为历史证据。
 
 一、当前构建契约
-- 应用版本：0.2.32；Windows ProductVersion：0.2.32；FileVersion：0.2.32.0。
+- 应用版本：0.2.33；Windows ProductVersion：0.2.33；FileVersion：0.2.33.0。
 - 数据库目标head：c6f3a8d92e10；目标59个Trigger；结构数量不能替代业务验收。
-- 固定候选输出：release/FinancialFeeSystem。构建开始清理上一候选，不能把真实数据放入该目录。
+- 常规候选输出：release/FinancialFeeSystem。本轮既有候选/构建清理暂停，使用全新F:\ff33_excel_20260914下的候选、work及临时目录，沿用原构建参数与全部组件校验；不执行曾被拒绝的清理，不把真实数据放入候选目录。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -14,14 +14,14 @@
 - Tesseract版本5.5.3.20260724；tools/Tesseract-OCR/tesseract.exe：C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - packaging/tesseract-runtime.json固定95个实际OCR运行文件哈希，包括所有DLL、eng/osd语言及配置；复制为运行包Tesseract-OCR/runtime-manifest.json。安装文件不符即停止，不以修改清单绕过。
 - scripts/check-ocr-runtime.py先核对源组件及语言启动，打包后实际启动EXE，合成PNG/JPG/扫描PDF经上传接口验证账户、日期和余额仍为待复核；覆盖仅剩EXE、再次缺DLL缓存修复及原件reparse，不运行Sol。报告存docs/build-dependencies/ocr-smoke.json。
-- 原生OCR验收临时根为源码盘根下.ffsys-ocr-build（本机F:\.ffsys-ocr-build）；必须英文路径，使用独立临时数据及登录目录。构建成功清理该精确目录，报告保留。
+- 常规原生OCR验收临时根为源码盘根下.ffsys-ocr-build；本轮改用全新F:\ff33_excel_20260914\ocr-source和ocr-exe，使用独立临时数据及登录目录。既有清理暂停范围不动，报告保留。
 - 唯一Excel母版：新收费计划计算纯净版模板.xlsx；SHA-256：16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 - 客户PDF在Windows优先使用系统微软正黑体常规/粗体，回退微软雅黑及原有字体候选；不另行打包商业字体。英文含中文公司/客户资料时也须验证原名完整显示。
 
 二、执行顺序和产物
-- 运行scripts/build-windows.ps1，先前端交互测试、TypeScript/Vite构建及完整后端回归，再校验组件、模板及版本并生成PyInstaller onedir。
-- 构建pytest使用源码盘根目录.ffsys-build-tmp（本机F:\.ffsys-build-tmp）英文短目录设置TEMP/TMP和basetemp；先test_system_backup.py，再按文件名执行其余测试，集合不减少。不能把中文项目父目录当作英文临时路径。
+- 常规入口为scripts/build-windows.ps1。本轮未重跑含旧目录清理的入口，逐项执行相同测试、PyInstaller、组件/模板/版本校验与实际EXE验收；新的dist/work/spec/缓存均在本轮目录，无需清空旧构建。
+- 常规pytest使用源码盘根目录.ffsys-build-tmp；本轮使用全新F:\ff33_excel_20260914中的tmp和pytest-full，设置TEMP/TMP和basetemp；先test_system_backup.py，再按文件名执行其余测试，集合不减少。不能把中文项目父目录当作英文临时路径。
 - Codex两个EXE、Tesseract、模板和版本任一校验失败即停止。不得通过更改文档哈希掩盖实际组件变更。
 - 包含完整运行依赖、前端资源、迁移文件、Tesseract、Codex、启动脚本，以及当前README、AGENTS、docs、发布说明和构建清单。
 - 构建脚本在docs/build-dependencies中保留本次依赖锁文件，在程序根生成构建结果.txt，记录实际时间、文件数、字节数、EXE哈希和Windows版本。
@@ -106,7 +106,9 @@
 - 后端465/465、前端50/50、Windows构建及实际OCR、客户选择、两计划合并签发通过；52个API路径、18个静态资源通过。
 - 完整备份、同版本隔离恢复及指定重复客户整理通过；保留原账户、收费计划、四张快照及全部14个业务归档文件。程序/数据标识及尚存退出限制见项目说明书11.10节。
 
-十五、当前正式0.2.32公司解绑（2026-09-14）
+十五、当前正式0.2.33公司解绑（2026-09-14）
 - 后端474/474、前端52/52、生产及Windows构建通过；95文件OCR运行验证、合成图片/扫描PDF识别、实际无公司建档、两计划算费、选收款公司、公司更正及付款通过。
 - 445文件提升时逐个哈希一致；最终前端及文档另同步验证，当前34个HTTP静态资源含16个未引用旧资源，当前18个源资源及入口一致。原始构建统计不能代表最终包。
 - 旧版完整备份、同版本隔离恢复、隔离及正式c6f3a8d92e10迁移均通过，59个Trigger、完整性ok、外键0；25张业务表原记录、25份文件保持。前后完整包及匹配旧程序独立保留。EXE/备份哈希、当前正式路径和清理结果见项目说明书12.9节。
+
+本轮正式部署须先从旧安装目录读取financial_system_config.json并核对data_root为已确认的F:\备份，将其复制到新正式目录后再启动；该本机配置不进入Git或通用候选。启动后在无FINANCIAL_DATA_ROOT环境覆盖时核对实际目录。

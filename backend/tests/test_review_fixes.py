@@ -457,7 +457,7 @@ def test_generated_exports_require_post_and_excel_uses_locked_fee() -> None:
         response = client.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert response.status_code == 200, response.text
         workbook = load_workbook(BytesIO(response.content), data_only=False)
-        assert workbook["利润20%"]["V3"].value == 0.01
+        assert workbook["收费计算"]["V3"].value == 0.01
 
 
 def test_invoice_issue_reserves_unique_numbers_without_render_write_transaction(monkeypatch) -> None:

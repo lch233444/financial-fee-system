@@ -73,10 +73,12 @@ test("切换原件或修改客户姓名清空旧客户选择", async () => {
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toBe("");
 });
 
-test("选择已有账户同步所属客户，切换客户清空账户并只显示其账户", async () => {
+test("先选客户才可匹配已有账户，切换客户清空账户并只显示其账户", async () => {
   setup();
   await openFirst();
   const input = screen.getByRole("combobox", { name: "匹配已有账户" }) as HTMLInputElement;
+  expect(input.disabled).toBe(true);
+  chooseCustomer(11);
   fireEvent.focus(input);
   fireEvent.click(screen.getByRole("option", { name: /EXISTING-11/ }));
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toContain("客户#11");

@@ -84,6 +84,11 @@ describe("保存成功后立即更新页面", () => {
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
     const panel = screen.getByRole("heading", { name: "客户与账户清单" }).closest("section")!;
+    if (path === "/api/accounts") {
+      expect(within(panel).queryByText(text)).toBeNull();
+      fireEvent.focus(screen.getByRole("combobox", { name: "查询客户账户" }));
+      fireEvent.click(screen.getByRole("option", { name: /原客户.*客户#1/ }));
+    }
     await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
     expect(db.requests).toEqual([path]);
   });
@@ -150,6 +155,8 @@ describe("保存成功后立即更新页面", () => {
     });
     const notify = vi.fn();
     render(<TransactionsPage notify={notify} />);
+    fireEvent.focus(screen.getByRole("combobox", { name: "资金与余额客户" }));
+    fireEvent.click(await screen.findByRole("option", { name: "原客户" }));
     await screen.findByRole("option", { name: /2026-03-31/ });
     const form = screen.getByRole("button", { name: "上传并关联" }).closest("form")!;
     fill(form, { entity_id: "7" });

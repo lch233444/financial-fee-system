@@ -77,11 +77,7 @@ export function recognizeStatementWithAi(importId: number): Promise<StatementImp
 }
 
 export async function download(path: string, suggestedName: string, options: RequestInit = {}): Promise<void> {
-  const response = await fetch(path, withFinancialSystemRequestHeader(options));
-  if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, `下载失败 (${response.status})`));
-  }
-  const blob = await response.blob();
+  const blob = await fetchBlob(path, options);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -90,4 +86,12 @@ export async function download(path: string, suggestedName: string, options: Req
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+export async function fetchBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const response = await fetch(path, withFinancialSystemRequestHeader(options));
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, `下载失败 (${response.status})`));
+  }
+  return response.blob();
 }

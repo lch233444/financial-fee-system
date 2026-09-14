@@ -212,6 +212,8 @@ export type Settlement = {
   }>;
 };
 export type Invoice = {
+  fc_id?: number | null;
+  adjustments?: Array<{ id: number; amount: string; reason: string }>;
   payee_company_id: number;
   can_correct_company: boolean;
   id: number;
@@ -261,6 +263,8 @@ export type Invoice = {
 };
 
 export type PaymentRecord = {
+  original_invoice_id?: number;
+  original_amount?: string;
   id: number;
   payment_date: string;
   amount: string;

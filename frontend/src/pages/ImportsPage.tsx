@@ -306,7 +306,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const canReviewAsBalancePage = localDocumentType === "empf_account_page" || usesSolBalanceClassification;
   const confirmedAccount = accounts.data.find((item) => item.id === selected?.confirmed_account_id);
   const confirmedSnapshot = snapshots.data.find((item) => item.id === selected?.confirmed_snapshot_id);
-  const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId));
+  const selectedExistingAccount = accounts.data.find((item) => item.id === Number(selectedAccountId) && item.client_id === Number(selectedClientId));
   const selectedClient = clients.data.find((item) => item.id === Number(selectedClientId));
   const normalizedName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
   const matchingClients = clients.data.filter((item) => normalizedName(item.name) === normalizedName(reviewValues.client_name));
@@ -681,9 +681,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                 : needsClientSelection ? <small role="alert">发现{matchingClients.length}个同名客户档案，请先选择已有客户，再为他新增子账户。若确为不同的人，请先在“客户与账户”建立独立档案。</small> : null}
             </Field>
             <Field group label="匹配已有Sub Account" hint="账户已经登记时选择原账户；属于已有客户的新账户，选择上方客户后保留此项为空。"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId}
-              onChange={(id) => { setSelectedAccountId(id); const account = accounts.data.find((item) => item.id === Number(id)); if (account) setSelectedClientId(String(account.client_id)); }}
-              placeholder="自动匹配账户 / 新增子账户草稿" searchPlaceholder="搜索客户、账户号码或平台…"
-              options={accounts.data.filter((item) => !selectedClientId || item.client_id === Number(selectedClientId)).map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>
+              disabled={!selectedClient || statementWriteBusy || accounts.loading || Boolean(accounts.error)}
+              onChange={setSelectedAccountId}
+              placeholder={selectedClient ? "自动匹配账户 / 新增子账户草稿" : "请先搜索并选定客户"} searchPlaceholder="搜索客户、账户号码或平台…"
+              options={accounts.data.filter((item) => selectedClient && item.client_id === selectedClient.id).map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>
             <Field label="Client Name" hint={confidence(selected, "client_name")}><input name="client_name" required value={reviewValues.client_name} onChange={(event) => setReviewValues((current) => ({ ...current, client_name: event.target.value }))} /></Field>
             <Field label="Account Number" hint={confidence(selected, "account_number")}><input name="account_number" required value={reviewValues.account_number} onChange={(event) => setReviewValues((current) => ({ ...current, account_number: event.target.value }))} /></Field>
             <Field label="Scheme Name"><input name="scheme_name" value={reviewValues.scheme_name} onChange={(event) => setReviewValues((current) => ({ ...current, scheme_name: event.target.value }))} /></Field>

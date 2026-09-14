@@ -260,8 +260,17 @@ def invoice_dict(item: Invoice) -> dict:
                                 and not item.payment_allocations and not item.adjustments
                                 and item.original_correction is None),
         "fc_name": item.fc.name if item.fc else None,
+        "fc_id": item.fc_id,
         "issue_recovery": issue_recovery,
         "void_reason": item.void_reason,
+        "adjustments": [
+            {"id": adjustment.id, "amount": money_string(adjustment.amount_cents),
+             "reason": adjustment.reason}
+            for adjustment in item.adjustments
+            if adjustment.correction_id is None or (
+                adjustment.correction and adjustment.correction.status == "COMPLETED"
+            )
+        ],
         "payments": [
             {
                 "id": payment.id,
@@ -269,6 +278,8 @@ def invoice_dict(item: Invoice) -> dict:
                 "amount": money_string(allocated_by_payment.get(payment.id, payment.amount_cents)),
                 "method": payment.method,
                 "proof_attachment_id": payment.proof_attachment_id,
+                "original_invoice_id": payment.invoice_id,
+                "original_amount": money_string(payment.amount_cents),
                 "remark": payment.remark,
             }
             for payment in sorted(displayed_payments.values(), key=lambda payment: payment.id)

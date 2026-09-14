@@ -43,6 +43,7 @@ def test_one_bill_combines_same_platform_different_rates_with_exact_account_fees
         assert set(body["settlement_ids"]) == {s1["id"], s2["id"]}
         assert s3["id"] not in body["settlement_ids"]
         assert set(body["fee_plan_ids"]) == {first["plan"]["id"], second["plan"]["id"]}
+        assert body["fc_id"] == first["fc"]["id"]
         assert {line["fee_rate_percent"] for line in body["account_lines"]} == {10, 20}
         assert {line["service_fee"] for line in body["account_lines"]} == {"20.01", "30.01"}
         assert _draft(client, second, year=2026, quarter=1).status_code == 409

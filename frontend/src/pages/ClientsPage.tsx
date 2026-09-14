@@ -1,4 +1,4 @@
-import SearchableSelect, { matchesSearch } from "../SearchableSelect";
+import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, patchJson, postJson } from "../api";
@@ -15,10 +15,11 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const platforms = useApiList<Platform>("/api/platforms");
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [accountClientId, setAccountClientId] = useState("");
-  const [clientSearch, setClientSearch] = useState("");
+  const [directoryClientId, setDirectoryClientId] = useState("");
+  const [draftAccountClientId, setDraftAccountClientId] = useState("");
   const [clientStatus, setClientStatus] = useState("");
-  const visibleClients = clients.data.filter((item) => matchesSearch(`${item.name} ${item.fc_name || ""}`, clientSearch) && (!clientStatus || item.status === clientStatus));
-  const clientPages = usePagination(visibleClients, `${clientSearch}:${clientStatus}`, 10);
+  const visibleClients = clients.data.filter((item) => (!directoryClientId || item.id === Number(directoryClientId)) && (!clientStatus || item.status === clientStatus));
+  const clientPages = usePagination(visibleClients, `${directoryClientId}:${clientStatus}`, 10);
   const [draftClientId, setDraftClientId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
   const [localError, setLocalError] = useState("");
@@ -27,7 +28,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const deleteBusyRef = useRef(false);
   const error = localError || clients.error || accounts.error || fcs.error || platforms.error || plans.error;
   const selectedDraftClient = clients.data.find((item) => item.id === Number(draftClientId));
-  const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId));
+  const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId) && item.client_id === Number(draftAccountClientId));
   const selectedDraftAccountClient = clients.data.find((item) => item.id === selectedDraftAccount?.client_id);
 
   function submitClient(event: FormEvent<HTMLFormElement>) {
@@ -103,6 +104,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
 
         }
         if (accountClientId === String(id)) setAccountClientId("");
+        if (directoryClientId === String(id)) setDirectoryClientId("");
+        if (draftAccountClientId === String(id)) { setDraftAccountClientId(""); setDraftAccountId(""); }
       } else if (draftAccountId === String(id)) {
         setDraftAccountId("");
       }
@@ -143,15 +146,15 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       <SectionNav items={[{ id: "client-directory", label: "客户清单" }, { id: "client-create", label: "新增客户" }, { id: "account-create", label: "新增账户" }, { id: "client-activate", label: "补全待确认资料" }]} />
       {error ? <ErrorBanner message={error} /> : null}
       <Panel id="client-directory" title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
-        <div className="list-search"><Field label="搜索客户"><input type="search" value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="客户名称、公司或FC…" /></Field><Field label="客户状态"><select value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
-        {clientSearch.trim() && !visibleClients.length ? <EmptyState title="未找到匹配的客户" detail="请更换关键词或清空搜索。" /> : null}
+        <div className="list-search"><Field group label="搜索客户"><SearchableSelect label="查询客户账户" value={directoryClientId} onChange={setDirectoryClientId} placeholder="搜索并选定客户" options={clients.data.filter((item) => !clientStatus || item.status === clientStatus).map((item) => ({ value: String(item.id), label: `${item.name} · ${item.fc_name || "待补全FC"} · 客户#${item.id}` }))} /></Field><Field label="客户状态"><select value={clientStatus} onChange={(event) => { setClientStatus(event.target.value); setDirectoryClientId(""); }}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
+        {!directoryClientId ? <EmptyState title="请先搜索并选定客户" detail="选定后显示该客户的账户；输入搜索词不会自动选中客户。" /> : null}
         {clients.loading || accounts.loading ? <Loading /> : clients.data.length ? (
           <div className="client-list">
             {clientPages.rows.map((client) => {
               const rows = accounts.data.filter((account) => account.client_id === client.id);
               return <article className="client-card" key={client.id}>
                 <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
-                {rows.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
+                {directoryClientId !== String(client.id) ? null : rows.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
               </article>;
             })}
           </div>
@@ -206,7 +209,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
         </Panel>
 
         <Panel title="补全待确认Sub Account" subtitle="所属Client必须先激活，再补齐Platform和Fee Plan">
-          <Field label="选择Draft Sub Account"><select value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT").map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
+          <Field group label="待确认账户所属客户"><SearchableSelect label="待确认账户客户" value={draftAccountClientId} onChange={(value) => { setDraftAccountClientId(value); setDraftAccountId(""); }} placeholder="搜索并选定客户" options={clients.data.map((item) => ({ value: String(item.id), label: `${item.name} · 客户#${item.id}` }))} /></Field>
+          <Field label="选择Draft Sub Account"><select disabled={!draftAccountClientId} value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT" && item.client_id === Number(draftAccountClientId)).map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
           {selectedDraftAccount ? (
             <form className="form-grid" key={selectedDraftAccount.id} onSubmit={(event) => void completeDraftAccount(event)}>
               <Field label="Client"><input value={`${selectedDraftAccount.client_name} (${selectedDraftAccountClient?.status ?? "UNKNOWN"})`} disabled /></Field>

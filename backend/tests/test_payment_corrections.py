@@ -320,6 +320,10 @@ def test_one_time_payment_requires_intact_proof_and_separates_company_difference
         assert paid.json()["adjustment_amount"] == "20.00"
         assert paid.json()["outstanding_amount"] == "0.00"
         assert paid.json()["payments"][0]["amount"] == "100.00"
+        assert paid.json()["payments"][0]["original_invoice_id"] == invoice["id"]
+        assert paid.json()["payments"][0]["original_amount"] == "100.00"
+        assert paid.json()["adjustments"][0]["amount"] == "20.00"
+        assert paid.json()["adjustments"][0]["reason"] == "Company absorbs rounding difference"
 
         duplicate = client.post(
             f"/api/invoices/{invoice['id']}/payments",
@@ -517,6 +521,10 @@ def test_paid_invoice_correction_refunds_difference_and_preserves_original_archi
         assert replacement["payment_status"] == "PAID"
         assert replacement["paid_amount"] == "100.00"
         assert replacement["adjustment_amount"] == "0.00"
+        assert replacement["payments"][0]["original_invoice_id"] == original_invoice["id"]
+        assert replacement["payments"][0]["original_amount"] == "120.00"
+        assert replacement["payments"][0]["amount"] == "100.00"
+        assert replacement["payments"][0]["proof_attachment_id"] == proof_id
         blocked_direct_void = client.post(
             f"/api/invoices/{replacement_invoice['id']}/void",
             json={"reason": "Transferred cash must use correction"},

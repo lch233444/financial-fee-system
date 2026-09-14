@@ -50,7 +50,7 @@ test("建立Invoice草稿的重复点击只产生一个请求", async () => {
   const writes: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") { writes.push(JSON.parse(init.body as string)); return new Promise<Response>((resolve) => { finish = resolve; }); }
-    return new Response(JSON.stringify(path === "/api/settlements" ? [{ id: 1, client_id: 1, client_name: "测试客户", company_id: 1, fc_id: 1, fee_plan_id: 1, fee_plan_name: "20%", year: 2026, quarter: 1, status: "FINALIZED", service_fee: "120.00", account_lines: [] }] : []));
+    return new Response(JSON.stringify(path === "/api/settlements" ? [{ id: 1, client_id: 1, client_name: "测试客户", company_id: null, fc_id: 1, fee_plan_id: 1, fee_plan_name: "20%", year: 2026, quarter: 1, status: "FINALIZED", service_fee: "120.00", account_lines: [] }] : path === "/api/companies" ? [{ id: 5, name: "本次收款公司" }] : []));
   }));
   render(<InvoicesPage notify={vi.fn()} />);
   const combo = screen.getByRole("combobox", { name: "客户季度Invoice组合" });
@@ -58,8 +58,12 @@ test("建立Invoice草稿的重复点击只产生一个请求", async () => {
   fireEvent.focus(combo);
   fireEvent.click(screen.getByRole("option", { name: /测试客户/ }));
   const form = screen.getByRole("button", { name: "建立Draft" }).closest("form")!;
+  fireEvent.submit(form);
+  expect(writes).toHaveLength(0);
+  fireEvent.change(screen.getByRole("combobox", { name: /^本次账单收款公司/ }), { target: { value: "5" } });
   fireEvent.submit(form); fireEvent.submit(form);
   expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ payee_company_id: 5 });
   expect((screen.getByRole("button", { name: "正在建立…" }) as HTMLButtonElement).disabled).toBe(true);
   finish(new Response(JSON.stringify({ id: 1 })));
   await screen.findByRole("button", { name: "建立Draft" });

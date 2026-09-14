@@ -6,30 +6,26 @@ import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, Section
 import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel } from "../types";
-import type { Account, Client, Company, FC, FeePlan, Platform } from "../types";
+import type { Account, Client, FC, FeePlan, Platform } from "../types";
 
 export default function ClientsPage({ notify }: { notify: (message: string) => void }) {
   const clients = useApiList<Client>("/api/clients");
   const accounts = useApiList<Account>("/api/accounts");
-  const companies = useApiList<Company>("/api/companies");
   const fcs = useApiList<FC>("/api/fcs");
   const platforms = useApiList<Platform>("/api/platforms");
   const plans = useApiList<FeePlan>("/api/fee-plans");
-  const [clientCompanyId, setClientCompanyId] = useState("");
   const [accountClientId, setAccountClientId] = useState("");
   const [clientSearch, setClientSearch] = useState("");
   const [clientStatus, setClientStatus] = useState("");
-  const visibleClients = clients.data.filter((item) => matchesSearch(`${item.name} ${item.company_name || ""} ${item.fc_name || ""}`, clientSearch) && (!clientStatus || item.status === clientStatus));
+  const visibleClients = clients.data.filter((item) => matchesSearch(`${item.name} ${item.fc_name || ""}`, clientSearch) && (!clientStatus || item.status === clientStatus));
   const clientPages = usePagination(visibleClients, `${clientSearch}:${clientStatus}`, 10);
   const [draftClientId, setDraftClientId] = useState("");
-  const [draftClientCompanyId, setDraftClientCompanyId] = useState("");
   const [draftAccountId, setDraftAccountId] = useState("");
   const [localError, setLocalError] = useState("");
   const formAction = useFormAction(setLocalError, notify);
   const [deletingKey, setDeletingKey] = useState("");
   const deleteBusyRef = useRef(false);
-  const error = localError || clients.error || accounts.error || companies.error || fcs.error || platforms.error || plans.error;
-  const selectedAccountClient = clients.data.find((item) => item.id === Number(accountClientId));
+  const error = localError || clients.error || accounts.error || fcs.error || platforms.error || plans.error;
   const selectedDraftClient = clients.data.find((item) => item.id === Number(draftClientId));
   const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId));
   const selectedDraftAccountClient = clients.data.find((item) => item.id === selectedDraftAccount?.client_id);
@@ -37,11 +33,10 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   function submitClient(event: FormEvent<HTMLFormElement>) {
     return formAction.submit(event, {
       save: (data) => postJson("/api/clients", {
-        company_id: Number(data.get("company_id")), fc_id: Number(data.get("fc_id")), name: data.get("name"),
+        fc_id: Number(data.get("fc_id")), name: data.get("name"),
         management_start_date: data.get("start_date"), contact: data.get("contact") || null,
         remark: data.get("remark") || null, status: "ACTIVE",
       }),
-      afterSave: () => setClientCompanyId(""),
       refresh: clients.reload,
       message: "Client已建立",
     });
@@ -65,11 +60,11 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
     if (!selectedDraftClient) { event.preventDefault(); return; }
     return formAction.submit(event, {
       save: (data) => patchJson(`/api/clients/${selectedDraftClient.id}`, {
-        company_id: Number(data.get("company_id")), fc_id: Number(data.get("fc_id")),
+        fc_id: Number(data.get("fc_id")),
         name: data.get("name"), management_start_date: data.get("start_date"),
         contact: data.get("contact") || null, remark: data.get("remark") || null, status: "ACTIVE",
       }),
-      afterSave: () => { setDraftClientId(""); setDraftClientCompanyId(""); },
+      afterSave: () => { setDraftClientId(""); },
       refresh: () => Promise.all([clients.reload(), accounts.reload()]),
       message: "待确认Client已补全并激活",
     });
@@ -105,7 +100,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       if (kind === "Client") {
         if (draftClientId === String(id)) {
           setDraftClientId("");
-          setDraftClientCompanyId("");
+
         }
         if (accountClientId === String(id)) setAccountClientId("");
       } else if (draftAccountId === String(id)) {
@@ -155,7 +150,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             {clientPages.rows.map((client) => {
               const rows = accounts.data.filter((account) => account.client_id === client.id);
               return <article className="client-card" key={client.id}>
-                <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.company_name || "待确认Company"} · {client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
+                <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.fc_name || "待确认FC"} · 管理开始 {client.management_start_date || "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
                 {rows.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap client-account-table"><table><thead><tr><th>Platform</th><th>Account Number</th><th>Scheme</th><th>Fee Plan</th><th>管理期间</th><th>Status</th><th>备注</th><th className="master-actions-column">操作</th></tr></thead><tbody>{rows.map((account) => <tr key={account.id}><td>{account.platform_name || "待确认Platform"}</td><td><strong>{account.account_number}</strong></td><td>{account.scheme_name || "-"}</td><td>{account.fee_plan_name || "待确认Fee Plan"}</td><td>{account.start_date || "待补全"}<small className="cell-note">至 {account.end_date || "持续管理"}</small></td><td><StatusBadge value={account.status} /></td><td>{account.remark || "-"}</td><td className="master-actions-column">{deleteButton("Sub Account", "/api/accounts", account.id, accountIdentityLabel(account))}</td></tr>)}</tbody></table></div> : <div className="client-account-empty">尚无Sub Account</div>}
               </article>;
             })}
@@ -165,10 +160,9 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
       </Panel>
 
       <div className="split-layout">
-        <Panel id="client-create" title="新增Client" subtitle="正式启用前必须关联Company、FC和管理开始日期">
+        <Panel id="client-create" title="新增Client" subtitle="补全FC和管理开始日期；建立受管子账户后才计为在管客户">
           <form className="form-grid" onSubmit={(e) => void submitClient(e)}>
-            <Field label="Company"><select name="company_id" value={clientCompanyId} required onChange={(e) => setClientCompanyId(e.target.value)}><option value="" disabled>请选择</option>{companies.data.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
-            <Field label="FC"><select key={clientCompanyId} name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.filter((x) => !clientCompanyId || x.company_id === Number(clientCompanyId)).map((x) => <option key={x.id} value={x.id}>{x.name} ({x.code})</option>)}</select></Field>
+            <Field label="FC"><select name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.code}) · #{x.id}</option>)}</select></Field>
             <Field label="Client Name"><input name="name" required /></Field>
             <Field label="Management Start Date"><input name="start_date" type="date" required /></Field>
             <Field label="联系方式"><input name="contact" /></Field>
@@ -179,8 +173,8 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
         <Panel id="account-create" title="新增Sub Account" subtitle="币种固定为HKD">
           <form className="form-grid" onSubmit={(e) => void submitAccount(e)}>
             <Field group label="Client"><SearchableSelect label="新增账户客户" name="client_id" value={accountClientId} required onChange={setAccountClientId} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
-            <Field label="Platform"><select name="platform_id" defaultValue="" required><option value="" disabled>请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-            <Field label="Fee Plan"><select key={accountClientId} name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.filter((x) => !selectedAccountClient?.company_id || x.company_id === selectedAccountClient.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+            <Field label="Platform"><select name="platform_id" defaultValue="" required><option value="" disabled>请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name} · #{x.id}</option>)}</select></Field>
+            <Field label="Fee Plan"><select key={accountClientId} name="fee_plan_id" defaultValue="" required><option value="" disabled>请选择</option>{plans.data.map((x) => <option key={x.id} value={x.id}>{x.name} · #{x.id}</option>)}</select></Field>
             <Field label="Account Number"><input name="account_number" required /></Field>
             <Field label="Scheme Name"><input name="scheme_name" /></Field>
             <Field label="开始管理日期"><input name="start_date" type="date" required /></Field>
@@ -195,16 +189,13 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
           <Field group label="选择Draft Client">
             <SearchableSelect label="待确认客户" value={draftClientId}
               onChange={(value) => {
-                const next = clients.data.find((item) => item.id === Number(value));
                 setDraftClientId(value);
-                setDraftClientCompanyId(next?.company_id ? String(next.company_id) : "");
               }}
               options={clients.data.filter((item) => item.status === "DRAFT").map((item) => ({ value: String(item.id), label: item.name }))} />
           </Field>
           {selectedDraftClient ? (
             <form className="form-grid" key={selectedDraftClient.id} onSubmit={(event) => void completeDraftClient(event)}>
-              <Field label="Company"><select name="company_id" value={draftClientCompanyId} required onChange={(event) => setDraftClientCompanyId(event.target.value)}><option value="" disabled>请选择</option>{companies.data.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></Field>
-              <Field label="FC"><select key={draftClientCompanyId} name="fc_id" defaultValue={selectedDraftClient.company_id === Number(draftClientCompanyId) ? selectedDraftClient.fc_id ?? "" : ""} required><option value="" disabled>请选择</option>{fcs.data.filter((item) => item.company_id === Number(draftClientCompanyId)).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></Field>
+              <Field label="FC"><select name="fc_id" defaultValue={selectedDraftClient.fc_id ?? ""} required><option value="" disabled>请选择</option>{fcs.data.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code}) · #{item.id}</option>)}</select></Field>
               <Field label="Client Name"><input name="name" defaultValue={selectedDraftClient.name} required /></Field>
               <Field label="Management Start Date"><input name="start_date" type="date" defaultValue={selectedDraftClient.management_start_date ?? ""} required /></Field>
               <Field label="联系方式"><input name="contact" defaultValue={selectedDraftClient.contact ?? ""} /></Field>
@@ -220,7 +211,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             <form className="form-grid" key={selectedDraftAccount.id} onSubmit={(event) => void completeDraftAccount(event)}>
               <Field label="Client"><input value={`${selectedDraftAccount.client_name} (${selectedDraftAccountClient?.status ?? "UNKNOWN"})`} disabled /></Field>
               <Field label="Platform"><select name="platform_id" defaultValue={selectedDraftAccount.platform_id ?? ""} required><option value="" disabled>请选择</option>{platforms.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-              <Field label="Fee Plan"><select name="fee_plan_id" defaultValue={selectedDraftAccount.fee_plan_id ?? ""} required><option value="" disabled>请选择</option>{plans.data.filter((item) => !selectedDraftAccountClient?.company_id || item.company_id === selectedDraftAccountClient.company_id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+              <Field label="Fee Plan"><select name="fee_plan_id" defaultValue={selectedDraftAccount.fee_plan_id ?? ""} required><option value="" disabled>请选择</option>{plans.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
               <Field label="Scheme Name"><input name="scheme_name" defaultValue={selectedDraftAccount.scheme_name ?? ""} /></Field>
               <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} required /></Field>
               <Field label="实际结束日期（如适用）" hint="若账单日期等于退出日，保存后系统会重核该Snapshot的Closing资格"><input name="end_date" type="date" defaultValue={selectedDraftAccount.end_date ?? ""} /></Field>

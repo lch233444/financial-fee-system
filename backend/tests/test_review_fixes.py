@@ -113,7 +113,7 @@ def _invoice_draft(
 ):
     return client.post(
         "/api/invoices",
-        json={
+        json={"payee_company_id": data["company"]["id"],
             "client_id": data["client"]["id"],
             "year": year,
             "quarter": quarter,

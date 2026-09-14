@@ -20,7 +20,7 @@ from app.services.settlement_boundary_contract import (
 
 PREVIOUS_REVISION = "7f3c2a91b6e4"
 DELETE_GUARD_REVISION = "c1a7d5e9b402"
-HEAD_REVISION = "b7e2d9a41c60"
+HEAD_REVISION = "c6f3a8d92e10"
 DELETE_GUARD_TRIGGERS = {
     "trg_client_delete_no_cascade",
     "trg_account_delete_no_cascade",
@@ -74,8 +74,8 @@ def test_7f_head_upgrades_to_delete_guard_head_with_exact_trigger_contract(
     command.upgrade(config, "head")
 
     triggers = _trigger_sql(settings.database_path)
-    assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS
-    assert len(triggers) == 57
+    assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert"}
+    assert len(triggers) == 59
     assert all(sql.strip() for sql in triggers.values())
     assert settlement_boundary_trigger_sql_is_current(triggers)
     with sqlite3.connect(settings.database_path) as connection:

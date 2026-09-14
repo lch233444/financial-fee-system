@@ -200,11 +200,11 @@ def _finalize(client: TestClient, settlement: dict) -> dict:
     return _create(client, f"/api/settlements/{settlement['id']}/finalize", {})
 
 
-def _issue(client: TestClient, data: dict) -> dict:
+def _issue(client: TestClient, data: dict, *, correction: bool = False) -> dict:
     draft = _create(
         client,
         "/api/invoices",
-        {
+        {"payee_company_id": None if correction else data["company"]["id"],
             "client_id": data["client"]["id"],
             "year": 2026,
             "quarter": 1,
@@ -399,7 +399,7 @@ def test_paid_invoice_correction_refunds_difference_and_preserves_original_archi
 
         stale_reopen = client.post(
             "/api/invoices",
-            json={
+            json={"payee_company_id": data["company"]["id"],
                 "client_id": data["client"]["id"],
                 "year": 2026,
                 "quarter": 1,

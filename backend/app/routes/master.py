@@ -382,7 +382,7 @@ def list_fcs(db: Session = Depends(get_db)) -> list[dict]:
         {
             "id": item.id,
             "company_id": item.company_id,
-            "company_name": item.company.name,
+            "company_name": item.company.name if item.company else None,
             "name": item.name,
             "code": item.code,
             "remark": item.remark,
@@ -394,11 +394,11 @@ def list_fcs(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/fcs", status_code=201)
 def create_fc(payload: FCCreate, db: Session = Depends(get_db)) -> dict:
-    if not db.get(Company, payload.company_id):
+    if payload.company_id is not None and not db.get(Company, payload.company_id):
         raise HTTPException(status_code=404, detail="Company不存在")
     item = FC(**payload.model_dump())
     db.add(item)
-    _commit(db, "同一Company下的FC Code必须唯一")
+    _commit(db, "新建FC缩写必须全系统唯一（包括已有档案）")
     db.refresh(item)
     return {"id": item.id, **payload.model_dump()}
 
@@ -491,7 +491,7 @@ def list_fee_plans(db: Session = Depends(get_db)) -> list[dict]:
         {
             "id": item.id,
             "company_id": item.company_id,
-            "company_name": item.company.name,
+            "company_name": item.company.name if item.company else None,
             "name": item.name,
             "code": item.code,
             "fee_rate_percent": item.fee_rate_bps / 100,
@@ -504,14 +504,14 @@ def list_fee_plans(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/fee-plans", status_code=201)
 def create_fee_plan(payload: FeePlanCreate, db: Session = Depends(get_db)) -> dict:
-    if not db.get(Company, payload.company_id):
+    if payload.company_id is not None and not db.get(Company, payload.company_id):
         raise HTTPException(status_code=404, detail="Company不存在")
     data = payload.model_dump(exclude={"fee_rate_percent"})
     data["code"] = data["code"].strip().upper()
     fee_rate_bps = int((payload.fee_rate_percent * 100).to_integral_exact())
     item = FeePlan(**data, fee_rate_bps=fee_rate_bps)
     db.add(item)
-    _commit(db, "同一Company下的Fee Plan Code必须唯一")
+    _commit(db, "新建Fee Plan Code必须全系统唯一（包括已有档案）")
     db.refresh(item)
     return {
         "id": item.id,
@@ -573,12 +573,12 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Company不存在")
     if payload.fc_id:
         fc = db.get(FC, payload.fc_id)
-        if not fc or (payload.company_id and fc.company_id != payload.company_id):
-            raise HTTPException(status_code=400, detail="FC与Company不匹配")
+        if not fc:
+            raise HTTPException(status_code=400, detail="FC不存在")
     if payload.status == "ACTIVE" and (
-        not payload.company_id or not payload.fc_id or not payload.management_start_date
+        not payload.fc_id or not payload.management_start_date
     ):
-        raise HTTPException(status_code=400, detail="Active Client必须补全Company、FC和Management Start Date")
+        raise HTTPException(status_code=400, detail="Active Client必须补全FC和Management Start Date")
     item = Client(id=_next_entity_id(db, Client), **payload.model_dump())
     db.add(item)
     _commit(db)
@@ -592,16 +592,17 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
     if not item:
         raise HTTPException(status_code=404, detail="Client不存在")
     changes = payload.model_dump(exclude_unset=True)
-    company_id = changes.get("company_id", item.company_id)
+    if changes.get("company_id") is not None and not db.get(Company, changes["company_id"]):
+        raise HTTPException(status_code=404, detail="Company不存在")
     fc_id = changes.get("fc_id", item.fc_id)
     if fc_id:
         fc = db.get(FC, fc_id)
-        if not fc or (company_id and fc.company_id != company_id):
-            raise HTTPException(status_code=400, detail="FC与Company不匹配")
+        if not fc:
+            raise HTTPException(status_code=400, detail="FC不存在")
     effective_status = changes.get("status", item.status)
     effective_start = changes.get("management_start_date", item.management_start_date)
-    if effective_status == "ACTIVE" and (not company_id or not fc_id or not effective_start):
-        raise HTTPException(status_code=400, detail="Active Client必须补全Company、FC和Management Start Date")
+    if effective_status == "ACTIVE" and (not fc_id or not effective_start):
+        raise HTTPException(status_code=400, detail="Active Client必须补全FC和Management Start Date")
     for key, value in changes.items():
         setattr(item, key, value)
     db.commit()
@@ -625,7 +626,7 @@ def merge_client(client_id: int, payload: ClientMergeRequest, db: Session = Depe
         raise HTTPException(status_code=409, detail="客户姓名不一致，不能作为重复客户合并")
     if "CLOSED" in (source.status, target.status) or (source.status == "ACTIVE" and target.status != "ACTIVE"):
         raise HTTPException(status_code=409, detail="请保留有效客户档案；已关闭客户不能在此合并")
-    fields = ("company_id", "fc_id", "management_start_date", "contact")
+    fields = ("fc_id", "management_start_date", "contact")
     conflicts = [field for field in fields if getattr(source, field) is not None
                  and getattr(target, field) is not None and getattr(source, field) != getattr(target, field)]
     if conflicts:
@@ -647,10 +648,6 @@ def merge_client(client_id: int, payload: ClientMergeRequest, db: Session = Depe
     source_values, target_before = values(source), values(target)
     accounts = db.scalars(select(SubAccount).where(SubAccount.client_id == source.id).order_by(SubAccount.id)).all()
     moved_ids = [account.id for account in accounts]
-    company_id = target.company_id if target.company_id is not None else source.company_id
-    if company_id is not None and any(account.fee_plan_id is not None
-                                     and account.fee_plan.company_id != company_id for account in accounts):
-        raise HTTPException(status_code=409, detail="子账户收费计划与保留客户的Company不一致，不能合并")
     for field in fields:
         if getattr(target, field) is None:
             setattr(target, field, getattr(source, field))
@@ -782,8 +779,6 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
     plan = db.get(FeePlan, payload.fee_plan_id) if payload.fee_plan_id else None
     if payload.fee_plan_id and not plan:
         raise HTTPException(status_code=404, detail="Fee Plan不存在")
-    if plan and client.company_id and plan.company_id != client.company_id:
-        raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
     if payload.status == "ACTIVE" and (
         not payload.platform_id or not payload.fee_plan_id or not payload.start_date
     ):
@@ -822,8 +817,6 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
     plan = db.get(FeePlan, fee_plan_id) if fee_plan_id else None
     if fee_plan_id and not plan:
         raise HTTPException(status_code=404, detail="Fee Plan不存在")
-    if plan and item.client.company_id and plan.company_id != item.client.company_id:
-        raise HTTPException(status_code=400, detail="Fee Plan与Client所属Company不一致")
     if status == "ACTIVE" and (not platform_id or not fee_plan_id or not start_date):
         raise HTTPException(
             status_code=400,

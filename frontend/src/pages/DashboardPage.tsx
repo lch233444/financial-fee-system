@@ -17,7 +17,6 @@ type FCReport = {
   fc_id: number;
   fc_name: string;
   fc_code: string;
-  company_name: string;
   active_client_count: number;
   charged_client_count: number;
   service_fee_generated: string;
@@ -83,12 +82,11 @@ export default function DashboardPage({ navigate }: { navigate?: (page: "imports
         {fcs.length ? (
           <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap">
             <table>
-              <thead><tr><th>FC</th><th>Company</th><th>当前管理客户</th><th>期间收费客户</th><th>产生Service Fee</th></tr></thead>
+              <thead><tr><th>FC</th><th>当前管理客户</th><th>期间收费客户</th><th>产生Service Fee</th></tr></thead>
               <tbody>
                 {fcs.map((row) => (
                   <tr key={row.fc_id}>
                     <td><strong>{row.fc_name}</strong><small className="cell-note">{row.fc_code}</small></td>
-                    <td>{row.company_name}</td>
                     <td>{row.active_client_count}</td>
                     <td>{row.charged_client_count}</td>
                     <td><Money value={row.service_fee_generated} /></td>
@@ -97,7 +95,7 @@ export default function DashboardPage({ navigate }: { navigate?: (page: "imports
               </tbody>
             </table>
           </div>
-        ) : <div className="empty-state"><strong>尚无FC资料</strong><span>请先在基础设置中建立Company和FC。</span></div>}
+        ) : <div className="empty-state"><strong>尚无FC资料</strong><span>请先在基础设置中建立FC。</span></div>}
       </Panel></> : null}
     </>
   );

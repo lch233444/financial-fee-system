@@ -94,7 +94,7 @@ class CurrentSettlement:
     client: Client
     platform: Platform
     fee_plan: FeePlan
-    company_id: int
+    company_id: int | None
     fc_id: int
     previous_settlement_id: int | None
     aggregate: SettlementCalculation
@@ -223,15 +223,11 @@ def calculate_current_settlement(
         raise SettlementCurrentStateError(404, "Client、Platform或Fee Plan不存在")
     if client.status != "ACTIVE":
         raise SettlementCurrentStateError(409, "只有Active Client可以建立季度Settlement")
-    if not client.company_id or not client.fc_id:
-        raise SettlementCurrentStateError(409, "Client必须补全Company和FC后再Calculate")
-    if fee_plan.company_id != client.company_id:
-        raise SettlementCurrentStateError(
-            409, "Fee Plan不一致：与Client所属Company不一致，请修正后重新Calculate"
-        )
+    if not client.fc_id:
+        raise SettlementCurrentStateError(409, "Client必须补全FC后再Calculate")
     fc = db.get(FC, client.fc_id)
-    if not fc or fc.company_id != client.company_id:
-        raise SettlementCurrentStateError(409, "Client FC不属于当前Company，请修正归属后重新Calculate")
+    if not fc:
+        raise SettlementCurrentStateError(409, "Client FC不存在，请修正后重新Calculate")
 
     natural_start, natural_end = quarter_dates(year, quarter)
     start_date = default_start_date or natural_start
@@ -442,7 +438,7 @@ def calculate_current_settlement(
         client=client,
         platform=platform,
         fee_plan=fee_plan,
-        company_id=client.company_id,
+        company_id=None,
         fc_id=client.fc_id,
         previous_settlement_id=previous_group.id if previous_group else None,
         aggregate=aggregate,

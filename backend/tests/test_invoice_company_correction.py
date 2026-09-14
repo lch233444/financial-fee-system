@@ -31,7 +31,7 @@ def test_unpaid_invoice_company_correction_preserves_sources_and_original_archiv
             "reason": "Correct the company on this invoice only", "target_company_id": target["id"],
         })
         assert correction["target_company_id"] == target["id"]
-        replacement = _issue(client, data)
+        replacement = _issue(client, data, correction=True)
         assert replacement["company_name"] == target["name"]
         assert replacement["invoice_number"].startswith(target["name"] + "-")
         assert replacement["due_date"] == "2026-05-05"
@@ -59,7 +59,7 @@ def test_unpaid_invoice_company_correction_preserves_sources_and_original_archiv
         second = _create(client, f"/api/invoices/{replacement['id']}/corrections", {
             'reason': 'Return to original receiving company', 'target_company_id': data['company']['id'],
         })
-        restored = _issue(client, data)
+        restored = _issue(client, data, correction=True)
         _create(client, f"/api/invoice-corrections/{second['id']}/complete", {'replacement_invoice_id': restored['id']})
         assert restored['company_name'] == data['company']['name']
         assert restored['invoice_number'] != original['invoice_number']
@@ -90,13 +90,13 @@ def test_later_financial_correction_keeps_the_corrected_invoice_payee():
         correction = _create(client, f"/api/invoices/{original['id']}/corrections", {
             'reason': 'Correct receiving company', 'target_company_id': target['id'],
         })
-        company_invoice = _issue(client, data)
+        company_invoice = _issue(client, data, correction=True)
         _create(client, f"/api/invoice-corrections/{correction['id']}/complete", {'replacement_invoice_id': company_invoice['id']})
         financial = _create(client, f"/api/invoices/{company_invoice['id']}/corrections", {'reason': 'Correct opening HWM'})
         _create(client, f"/api/settlements/{settlement['id']}/void", {'reason': 'Correct opening HWM'})
         replacement_settlement = _calculate(client, data, original_hwm='1100.00')
         _finalize(client, replacement_settlement)
-        replacement = _issue(client, data)
+        replacement = _issue(client, data, correction=True)
         assert replacement['amount'] == '100.00'
         assert replacement['settlement_ids'] != original['settlement_ids']
         assert replacement['payee_company_id'] == target['id']
@@ -178,6 +178,6 @@ def test_company_correction_can_rebuild_voided_draft_and_blocks_target_company_d
         draft = _create(client, '/api/invoices', {'client_id': data['client']['id'], 'year': 2026, 'quarter': 1, 'fee_plan_id': data['plan']['id']})
         _create(client, f"/api/invoices/{draft['id']}/void", {'reason': 'Rebuild draft'})
         assert client.delete(f"/api/companies/{target['id']}").status_code == 409
-        replacement = _issue(client, data)
+        replacement = _issue(client, data, correction=True)
         result = _create(client, f"/api/invoice-corrections/{correction['id']}/complete", {'replacement_invoice_id': replacement['id']})
         assert result['status'] == 'COMPLETED'

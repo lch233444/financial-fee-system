@@ -149,7 +149,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
 
         draft = client.post(
             "/api/invoices",
-            json={
+            json={"payee_company_id": data["company"]["id"],
                 "client_id": data["client"]["id"],
                 "year": 2026,
                 "quarter": 3,
@@ -212,7 +212,7 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
         platform = client.post("/api/platforms", json={"name": "Platform Beta", "code": "PB"}).json()
         plan = client.post(
             "/api/fee-plans",
-            json={"company_id": company["id"], "name": "PS20 Beta", "code": "PS20", "fee_rate_percent": "20"},
+            json={"company_id": company["id"], "name": "PS20 Beta", "code": "PS20BETA", "fee_rate_percent": "20"},
         ).json()
         customer = client.post(
             "/api/clients",
@@ -256,7 +256,7 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
         client.post(f"/api/settlements/{settlement['id']}/finalize")
         response = client.post(
             "/api/invoices",
-            json={
+            json={"payee_company_id": company["id"],
                 "client_id": customer["id"],
                 "year": 2026,
                 "quarter": 1,

@@ -622,7 +622,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             <p className="confirmed-next-step">{!confirmedAccount || !confirmedSnapshot
               ? "正在加载已关联的账户与Snapshot资料。"
               : confirmedAccount.status === "DRAFT"
-              ? "下一步：到“客户与账户”补全Client的Company/FC及Sub Account的Fee Plan、管理日期并激活；完成前不会进入正式季度结算。"
+              ? "下一步：到“客户与账户”补全Client的FC及Sub Account的Fee Plan、管理日期并激活；完成前不会进入正式季度结算。"
               : confirmedSnapshot.eligible_for_closing
                 ? "下一步：该Snapshot已在“资金与余额”可查；到“季度结算”选择同一Client、Platform、Fee Plan及账户期间，人工计算并Finalize。系统不会自动结算。"
                 : "该Snapshot已在“资金与余额”可查；因不是季末或实际退出日，只作余额记录，不会出现在Closing选项。"}</p>
@@ -676,7 +676,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                 onChange={(id) => { setSelectedClientId(id); setSelectedAccountId(""); }}
                 placeholder="新客户 / 尚未选择已有客户" searchPlaceholder="搜索客户姓名、公司或FC…"
                 options={clients.data.filter((item) => item.status !== "CLOSED").map((item) => ({ value: String(item.id),
-                  label: [item.name, item.company_name || "待补全公司", item.fc_name || "待补全FC", `客户#${item.id}`, `${accounts.data.filter((account) => account.client_id === item.id).length}个子账户`].join(" · ") }))} />
+                  label: [item.name, item.fc_name || "待补全FC", `客户#${item.id}`, `${accounts.data.filter((account) => account.client_id === item.id).length}个子账户`].join(" · ") }))} />
               {selectedClient ? <small>本次账户归属：{selectedClient.name} · 客户#{selectedClient.id}。新账户沿用该客户档案，收费计划仍按子账户分配。</small>
                 : needsClientSelection ? <small role="alert">发现{matchingClients.length}个同名客户档案，请先选择已有客户，再为他新增子账户。若确为不同的人，请先在“客户与账户”建立独立档案。</small> : null}
             </Field>

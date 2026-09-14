@@ -49,6 +49,7 @@ type InvoiceCandidate = {
   pendingAccounts: string[];
   feePlanName: string;
   companyName: string;
+  payeeCompanyId: number | null;
   fcName: string;
   sourceCount: number;
   totalCents: number;
@@ -124,6 +125,7 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
   const settlements = useApiList<Settlement>("/api/settlements");
   const corrections = useApiList<InvoiceCorrection>("/api/invoice-corrections");
   const companies = useApiList<Company>("/api/companies");
+  const [payeeCompanyId, setPayeeCompanyId] = useState("");
   const [showCompanyCorrection, setShowCompanyCorrection] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [candidateKey, setCandidateKey] = useState("");
@@ -215,9 +217,8 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
       }
       if (!availableSettlements.length) continue;
 
-      const companyIds = new Set(availableSettlements.map((settlement) => settlement.company_id));
       const fcIds = new Set(availableSettlements.map((settlement) => settlement.fc_id));
-      if (companyIds.size !== 1 || fcIds.size !== 1 || availableSettlements[0].company_id == null || availableSettlements[0].fc_id == null) {
+      if (fcIds.size !== 1 || availableSettlements[0].fc_id == null) {
         ownershipMismatchGroupCount += 1;
         continue;
       }
@@ -265,7 +266,8 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
           && !availableSettlements.some((settlement) => settlement.account_lines.some((line) => line.account_id === account.id)))
           .map((account) => `${account.platform_name} · ${account.account_number} · ${account.fee_plan_name || "未分配计划"}`),
         feePlanName: [...new Set(availableSettlements.map((item) => item.fee_plan_name))].join(" / "),
-        companyName: openCorrection?.target_company_name ?? originalInvoice?.company_name ?? first.company_name ?? "未冻结Company",
+        companyName: openCorrection?.target_company_name ?? originalInvoice?.company_name ?? "请选择收款公司",
+        payeeCompanyId: openCorrection ? openCorrection.target_company_id ?? originalInvoice?.payee_company_id ?? null : null,
         fcName: first.fc_name ?? "未冻结FC",
         sourceCount: availableSettlements.length,
         totalCents,
@@ -340,16 +342,19 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
 
   function createDraft(event: FormEvent<HTMLFormElement>) {
     if (!selectedCandidate) { event.preventDefault(); setError("请选择可建立Invoice的客户季度组合"); return; }
+    const payeeId = selectedCandidate.payeeCompanyId ?? (Number(payeeCompanyId) || null);
+    if (!payeeId) { event.preventDefault(); setError("请选择本次账单的收款公司"); return; }
     return draftAction.submit(event, {
       save: async (data) => {
         const result = await postJson<Invoice>("/api/invoices", {
           client_id: selectedCandidate.clientId, year: selectedCandidate.year,
           quarter: selectedCandidate.quarter,
+          payee_company_id: payeeId,
           language: data.get("language"),
         });
         setSelectedId(result.id);
       },
-      afterSave: () => setCandidateKey(""),
+      afterSave: () => { setCandidateKey(""); setPayeeCompanyId(""); },
       refresh: invoices.reload,
       message: "Invoice Draft已建立",
     });
@@ -749,22 +754,28 @@ export default function InvoicesPage({ notify }: { notify: (message: string) => 
     <>
       <PageHeader title="Invoice与收款" subtitle="各子账户独立算费，同一客户同一季度跨平台、跨收费计划合并一张缴费单" />
       <SectionNav items={[{ id: "invoice-directory", label: "账单清单" }, { id: "invoice-create", label: "建立账单" }, { id: "invoice-detail", label: "选中账单" }, { id: "invoice-corrections", label: "更正记录" }]} />
-      {error || invoices.error || settlements.error || corrections.error || accounts.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error || accounts.error} /> : null}
+      {error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error} /> : null}
       <Panel id="invoice-directory" title="Invoice清单"><div className="list-search"><Field label="搜索Invoice客户或编号"><input type="search" value={invoiceSearch} onChange={(event) => setInvoiceSearch(event.target.value)} placeholder="输入客户名称或账单编号…" /></Field><Field label="账单状态"><select value={invoiceFilter} onChange={(event) => setInvoiceFilter(event.target.value)}><option value="">全部账单</option><option value="UNPAID">已出具 · 未付款</option><option value="OVERDUE">已逾期</option><option value="PAID">已付清</option><option value="DRAFT">草稿</option><option value="ISSUING">出具中</option><option value="VOID">已作废</option></select></Field><small role="status">显示 {visibleInvoices.length} / {invoices.data.length} 张Invoice</small></div>{invoices.loading ? <Loading /> : invoices.error ? null : visibleInvoices.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Invoice No.</th><th>Client / Period</th><th>来源</th><th>Issue / Due</th><th>Amount</th><th>Payment</th><th>Lifecycle</th></tr></thead><tbody>{invoicePages.rows.map((item) => <tr key={item.id} className={selectedId === item.id ? "selected clickable" : "clickable"} onClick={() => { if (!invoiceMutationBusy) showInvoice(item.id); }} onKeyDown={(event) => { if (!invoiceMutationBusy && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); showInvoice(item.id); } }} role="button" tabIndex={invoiceMutationBusy ? -1 : 0} aria-selected={selectedId === item.id} aria-label={`查看${item.invoice_number || `Draft #${item.id}`}`}><td><strong>{item.invoice_number || `Draft #${item.id}`}</strong></td><td>{item.client_name || "未识别Client"}<small className="cell-note">{item.year} Q{item.quarter} · {item.fc_name || "未识别FC"}</small></td><td>{item.source_count}份Settlement<small className="cell-note">{item.account_lines.length}行账户明细</small></td><td>{item.issue_date || "-"}<small className="cell-note">Due {item.due_date || "-"}</small></td><td><Money value={item.amount} /></td><td><StatusBadge value={item.payment_status} />{item.is_overdue ? <small className="cell-note overdue-note">已逾期</small> : null}</td><td><InvoiceLifecycleBadge value={item.lifecycle_status} /></td></tr>)}</tbody></table></div> : <EmptyState title={invoiceSearch.trim() ? "未找到匹配的Invoice" : "暂无Invoice"} detail={invoiceSearch.trim() ? "请更换客户名称、编号或清空搜索。" : "先Finalized一个产生Service Fee的客户季度组合。"} />}<Pagination {...invoicePages} /></Panel>
 
       <div className="split-layout invoices-top">
         <Panel id="invoice-create" title="建立Invoice Draft" subtitle="汇总客户同季度已确认的账户收费；跨平台、跨收费计划合并出具一张缴费单">
           <form className="form-grid" onSubmit={(e) => void createDraft(e)}>
-            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoiceMutationBusy || invoices.loading || settlements.loading || accounts.loading || Boolean(accounts.error) || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={setCandidateKey} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
+            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoiceMutationBusy || invoices.loading || settlements.loading || accounts.loading || Boolean(accounts.error) || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={(value) => { setCandidateKey(value); setPayeeCompanyId(""); }} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
+            <Field label="本次账单收款公司" hint={selectedCandidate?.payeeCompanyId ? "更正账单沿用已确定的收款公司" : "请按客户本次要求选择；出具前核对公司名称及收款信息"}>
+              <select name="payee_company_id" required value={selectedCandidate?.payeeCompanyId ?? payeeCompanyId} onChange={(event) => setPayeeCompanyId(event.target.value)} disabled={invoiceMutationBusy || companies.loading || !selectedCandidate || selectedCandidate.payeeCompanyId != null}>
+                <option value="" disabled>请选择收款公司</option>
+                {companies.data.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+              </select>
+            </Field>
             <Field label="默认PDF语言"><select name="language" defaultValue="zh"><option value="zh">中文</option><option value="en">English</option></select></Field>
             {candidateState.lateSettlementGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.lateSettlementGroupCount} 个客户季度已有有效Invoice，但后来又出现未纳入的Settlement。迟到Settlement需先更正或作废原Invoice后重开，系统不会建立第二张有效季度Invoice。</div> : null}
-            {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结Company/FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
+            {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
             {selectedCandidate ? <div className="invoice-group-preview">
-              <header><div><strong>{selectedCandidate.clientName} · {selectedCandidate.year} Q{selectedCandidate.quarter}</strong><span>{selectedCandidate.companyName} · {selectedCandidate.fcName} · {selectedCandidate.feePlanName}</span></div><div><small>{selectedCandidate.sourceCount}份Settlement</small><Money value={moneyFromCents(selectedCandidate.totalCents)} emphasis /></div></header>
+              <header><div><strong>{selectedCandidate.clientName} · {selectedCandidate.year} Q{selectedCandidate.quarter}</strong><span>{selectedCandidate.payeeCompanyId ? selectedCandidate.companyName : companies.data.find((company) => company.id === Number(payeeCompanyId))?.name ?? "请选择收款公司"} · {selectedCandidate.fcName} · {selectedCandidate.feePlanName}</span></div><div><small>{selectedCandidate.sourceCount}份Settlement</small><Money value={moneyFromCents(selectedCandidate.totalCents)} emphasis /></div></header>
               {selectedCandidate.pendingAccounts.length ? <div className="invoice-candidate-warning" role="status"><strong>仍有 {selectedCandidate.pendingAccounts.length} 个本季Active账户未纳入本单：</strong><ul>{selectedCandidate.pendingAccounts.map((label) => <li key={label}>{label}</li>)}</ul>请先到季度结算核对并Finalize所需账户；当前金额仅包含下列已锁定来源。</div> : null}
               <AccountLineTable lines={selectedCandidate.accountLines} />
-            </div> : invoices.loading || settlements.loading ? <Loading /> : candidateState.candidates.length ? null : <EmptyState title="暂无可建立的客户季度Invoice" detail="需要同组Finalized Settlement的锁定Service Fee合计大于0，且冻结Company/FC一致。" />}
-            <button className="primary" type="submit" disabled={invoiceMutationBusy || accounts.loading || Boolean(accounts.error) || !selectedCandidate}><FilePlus2 size={17} />{draftAction.pending ? "正在建立…" : "建立Draft"}</button>
+            </div> : invoices.loading || settlements.loading ? <Loading /> : candidateState.candidates.length ? null : <EmptyState title="暂无可建立的客户季度Invoice" detail="需要同组Finalized Settlement的锁定Service Fee合计大于0，且冻结FC一致。" />}
+            <button className="primary" type="submit" disabled={invoiceMutationBusy || accounts.loading || Boolean(accounts.error) || companies.loading || Boolean(companies.error) || !selectedCandidate || !(selectedCandidate.payeeCompanyId ?? payeeCompanyId)}><FilePlus2 size={17} />{draftAction.pending ? "正在建立…" : "建立Draft"}</button>
           </form>
         </Panel>
         <Panel id="invoice-detail" title="选中Invoice">

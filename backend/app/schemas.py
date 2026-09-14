@@ -70,7 +70,7 @@ class CompanyCreate(BaseModel):
 
 
 class FCCreate(BaseModel):
-    company_id: int
+    company_id: int | None = Field(default=None, json_schema_extra={"deprecated": True}, description="旧调用兼容字段，不参与业务归属校验")
     name: str = Field(min_length=1, max_length=160)
     code: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9]+$")
     remark: str | None = None
@@ -94,7 +94,7 @@ class PlatformCreate(BaseModel):
 
 
 class FeePlanCreate(BaseModel):
-    company_id: int
+    company_id: int | None = Field(default=None, json_schema_extra={"deprecated": True}, description="旧调用兼容字段，不参与业务归属校验")
     name: str = Field(min_length=1, max_length=200)
     code: str = Field(min_length=1, max_length=40)
     fee_rate_percent: Decimal = Field(default=Decimal("20"), ge=0, le=100)
@@ -229,6 +229,7 @@ class SettlementCalculateRequest(BaseModel):
 
 
 class InvoiceDraftCreate(BaseModel):
+    payee_company_id: int | None = Field(default=None, gt=0)
     client_id: int
     year: int = Field(ge=2000, le=2200)
     quarter: int = Field(ge=1, le=4)

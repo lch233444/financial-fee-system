@@ -72,7 +72,7 @@ def export_settlements_to_template(
         original_hwm_cents = account_line.original_hwm_cents if account_line is not None else settlement.original_hwm_cents
         service_fee_cents = account_line.service_fee_cents if account_line is not None else settlement.service_fee_cents
         sheet.cell(row, 1, index)
-        company = settlement.company or settlement.client.company
+        company = invoice.receiving_company if invoice else None
         fc = settlement.fc or settlement.client.fc
         sheet.cell(row, 2, company.name if company else "")
         sheet.cell(row, 3, f"{settlement.year} Q{settlement.quarter}")

@@ -54,13 +54,13 @@ class FC(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("company_id", "code", name="uq_fc_company_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(160))
     code: Mapped[str] = mapped_column(String(20))
     remark: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    company: Mapped[Company] = relationship(back_populates="fcs")
+    company: Mapped[Company | None] = relationship(back_populates="fcs")
     clients: Mapped[list[Client]] = relationship(back_populates="fc")
 
 
@@ -80,14 +80,14 @@ class FeePlan(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("company_id", "code", name="uq_fee_plan_company_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     code: Mapped[str] = mapped_column(String(40))
     fee_rate_bps: Mapped[int] = mapped_column(Integer, default=2000)
     calculation_method: Mapped[str] = mapped_column(String(80), default="HIGH_WATER_MARK")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    company: Mapped[Company] = relationship(back_populates="fee_plans")
+    company: Mapped[Company | None] = relationship(back_populates="fee_plans")
 
 
 class Client(TimestampMixin, Base):
@@ -319,7 +319,7 @@ class Invoice(TimestampMixin, Base):
         ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True
     )
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
-    # The settlement's service ownership stays in company_id. NULL preserves
+    # Existing company_id values remain frozen; new normal bills use the selected payee. NULL preserves
     # the original payee for invoices created before company-only corrections.
     payee_company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
     fc_id: Mapped[int] = mapped_column(ForeignKey("fcs.id", ondelete="RESTRICT"), index=True)

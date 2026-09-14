@@ -51,9 +51,9 @@ function fill(form: HTMLElement, values: Record<string, string>) {
 describe("保存成功后立即更新页面", () => {
   test.each([
     { tab: "Company", button: "保存Company", path: "/api/companies", title: "现有Company", values: { name: "新公司", code: "NEW" }, text: "新公司" },
-    { tab: "FC", button: "保存FC", path: "/api/fcs", title: "现有FC", values: { company_id: "1", name: "新FC", code: "NEWFC" }, text: "新FC" },
+    { tab: "FC", button: "保存FC", path: "/api/fcs", title: "现有FC", values: { name: "新FC", code: "NEWFC" }, text: "新FC" },
     { tab: "Platform", button: "保存Platform", path: "/api/platforms", title: "现有Platform", values: { name: "新平台", code: "NEWPL" }, text: "新平台" },
-    { tab: "Fee Plan", button: "保存Fee Plan", path: "/api/fee-plans", title: "现有Fee Plan", values: { company_id: "1", name: "新计划", code: "NEWPS", rate: "20" }, text: "新计划" },
+    { tab: "Fee Plan", button: "保存Fee Plan", path: "/api/fee-plans", title: "现有Fee Plan", values: { name: "新计划", code: "NEWPS", rate: "20" }, text: "新计划" },
   ])("$tab：异步完成后重置表单并显示新记录", async ({ tab, button, path, title, values, text }) => {
     const db = mockDatabase();
     const notify = vi.fn();
@@ -73,7 +73,7 @@ describe("保存成功后立即更新页面", () => {
   });
 
   test.each([
-    { button: "保存Client", path: "/api/clients", values: { company_id: "1", fc_id: "1", name: "新客户", start_date: "2026-01-01" }, text: "新客户" },
+    { button: "保存Client", path: "/api/clients", values: { fc_id: "1", name: "新客户", start_date: "2026-01-01" }, text: "新客户" },
     { button: "保存Sub Account", path: "/api/accounts", values: { client_id: "1", platform_id: "1", fee_plan_id: "1", account_number: "NEW-ACCOUNT", start_date: "2026-01-01" }, text: "NEW-ACCOUNT" },
   ])("$button：列表和依赖选项同时更新", async ({ button, path, values, text }) => {
     const db = mockDatabase();

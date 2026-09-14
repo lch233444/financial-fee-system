@@ -43,7 +43,7 @@ async function openFirst() {
 function chooseCustomer(id: number) {
   const input = screen.getByRole("combobox", { name: "选择已有客户" });
   fireEvent.focus(input);
-  fireEvent.change(input, { target: { value: `示例公司${id}` } });
+  fireEvent.change(input, { target: { value: `客户#${id}` } });
   fireEvent.click(screen.getByRole("option", { name: new RegExp(`客户#${id}`) }));
 }
 

@@ -55,11 +55,11 @@ def confirm(api, name, number, scheme, **selection):
 def seed_pair(api):
     tag = uuid4().hex[:12]
     company = post(api, "/api/companies", {"name": f"ASSOCIATION {tag}", "code": tag})
-    fc = post(api, "/api/fcs", {"company_id": company["id"], "name": "TEST FC", "code": "FC"})
+    fc = post(api, "/api/fcs", {"company_id": company["id"], "name": "TEST FC", "code": "FC" + tag})
     scheme = f"SYNTHETIC SCHEME {tag}"
     platform = post(api, "/api/platforms", {"name": scheme, "code": tag})
     plans = [post(api, "/api/fee-plans", {"company_id": company["id"], "name": f"Plan {rate}",
-              "code": str(rate), "fee_rate_percent": rate}) for rate in (20, 10)]
+              "code": str(rate) + tag, "fee_rate_percent": rate}) for rate in (20, 10)]
     data = {"name": f"SYNTHETIC CLIENT {tag}", "company_id": company["id"], "fc_id": fc["id"],
             "management_start_date": "2026-03-31", "status": "ACTIVE"}
     clients = [post(api, "/api/clients", data) for _ in range(2)]
@@ -77,7 +77,7 @@ def seed_pair(api):
             dates.append(result["snapshot"]["id"])
             imports.append(import_id)
         snapshots.append(dates)
-    return dict(clients=clients, accounts=accounts, snapshots=snapshots, imports=imports,
+    return dict(company=company, clients=clients, accounts=accounts, snapshots=snapshots, imports=imports,
                 plans=plans, platform=platform, name=data["name"], scheme=scheme)
 
 
@@ -147,13 +147,13 @@ def test_merge_preserves_accounts_plans_snapshots_and_produces_one_multi_plan_in
                 "account_lines": [{"account_id": account["id"], "beginning_snapshot_id": d["snapshots"][index][0],
                                    "closing_snapshot_id": d["snapshots"][index][1], "original_hwm": "1000.00"}]})
             post(api, f"/api/settlements/{settlement['id']}/finalize", {})
-        invoice = post(api, "/api/invoices", {"client_id": target, "year": 2026, "quarter": 2})
+        invoice = post(api, "/api/invoices", {"payee_company_id": d["company"]["id"], "client_id": target, "year": 2026, "quarter": 2})
         assert invoice["amount"] == "60.00" and invoice["source_count"] == 2
         fresh = post(api, "/api/clients", {"name": f"FRESH {uuid4().hex}"})
         assert fresh["id"] > source
 
 
-@pytest.mark.parametrize("change", ["name", "company_id", "fc_id", "management_start_date", "contact", "status"])
+@pytest.mark.parametrize("change", ["name", "fc_id", "management_start_date", "contact", "status"])
 def test_merge_rejects_conflicting_or_closed_customer_metadata(change):
     with TestClient(app, headers={"X-Financial-System-Request": "1"}) as api:
         d = seed_pair(api)

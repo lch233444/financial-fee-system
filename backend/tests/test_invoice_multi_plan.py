@@ -122,7 +122,7 @@ def test_losing_plan_is_included_with_zero_fee_without_netting_another_account_p
         _finalized_settlement(client, first, 0, year=2026, quarter=1, closing="1100.00")
         loss = _finalized_settlement(client, second, 0, year=2026, quarter=1, closing="500.00")
         assert loss["service_fee"] == "0.00"
-        invoice = _issue_draft(client, client.post("/api/invoices", json={"client_id": first["client"]["id"], "year": 2026, "quarter": 1}))
+        invoice = _issue_draft(client, client.post("/api/invoices", json={"payee_company_id": first["company"]["id"], "client_id": first["client"]["id"], "year": 2026, "quarter": 1}))
         assert invoice["amount"] == "20.00" and invoice["source_count"] == 2
         assert {line["service_fee"] for line in invoice["account_lines"]} == {"0.00", "20.00"}
 
@@ -150,7 +150,7 @@ def test_company_only_correction_keeps_all_plans_and_their_frozen_fees():
         original = _issue_draft(client, _draft(client, first, year=2026, quarter=1))
         target = _company(client)
         correction = _create(client, f"/api/invoices/{original['id']}/corrections", {"reason": "Correct receiving company only", "target_company_id": target["id"]})
-        replacement = _issue_draft(client, _draft(client, second, year=2026, quarter=1))
+        replacement = _issue_draft(client, _draft(client, {**second, "company": target}, year=2026, quarter=1))
         assert replacement["amount"] == original["amount"] == "30.00"
         assert replacement["settlement_ids"] == original["settlement_ids"]
         assert replacement["fee_plan_ids"] == original["fee_plan_ids"]

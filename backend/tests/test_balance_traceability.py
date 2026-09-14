@@ -76,7 +76,7 @@ def _active_settlement_case(client: TestClient, label: str) -> dict:
     fc = _post(
         client,
         "/api/fcs",
-        {"company_id": company["id"], "name": f"State FC {label}", "code": "SF"},
+        {"company_id": company["id"], "name": f"State FC {label}", "code": f"SF{short}"},
     )
     platform = _post(
         client,
@@ -89,7 +89,7 @@ def _active_settlement_case(client: TestClient, label: str) -> dict:
         {
             "company_id": company["id"],
             "name": f"State Plan {label}",
-            "code": "STATE20",
+            "code": f"STATE20{short}",
             "fee_rate_percent": "20.00",
         },
     )
@@ -192,7 +192,7 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
         fc = _post(
             client,
             "/api/fcs",
-            {"company_id": company["id"], "name": f"Trace FC {short}", "code": "TF"},
+            {"company_id": company["id"], "name": f"Trace FC {short}", "code": f"TF{short}"},
         )
         platform_a = _post(
             client,
@@ -210,7 +210,7 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
             {
                 "company_id": company["id"],
                 "name": f"Trace Plan {short}",
-                "code": "PS20",
+                "code": f"PS20{short}",
                 "fee_rate_percent": "20.00",
             },
         )
@@ -491,7 +491,7 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
         fc = _post(
             client,
             "/api/fcs",
-            {"company_id": company["id"], "name": f"Exit FC {short}", "code": "EF"},
+            {"company_id": company["id"], "name": f"Exit FC {short}", "code": f"EF{short}"},
         )
         plan = _post(
             client,
@@ -499,7 +499,7 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
             {
                 "company_id": company["id"],
                 "name": f"Exit Plan {short}",
-                "code": "EXIT20",
+                "code": f"EXIT20{short}",
                 "fee_rate_percent": "20.00",
             },
         )

@@ -330,20 +330,17 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         settlements=settlements,
     )
 
-    company_ids = {settlement.company_id for settlement in settlements}
     fc_ids = {settlement.fc_id for settlement in settlements}
-    if None in company_ids or None in fc_ids:
-        raise HTTPException(status_code=400, detail="Finalized Settlement缺少冻结Company或FC")
-    if len(company_ids) != 1 or len(fc_ids) != 1:
-        raise HTTPException(status_code=409, detail="跨平台、跨收费计划Settlement的冻结Company或FC不一致，不能合并Invoice")
+    if None in fc_ids:
+        raise HTTPException(status_code=400, detail="Finalized Settlement缺少冻结FC")
+    if len(fc_ids) != 1:
+        raise HTTPException(status_code=409, detail="跨平台、跨收费计划Settlement的冻结FC不一致，不能合并Invoice")
     if any(
         not settlement.fee_plan
-        or settlement.fee_plan.company_id != settlement.company_id
         or not settlement.fc
-        or settlement.fc.company_id != settlement.company_id
         for settlement in settlements
     ):
-        raise HTTPException(status_code=409, detail="Finalized Settlement的Company、FC与Fee Plan归属不一致")
+        raise HTTPException(status_code=409, detail="Finalized Settlement的FC或Fee Plan资料缺失")
     if any(
         settlement.client_id != payload.client_id
         or settlement.year != payload.year
@@ -362,6 +359,17 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
     if occupied_source is not None:
         raise HTTPException(status_code=409, detail=f"Settlement #{occupied_source} 已被有效Invoice占用")
 
+    if correction:
+        payee_id = correction.target_company_id or correction.original_invoice.receiving_company_id
+        if payload.payee_company_id is not None and payload.payee_company_id != payee_id:
+            raise HTTPException(status_code=409, detail="更正账单须使用已确定的收款公司")
+    else:
+        payee_id = payload.payee_company_id
+    if payee_id is None:
+        raise HTTPException(status_code=400, detail="请明确选择本次账单的收款公司")
+    if not db.get(Company, payee_id):
+        raise HTTPException(status_code=404, detail="收款公司不存在")
+
     anchor = settlements[0]
     item = Invoice(
         settlement_id=anchor.id,
@@ -369,8 +377,8 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         client_id=payload.client_id,
         year=payload.year,
         quarter=payload.quarter,
-        company_id=anchor.company_id,
-        payee_company_id=(correction.target_company_id or correction.original_invoice.receiving_company_id) if correction else None,
+        company_id=correction.original_invoice.company_id if correction else payee_id,
+        payee_company_id=payee_id,
         fc_id=anchor.fc_id,
         amount_cents=0,
         language=payload.language,
@@ -536,19 +544,16 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
             settlement.client_id != invoice.client_id
             or settlement.year != invoice.year
             or settlement.quarter != invoice.quarter
-            or settlement.company_id != invoice.company_id
             or settlement.fc_id != invoice.fc_id
         ):
             raise HTTPException(status_code=409, detail=f"Settlement #{source.settlement_id} 冻结分组已不一致")
         if (
             not settlement.fee_plan
-            or settlement.fee_plan.company_id != settlement.company_id
             or not settlement.fc
-            or settlement.fc.company_id != settlement.company_id
         ):
             raise HTTPException(
                 status_code=409,
-                detail=f"Settlement #{source.settlement_id} 的Company、FC与Fee Plan归属不一致",
+                detail=f"Settlement #{source.settlement_id} 的FC或Fee Plan资料缺失",
             )
         if lines_by_source.get(source.id, 0) != source.locked_amount_cents:
             raise HTTPException(status_code=409, detail=f"Settlement #{source.settlement_id} 冻结明细金额不一致")

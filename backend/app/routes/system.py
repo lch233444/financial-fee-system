@@ -203,7 +203,7 @@ def fc_report(
                 "fc_id": fc.id,
                 "fc_name": fc.name,
                 "fc_code": fc.code,
-                "company_name": fc.company.name,
+                "company_name": fc.company.name if fc.company else None,
                 "active_client_count": client_count,
                 "charged_client_count": int(charged_client_count),
                 "service_fee_generated": money_string(int(fee_generated)),

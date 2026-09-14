@@ -20,7 +20,7 @@ from app.services.workflow_guard_contract import workflow_trigger_sql_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 
 PREVIOUS = "d4f8a1c73b29"
-HEAD = "b7e2d9a41c60"
+HEAD = "c6f3a8d92e10"
 
 
 def _seed_history(settings, *, finalize_q3=True):
@@ -104,7 +104,7 @@ def test_upgrade_preserves_skipped_history_and_locks_every_used_cash_date(tmp_pa
     before = _business_rows(settings.database_path)
     command.upgrade(config, "head")
     assert _business_rows(settings.database_path) == before
-    assert len(_trigger_sql(settings.database_path)) == 57
+    assert len(_trigger_sql(settings.database_path)) == 59
     assert workflow_trigger_sql_is_current(_trigger_sql(settings.database_path))
     engine = create_engine(settings.database_url)
     with Session(engine) as db:

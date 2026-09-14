@@ -81,6 +81,8 @@ def init_db() -> None:
         bootstrap_metadata = MetaData()
         for table in Base.metadata.sorted_tables:
             table.to_metadata(bootstrap_metadata)
+        for master_name in ("fcs", "fee_plans"):
+            bootstrap_metadata.tables[master_name].c.company_id.nullable = False
         bootstrap_invoice = bootstrap_metadata.tables["invoices"]
         # Missing legacy tables must also get the pre-0.2.27 invoice index.
         # The real migration installs the client-quarter index after its preflight.
@@ -421,7 +423,7 @@ def init_db() -> None:
         delete_guard_trigger_sql_is_current = _delete_guard_sql_is_current(trigger_sql)
         trigger_shape_is_0_2_14 = settlement_triggers == expected_0_2_14_head_triggers
         trigger_shape_is_current = (
-            settlement_triggers == expected_current_head_triggers
+            settlement_triggers in (expected_current_head_triggers, expected_current_head_triggers | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert"})
             and delete_guard_trigger_sql_is_current
         )
         settlement_version_shape_complete = (
@@ -522,7 +524,16 @@ def init_db() -> None:
                                 with engine.connect() as group_connection:
                                     if not invoice_group_schema_is_current(group_connection):
                                         raise RuntimeError("未版本化数据库的客户季度合并保护不完整；已停止启动")
-                                command.stamp(alembic_config, INVOICE_GROUP_REVISION)
+                                from .services.company_scope_contract import COMPANY_SCOPE_REVISION, CODE_TRIGGER_SQL, company_scope_schema_is_current
+                                nullable_masters = [next(col for col in refreshed_inspector.get_columns(name) if col["name"] == "company_id")["nullable"] for name in ("fcs", "fee_plans")]
+                                if any(nullable_masters) or set(CODE_TRIGGER_SQL) & settlement_triggers:
+                                    with engine.connect() as scope_connection:
+                                        if not company_scope_schema_is_current(scope_connection):
+                                            raise RuntimeError("未版本化数据库的公司解绑保护不完整；已停止启动")
+                                    command.stamp(alembic_config, COMPANY_SCOPE_REVISION)
+                                else:
+                                    command.stamp(alembic_config, INVOICE_GROUP_REVISION)
+                                    command.upgrade(alembic_config, "head")
                             else:
                                 command.stamp(alembic_config, PAYEE_REVISION)
                                 command.upgrade(alembic_config, "head")
@@ -668,3 +679,7 @@ def init_db() -> None:
     with engine.connect() as group_connection:
         if not invoice_group_schema_is_current(group_connection):
             raise RuntimeError("数据库客户季度合并保护不完整；系统已停止启动")
+    from .services.company_scope_contract import company_scope_schema_is_current
+    with engine.connect() as scope_connection:
+        if not company_scope_schema_is_current(scope_connection):
+            raise RuntimeError("数据库公司解绑保护不完整；系统已停止启动")

@@ -472,7 +472,7 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
         assert client.post(f"/api/settlements/{first['id']}/finalize").status_code == 200
         first_draft = client.post(
             "/api/invoices",
-            json={
+            json={"payee_company_id": data["company"]["id"],
                 "client_id": data["client"]["id"],
                 "year": 2026,
                 "quarter": 1,
@@ -498,7 +498,7 @@ def test_invoice_number_never_reuses_void_and_hwm_inherits() -> None:
         assert client.post(f"/api/settlements/{second['id']}/finalize").status_code == 200
         second_draft = client.post(
             "/api/invoices",
-            json={
+            json={"payee_company_id": data["company"]["id"],
                 "client_id": data["client"]["id"],
                 "year": 2026,
                 "quarter": 2,

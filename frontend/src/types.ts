@@ -8,13 +8,13 @@ export type Company = {
   payment_terms_days: number;
 };
 
-export type FC = { id: number; company_id: number; company_name: string; name: string; code: string };
+export type FC = { id: number; company_id: number | null; company_name: string | null; name: string; code: string };
 export type Platform = { id: number; name: string; code: string; trustee: string | null };
 export type MasterStatus = "DRAFT" | "ACTIVE" | "CLOSED";
 export type FeePlan = {
   id: number;
-  company_id: number;
-  company_name: string;
+  company_id: number | null;
+  company_name: string | null;
   name: string;
   code: string;
   fee_rate_percent: number;

@@ -168,7 +168,7 @@ def _finalized_settlement(
 def _draft(client: TestClient, data: dict, *, year: int, quarter: int):
     return client.post(
         "/api/invoices",
-        json={
+        json={"payee_company_id": data["company"]["id"],
             "client_id": data["client"]["id"],
             "year": year,
             "quarter": quarter,
@@ -578,10 +578,10 @@ def test_invoice_group_rejects_inconsistent_frozen_fc() -> None:
         _finalized_settlement(client, data, 1, year=2026, quarter=1)
         response = _draft(client, data, year=2026, quarter=1)
         assert response.status_code == 409
-        assert "Company或FC不一致" in response.json()["detail"]
+        assert "FC不一致" in response.json()["detail"]
 
 
-def test_finalize_rejects_client_company_change_after_calculate() -> None:
+def test_finalize_still_rejects_client_fc_change_after_calculate() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _group(client, "OWN829", platform_count=1)
         start_date, closing_date = quarter_dates(2026, 2)
@@ -621,10 +621,10 @@ def test_finalize_rejects_client_company_change_after_calculate() -> None:
         assert changed.status_code == 200, changed.text
         finalized = client.post(f"/api/settlements/{calculated.json()['id']}/finalize")
         assert finalized.status_code == 409
-        assert "Fee Plan不一致" in finalized.json()["detail"]
+        assert "Settlement.fc_id" in finalized.json()["detail"]
 
 
-def test_invoice_create_and_issue_recheck_fee_plan_company_ownership() -> None:
+def test_invoice_create_and_issue_ignore_legacy_plan_company_metadata() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _group(client, "PLAN829", platform_count=1)
         _finalized_settlement(client, data, 0, year=2026, quarter=3)
@@ -636,29 +636,22 @@ def test_invoice_create_and_issue_recheck_fee_plan_company_ownership() -> None:
             plan = db.get(FeePlan, data["plan"]["id"])
             plan.company_id = replacement_company["id"]
             db.commit()
-        rejected_draft = _draft(client, data, year=2026, quarter=3)
-        assert rejected_draft.status_code == 409
-        assert "Fee Plan归属不一致" in rejected_draft.json()["detail"]
+        draft = _draft(client, data, year=2026, quarter=3)
+        assert draft.status_code == 201, draft.text
 
         with SessionLocal() as db:
             plan = db.get(FeePlan, data["plan"]["id"])
             plan.company_id = data["company"]["id"]
             db.commit()
-        draft = _draft(client, data, year=2026, quarter=3)
-        assert draft.status_code == 201, draft.text
-        with SessionLocal() as db:
-            plan = db.get(FeePlan, data["plan"]["id"])
-            plan.company_id = replacement_company["id"]
-            db.commit()
-        rejected_issue = client.post(
+        issued = client.post(
             f"/api/invoices/{draft.json()['id']}/issue",
             json={"issue_date": "2026-10-05", "language": "zh"},
         )
-        assert rejected_issue.status_code == 409
-        assert "Fee Plan归属不一致" in rejected_issue.json()["detail"]
+        assert issued.status_code == 200, issued.text
+        assert issued.json()["company_name"] == data["company"]["name"]
 
 
-def test_settlement_and_invoice_pdfs_use_frozen_company_after_client_reassignment() -> None:
+def test_invoice_pdf_uses_explicit_payee_despite_client_legacy_company_reassignment() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _group(
             client,
@@ -690,7 +683,7 @@ def test_settlement_and_invoice_pdfs_use_frozen_company_after_client_reassignmen
         assert settlement_pdf.status_code == 200, settlement_pdf.text
         settlement_text = _pdf_text(settlement_pdf.content)
         normalized_settlement_text = " ".join(settlement_text.split())
-        assert data["company"]["name"] in normalized_settlement_text
+        assert data["company"]["name"] not in normalized_settlement_text
         assert replacement_company["name"] not in settlement_text
 
         draft = _draft(client, data, year=2026, quarter=3)

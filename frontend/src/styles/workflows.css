@@ -1197,6 +1197,11 @@
 
 .payment-confirmation-form {
   grid-template-columns: repeat(4, minmax(145px, 1fr));
+  align-items: start;
+   }
+
+.payment-confirmation-form > button {
+  align-self: end;
    }
 
 .payment-ledger {

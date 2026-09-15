@@ -1,12 +1,12 @@
-金融计划收费计算系统 MVP 1.0.0 Windows运行版构建清单
-文档修订：2026-09-15；本次候选及正式切换证据见项目说明书12.13节。
+金融计划收费计算系统 MVP 1.0.1 Windows运行版构建清单
+文档修订：2026-09-15；本次候选及正式切换证据见项目说明书12.14节。
 
 1.0覆盖月度编号、HWM确认及页面分工；须完整后端和前端回归、生产构建、真实EXE OCR、隔离浏览器/PDF检查、完整备份恢复及正式验收。既有策略拒绝清理范围继续暂停，本轮使用全新F盘目录。下列旧版本记录仅为历史证据。
 
 一、当前构建契约
-- 应用版本：1.0.0；Windows ProductVersion：1.0.0；FileVersion：1.0.0.0。
+- 应用版本：1.0.1；Windows ProductVersion：1.0.1；FileVersion：1.0.1.0。
 - 数据库目标head：f1c0a915b100；目标60个Trigger；结构数量不能替代业务验收。
-- 常规候选输出：release/FinancialFeeSystem。本轮既有候选/构建清理暂停，使用全新F:\ff10_20260915下的候选、work及临时目录，沿用原构建参数与全部组件校验；不执行曾被拒绝的清理，不把真实数据放入候选目录。
+- 常规候选输出：release/FinancialFeeSystem。本轮既有候选/构建清理暂停，使用全新F:\ffpdf101_20260915下的候选、work及临时目录，沿用原构建参数与全部组件校验；不执行曾被拒绝的清理，不把真实数据放入候选目录。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -114,3 +114,7 @@
 本轮正式部署须先从旧安装目录读取financial_system_config.json并核对data_root为已确认的F:\备份，将其复制到新正式目录后再启动；该本机配置不进入Git或通用候选。启动后在无FINANCIAL_DATA_ROOT环境覆盖时核对实际目录。
 
 2026-09-15正式交付：后端487/487、前端68/68及生产构建通过；Schema、Windows EXE/OCR、备份恢复、测试账单转换和正式数据一致性通过，原22项完成22项。原生弹窗工具限制和清理暂停见主说明书12.13。
+
+本轮1.0.1仅修订缴款PDF排版及发布元数据，验收状态见项目说明书12.14；使用全新F:\ffpdf101_20260915构建目录，既有清理暂停不变。
+
+1.0.1最终交付：后端487、前端68及生产构建、Windows/OCR与实际EXE新PDF、全量备份恢复、四份更新归档、正式8000验证均通过。产品版本仍为1.0；财务政策和Schema不变，已确认测试账单只更新版式。

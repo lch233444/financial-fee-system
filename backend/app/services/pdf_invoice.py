@@ -213,9 +213,15 @@ def generate_invoice_pdf(
         fontSize=10, leading=16, textColor=INVOICE_INK, keepWithNext=True,
     )
     payment_heading = ParagraphStyle(
-        "notice-payment-heading", parent=heading, fontSize=12, spaceAfter=5 * mm,
+        "notice-payment-heading", parent=heading, fontSize=12, spaceAfter=3.5 * mm,
     )
-    method_heading = ParagraphStyle("notice-method-heading", parent=heading, keepWithNext=False)
+    method_heading = ParagraphStyle(
+        "notice-method-heading", parent=heading, keepWithNext=False, spaceAfter=2.5 * mm,
+    )
+    payment_label = ParagraphStyle("notice-payment-label", parent=body, textColor=INVOICE_MUTED)
+    payment_prose = ParagraphStyle(
+        "notice-payment-prose", parent=body, leading=17, spaceBefore=2 * mm, spaceAfter=1 * mm,
+    )
     company_style = ParagraphStyle(
         "notice-company", parent=heading, fontSize=16, leading=23, spaceAfter=2 * mm,
     )
@@ -238,7 +244,7 @@ def generate_invoice_pdf(
     )
     amount = ParagraphStyle(
         "notice-amount", parent=value, fontName=bold_font,
-        fontSize=23, leading=30, alignment=TA_RIGHT, textColor=INVOICE_INK,
+        fontSize=20, leading=27, alignment=TA_RIGHT, textColor=INVOICE_INK,
     )
     copy = {
         "title": "Service Fee Payment Notice" if is_english else "服務費繳款通知書",
@@ -336,7 +342,7 @@ def generate_invoice_pdf(
         ("TOPPADDING", (0, 0), (-1, -1), 6 * mm),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6 * mm),
     ]))
-    method_min_height = method_heading.leading + 2 * body.leading + 4 * mm
+    method_min_height = method_heading.leading + method_heading.spaceAfter + 2 * body.leading + 4 * mm
     story.extend([
         fee_row, Spacer(1, 11 * mm),
         CondPageBreak(payment_heading.leading + payment_heading.spaceAfter + 5 * mm + method_min_height),
@@ -350,6 +356,8 @@ def generate_invoice_pdf(
         "銀行", "银行", "銀行名稱", "银行名称", "收款銀行", "收款银行",
         "收款戶名", "收款户名", "戶名", "户名", "賬戶名稱", "账户名称",
         "銀行賬號", "银行账号", "賬號", "账号", "帳號", "帳戶名稱",
+        "戶口號碼", "户口号码", "戶口號", "户口号", "帳戶號碼", "账户号码",
+        "帳戶號", "账户号", "賬戶號碼", "賬戶號",
         "bank", "bank name", "account", "account name", "account number", "account no.",
         "account no", "swift", "swift code",
     }
@@ -359,7 +367,7 @@ def generate_invoice_pdf(
             label, found, detail = line.partition(separator)
             if found and label.strip().lower() in bank_labels and detail.strip():
                 row = Table(
-                    [[p(label + separator, small), p(detail.strip())]],
+                    [[p(label.strip() + separator, payment_label), p(detail.strip())]],
                     colWidths=[34 * mm, content_width - 34 * mm],
                     splitInRow=1,
                 )
@@ -368,12 +376,11 @@ def generate_invoice_pdf(
                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
                     ("RIGHTPADDING", (0, 0), (0, 0), 3 * mm),
                     ("RIGHTPADDING", (1, 0), (1, 0), 0),
-                    ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#DEE5E9")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1 * mm),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1 * mm),
                 ]))
                 return row
-        return p(line)
+        return p(line, payment_prose)
 
     has_payment_method = False
     for label, text in (
@@ -382,7 +389,11 @@ def generate_invoice_pdf(
     ):
         if text and text.strip():
             if has_payment_method:
-                story.append(Spacer(1, 7 * mm))
+                story.extend([
+                    Spacer(1, 5 * mm),
+                    HRFlowable(width="100%", thickness=0.4, color=INVOICE_RULE),
+                    Spacer(1, 4 * mm),
+                ])
             has_payment_method = True
             # Reserve room for the label and first lines without binding an
             # entire long table to the heading (which strands the first page).
@@ -399,9 +410,6 @@ def generate_invoice_pdf(
         canvas.setStrokeColor(INVOICE_RULE)
         canvas.setLineWidth(0.4)
         canvas.line(left, 18 * mm, right, 18 * mm)
-        canvas.setStrokeColor(INVOICE_INK)
-        canvas.setLineWidth(1.8)
-        canvas.line(left, 18 * mm, left + 18 * mm, 18 * mm)
         canvas.setFont(font, 8)
         canvas.setFillColor(INVOICE_MUTED)
         if document.page > 1:

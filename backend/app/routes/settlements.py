@@ -181,6 +181,8 @@ def calculate_or_update_settlement(
             beginning_snapshot_id=line.beginning_snapshot_id,
             closing_snapshot_id=line.closing_snapshot_id,
             original_hwm_cents=to_cents(line.original_hwm) if line.original_hwm is not None else None,
+            hwm_override_reason=line.hwm_override_reason,
+            hwm_override_confirmed=line.hwm_override_confirmed,
             remark=line.remark,
         )
         for line in payload.account_lines
@@ -252,9 +254,21 @@ def calculate_or_update_settlement(
                 next_hwm_cents=result.next_hwm_cents,
                 fee_rate_bps=result.fee_rate_bps,
                 formula_version=result.formula_version,
+                hwm_source_type=current_line.hwm_source_type,
+                hwm_override_reason=current_line.hwm_override_reason,
+                hwm_override_confirmed=current_line.hwm_override_confirmed,
                 remark=current_line.spec.remark,
             )
         )
+    db.flush()
+    db.add(AuditEvent(action="SETTLEMENT_HWM_CONFIRMED", entity_type="SETTLEMENT", entity_id=item.id,
+        details_json={"accounts": [{"account_id": line.spec.account_id,
+            "source_type": line.hwm_source_type, "snapshot_id": line.beginning_snapshot_id,
+            "previous_line_id": line.previous_line_id,
+            "source_amount_cents": line.calculation.original_hwm_cents if line.previous_line_id else line.calculation.beginning_cents,
+            "original_hwm_cents": line.calculation.original_hwm_cents,
+            "override_reason": line.hwm_override_reason, "override_confirmed": line.hwm_override_confirmed}
+            for line in current.lines]}))
     _commit_state_change(db, "Settlement账户HWM期间顺序或唯一性已被并发请求改变，请刷新后重试")
     item = db.scalar(_loaded_query().where(QuarterlySettlement.id == item.id))
     return settlement_dict(item, db=db)
@@ -339,6 +353,8 @@ def finalize_settlement(settlement_id: int, db: Session = Depends(get_db)) -> di
             beginning_snapshot_id=line.beginning_snapshot_id,
             closing_snapshot_id=line.closing_snapshot_id,
             original_hwm_cents=line.original_hwm_cents,
+            hwm_override_reason=line.hwm_override_reason,
+            hwm_override_confirmed=line.hwm_override_confirmed,
             remark=line.remark,
         )
         for line in item.account_lines

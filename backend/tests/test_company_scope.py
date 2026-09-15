@@ -47,7 +47,7 @@ def test_company_is_not_needed_until_bill_and_chosen_payee_drives_archive_and_ca
         assert issued.status_code == 200, issued.text
         bill = issued.json()
         assert bill['payee_company_id'] == company['id'] and bill['due_date'] == '2026-05-05'
-        assert bill['invoice_number'].startswith(company['name'] + '-') and bill['amount'] == '20.00'
+        assert bill['invoice_number'].isdigit() and len(bill['invoice_number']) == 9 and bill['amount'] == '20.00'
         after_excel = api.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert after_excel.status_code == 200
         workbook = load_workbook(BytesIO(after_excel.content))

@@ -155,6 +155,6 @@ def test_company_only_correction_keeps_all_plans_and_their_frozen_fees():
         assert replacement["amount"] == original["amount"] == "30.00"
         assert replacement["settlement_ids"] == original["settlement_ids"]
         assert replacement["fee_plan_ids"] == original["fee_plan_ids"]
-        assert replacement["invoice_number"].startswith(target["name"] + "-")
+        assert replacement["invoice_number"] == str(int(original["invoice_number"]) + 1)
         completed = _create(client, f"/api/invoice-corrections/{correction['id']}/complete", {"replacement_invoice_id": replacement["id"]})
         assert completed["status"] == "COMPLETED"

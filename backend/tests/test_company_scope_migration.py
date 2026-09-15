@@ -4,7 +4,7 @@ import sqlite3
 
 from alembic import command
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -27,7 +27,8 @@ def test_migration_preserves_every_row_including_duplicate_codes_and_frozen_hist
     engine = create_engine(settings.database_url)
     with Session(engine) as db:
         settlement = db.get(QuarterlySettlement, 1)
-        line = settlement.account_lines[0]
+        line = db.execute(text('SELECT id, account_id, start_date, closing_date FROM settlement_account_lines WHERE settlement_id=:id'), {'id': settlement.id}).mappings().first()
+        account_number = db.execute(text('SELECT account_number FROM sub_accounts WHERE id=:id'), {'id': line['account_id']}).scalar_one()
         bill = Invoice(settlement_id=settlement.id, client_id=settlement.client_id,
                        company_id=settlement.company_id, fc_id=settlement.fc_id, fee_plan_id=settlement.fee_plan_id,
                        year=2026, quarter=1, amount_cents=12000)
@@ -37,9 +38,9 @@ def test_migration_preserves_every_row_including_duplicate_codes_and_frozen_hist
         db.add(source)
         db.flush()
         db.add(InvoiceLine(invoice_id=bill.id, source_id=source.id, source_settlement_id=settlement.id,
-                           source_account_line_id=line.id, platform_id=settlement.platform_id,
-                           platform_name_snapshot='Historical Platform', account_number_snapshot=line.account.account_number,
-                           start_date=line.start_date, closing_date=line.closing_date, service_fee_cents=12000))
+                           source_account_line_id=line['id'], platform_id=settlement.platform_id,
+                           platform_name_snapshot='Historical Platform', account_number_snapshot=account_number,
+                           start_date=date.fromisoformat(line['start_date']), closing_date=date.fromisoformat(line['closing_date']), service_fee_cents=12000))
         db.flush()
         bill.lifecycle_status = 'ISSUING'
         bill.invoice_number = 'HISTORICAL-20260405-1'

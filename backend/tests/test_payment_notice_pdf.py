@@ -20,7 +20,7 @@ def _notice(*, bank="Bank: Example Bank\nAccount: 000-123-456", cheque=None):
         ),
         client=SimpleNamespace(name="Example <Client> & Family"),
         invoice_number="Example <Company> & Partners-TW-20260909-12",
-        amount_cents=128050, due_date=date(2026, 9, 30),
+        amount_cents=128050, issue_date=date(2026, 9, 9), due_date=date(2026, 9, 30),
     )
 
 

@@ -31,7 +31,7 @@ from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "c6f3a8d92e10"
+HEAD_REVISION = "f1c0a915b100"
 
 
 def _master(client: TestClient, suffix: str) -> dict:
@@ -937,6 +937,8 @@ def test_same_account_period_cannot_repeat_after_plan_change_in_app_or_sql() -> 
                 connection.execute(account_order_trigger_sql)
                 connection.commit()
 
+            # Keep the duplicate fixture valid for the independent HWM guard.
+            connection.execute("UPDATE settlement_account_lines SET hwm_source_type='INITIAL_SNAPSHOT' WHERE settlement_id=?", (duplicate_draft_id,))
             with pytest.raises(sqlite3.IntegrityError, match="settlement_account_period_duplicate"):
                 connection.execute(
                     "UPDATE quarterly_settlements "

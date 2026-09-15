@@ -507,7 +507,7 @@ def test_data_package_rebases_all_persisted_file_paths_for_another_computer(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
-        ).fetchone() == (59,)
+        ).fetchone() == (60,)
 
 
 def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fails(

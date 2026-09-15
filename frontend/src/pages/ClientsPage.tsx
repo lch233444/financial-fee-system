@@ -15,6 +15,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   const platforms = useApiList<Platform>("/api/platforms");
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [accountClientId, setAccountClientId] = useState("");
+  const [view, setView] = useState<"query" | "create">("query");
   const [directoryClientId, setDirectoryClientId] = useState("");
   const [draftAccountClientId, setDraftAccountClientId] = useState("");
   const [clientStatus, setClientStatus] = useState("");
@@ -143,9 +144,10 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
   return (
     <>
       <PageHeader title="客户与账户" subtitle="一个Client可有多个Sub Account；每个账户独立计算HWM，组合层只汇总结果" />
-      <SectionNav items={[{ id: "client-directory", label: "客户清单" }, { id: "client-create", label: "新增客户" }, { id: "account-create", label: "新增账户" }, { id: "client-activate", label: "补全待确认资料" }]} />
+      <div className="tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); setDraftClientId(""); setDraftAccountClientId(""); setDraftAccountId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setDirectoryClientId(""); }}>新增与确认</button></div>
+      {view === "create" ? <SectionNav items={[{ id: "client-create", label: "新增客户" }, { id: "account-create", label: "新增账户" }, { id: "client-activate", label: "补全待确认资料" }]} /> : null}
       {error ? <ErrorBanner message={error} /> : null}
-      <Panel id="client-directory" title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
+      {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={`${clients.data.length}位客户 · ${accounts.data.length}个账户`}>
         <div className="list-search"><Field group label="搜索客户"><SearchableSelect label="查询客户账户" value={directoryClientId} onChange={setDirectoryClientId} placeholder="搜索并选定客户" options={clients.data.filter((item) => !clientStatus || item.status === clientStatus).map((item) => ({ value: String(item.id), label: `${item.name} · ${item.fc_name || "待补全FC"} · 客户#${item.id}` }))} /></Field><Field label="客户状态"><select value={clientStatus} onChange={(event) => { setClientStatus(event.target.value); setDirectoryClientId(""); }}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field><small role="status">显示 {visibleClients.length} / {clients.data.length} 位客户</small></div>
         {!directoryClientId ? <EmptyState title="请先搜索并选定客户" detail="选定后显示该客户的账户；输入搜索词不会自动选中客户。" /> : null}
         {clients.loading || accounts.loading ? <Loading /> : clients.data.length ? (
@@ -160,8 +162,9 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
           </div>
         ) : <EmptyState title="暂无客户" detail="可手工建立，也可由eMPF账单识别创建待确认档案。" />}
         <Pagination {...clientPages} />
-      </Panel>
+      </Panel> : null}
 
+      <div hidden={view !== "create"}>
       <div className="split-layout">
         <Panel id="client-create" title="新增Client" subtitle="补全FC和管理开始日期；建立受管子账户后才计为在管客户">
           <form className="form-grid" onSubmit={(e) => void submitClient(e)}>
@@ -224,6 +227,7 @@ export default function ClientsPage({ notify }: { notify: (message: string) => v
             </form>
           ) : <small>当前共有 {accounts.data.filter((item) => item.status === "DRAFT").length} 个待确认Sub Account。</small>}
         </Panel>
+      </div>
       </div>
 
 

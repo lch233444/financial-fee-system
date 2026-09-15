@@ -31,6 +31,7 @@ test("客户查询和待确认账户均先明确选择客户，文字搜索不�
   expect(screen.queryByText("ACCOUNT-2")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空查询客户账户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
   const draft = screen.getByLabelText("选择Draft Sub Account") as HTMLSelectElement;
   expect(draft.disabled).toBe(true);
   await choose("待确认账户客户", "客户1 · 客户#1");
@@ -50,7 +51,8 @@ test("资金流水、快照、账户及凭证关联在未选客户时均隐藏�
   fireEvent.click(screen.getByRole("option", { name: "客户1" }));
   const ledger = within(screen.getByRole("region", { name: "最近资金流水" }));
   fireEvent.click(ledger.getByRole("button", { name: "更正" }));
-  fireEvent.change(screen.getByLabelText("关联记录"), { target: { value: "1" } });
+  fireEvent.focus(screen.getByRole("combobox", { name: "关联记录" }));
+  fireEvent.click(screen.getByRole("option", { name: /余额快照 #1/ }));
   await choose("资金与余额客户", "客户2");
   expect(screen.queryByRole("button", { name: "保存更正" })).toBeNull();
   expect((screen.getByLabelText("关联记录") as HTMLSelectElement).value).toBe("");
@@ -66,7 +68,7 @@ test("历史结算和批量导出保留汇总，未选客户时不显示账户�
   fireEvent.click(screen.getByRole("button", { name: /查看2026 Q1 客户1/ }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   await choose("历史结算客户", "客户1");
-  const history = within(screen.getByRole("region", { name: "历史Settlement" }));
+  const history = within(screen.getByRole("region", { name: "计算记录" }));
   expect(history.getByText("ACCOUNT-1")).toBeTruthy();
   expect(history.queryByText("ACCOUNT-2")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空历史结算客户" }));

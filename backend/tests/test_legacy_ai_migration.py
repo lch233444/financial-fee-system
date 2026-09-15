@@ -14,7 +14,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "c6f3a8d92e10"
+HEAD_REVISION = "f1c0a915b100"
 
 
 def test_e91_database_keeps_legacy_settlement_values_when_upgraded(tmp_path, monkeypatch) -> None:
@@ -248,7 +248,7 @@ def test_unstamped_complete_9d_shape_runs_0_2_14_migration_instead_of_false_head
         )
         assert connection.execute(
             text("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
-        ).scalar_one() == 59
+        ).scalar_one() == 60
         settlement_columns = {
             row[1]
             for row in connection.exec_driver_sql(
@@ -295,7 +295,7 @@ def test_unstamped_complete_0_2_14_shape_runs_delete_guard_migration(
                 text("SELECT name FROM sqlite_master WHERE type='trigger'")
             )
         }
-    assert len(triggers) == 59
+    assert len(triggers) == 60
     assert {
         "trg_client_delete_no_cascade",
         "trg_account_delete_no_cascade",

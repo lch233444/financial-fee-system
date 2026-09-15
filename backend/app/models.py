@@ -278,6 +278,9 @@ class SettlementAccountLine(TimestampMixin, Base):
     next_hwm_cents: Mapped[int | None] = mapped_column(Integer)
     fee_rate_bps: Mapped[int | None] = mapped_column(Integer)
     formula_version: Mapped[str | None] = mapped_column(String(30))
+    hwm_source_type: Mapped[str | None] = mapped_column(String(30))
+    hwm_override_reason: Mapped[str | None] = mapped_column(Text)
+    hwm_override_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     remark: Mapped[str | None] = mapped_column(Text)
 
     settlement: Mapped[QuarterlySettlement] = relationship(back_populates="account_lines")
@@ -291,6 +294,14 @@ class InvoiceSequence(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
     fc_id: Mapped[int] = mapped_column(ForeignKey("fcs.id", ondelete="RESTRICT"))
+    last_number: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class InvoiceMonthlySequence(Base):
+    __tablename__ = "invoice_monthly_sequences"
+    __table_args__ = (CheckConstraint("last_number BETWEEN 0 AND 999", name="ck_monthly_invoice_capacity"),)
+
+    issue_month: Mapped[str] = mapped_column(String(6), primary_key=True)
     last_number: Mapped[int] = mapped_column(Integer, default=0)
 
 

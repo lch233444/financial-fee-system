@@ -30,6 +30,7 @@ from ..models import (
 from ..money import money_string
 from ..serializers import invoice_accounting_cents, invoice_is_overdue
 from ..services.backup import create_backup, stage_restore
+from ..services.calculation import quarter_dates
 from ..services.excel_export import export_settlements_to_template, file_sha256
 from ..services.pdf_invoice import generate_settlement_pdf
 from ..services.storage import store_stream
@@ -125,8 +126,8 @@ def system_info() -> dict:
 
 @router.get("/dashboard")
 def dashboard(
-    year: int | None = None,
-    quarter: int | None = None,
+    year: int | None = Query(default=None, ge=2000, le=2200),
+    quarter: int | None = Query(default=None, ge=1, le=4),
     db: Session = Depends(get_db),
 ) -> dict:
     year = year or date.today().year
@@ -157,7 +158,47 @@ def dashboard(
     paid = sum(paid_cents for paid_cents, _, _ in accounting)
     outstanding = sum(outstanding_cents for _, _, outstanding_cents in accounting)
     overdue = sum(1 for invoice in invoices if invoice_is_overdue(invoice))
+    period_start = quarter_dates(year, quarter or 1)[0]
+    period_end = quarter_dates(year, quarter or 4)[1]
+    managed_accounts = db.scalars(
+        select(SubAccount).options(
+            selectinload(SubAccount.client).selectinload(Client.fc),
+            selectinload(SubAccount.fee_plan),
+        ).where(
+            SubAccount.status.in_(("ACTIVE", "CLOSED")),
+            SubAccount.start_date <= period_end,
+            (SubAccount.end_date.is_(None)) | (SubAccount.end_date >= period_start),
+        ).order_by(SubAccount.client_id, SubAccount.id)
+    ).all()
+    overview: dict[int, dict] = {}
+    incomplete_dates = db.scalar(
+        select(func.count(SubAccount.id)).where(
+            SubAccount.status.in_(("ACTIVE", "CLOSED")),
+            (SubAccount.start_date.is_(None))
+            | ((SubAccount.status == "CLOSED") & SubAccount.end_date.is_(None)),
+        )
+    ) or 0
+    for account in managed_accounts:
+        # A closed account without an end date has no verifiable period.
+        if account.status == "CLOSED" and account.end_date is None:
+            continue
+        customer = account.client
+        entry = overview.setdefault(customer.id, {
+            "client_id": customer.id, "client_name": customer.name,
+            "fc_id": customer.fc_id, "fc_name": customer.fc.name if customer.fc else None,
+            "fee_plans": {},
+        })
+        if account.fee_plan:
+            plan = account.fee_plan
+            entry["fee_plans"][plan.id] = {"id": plan.id, "name": plan.name, "code": plan.code}
+    client_overview = [
+        {**entry, "fee_plans": list(entry["fee_plans"].values())}
+        for entry in overview.values()
+    ]
     return {
+        "managed_clients": len(client_overview),
+        "client_overview": client_overview,
+        "accounts_with_incomplete_management_dates": incomplete_dates,
         "active_clients": db.scalar(select(func.count()).select_from(Client).where(Client.status == "ACTIVE")) or 0,
         "active_accounts": db.scalar(
             select(func.count(SubAccount.id))

@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 
 from app.services.backup import _validate_sqlite_database
 import app.database as database_module
-from app.services.company_scope_contract import COMPANY_SCOPE_REVISION
+from app.services.release_100_contract import RELEASE_100_REVISION
 from app.services.invoice_payee_contract import PAYEE_REVISION, payee_trigger_sql_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 from test_workflow_guard_migration import _seed_history
@@ -99,7 +99,7 @@ def test_unstamped_payee_or_previous_database_gets_proven_schema(tmp_path, monke
         database_module.init_db()
         _validate_sqlite_database(settings.database_path)
         with closing(sqlite3.connect(settings.database_path)) as sql:
-            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (COMPANY_SCOPE_REVISION,)
+            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (RELEASE_100_REVISION,)
     finally:
         engine.dispose()
 

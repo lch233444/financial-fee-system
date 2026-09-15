@@ -6,23 +6,23 @@ import InvoicesPage from "../src/pages/InvoicesPage";
 import PageBoundary from "../src/PageBoundary";
 import { ErrorBanner, Panel, SectionNav } from "../src/components";
 
-test("客户分页及状态筛选重置页码，保留新增表单与已选账户客户", async () => {
+test("客户查询分页及状态筛选重置页码，与新增确认入口分开", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/clients"
     ? Array.from({ length: 24 }, (_, i) => ({ id: i + 1, name: `客户${String(i + 1).padStart(2, "0")}`, status: i === 23 ? "DRAFT" : "ACTIVE" })) : []))));
   render(<ClientsPage notify={vi.fn()} />);
   const directory = screen.getByRole("region", { name: "客户与账户清单" });
   await within(directory).findByText("客户01");
   expect(within(directory).queryByText("客户11")).toBeNull();
-  fireEvent.change(screen.getByRole("textbox", { name: "Client Name", exact: true }), { target: { value: "未保存的客户" } });
-  fireEvent.focus(screen.getByRole("combobox", { name: "新增账户客户" }));
-  fireEvent.click(screen.getByRole("option", { name: "客户02" }));
+  expect(screen.queryByRole("textbox", { name: "Client Name", exact: true })).toBeNull();
   fireEvent.click(within(directory).getByRole("button", { name: "下一页" }));
   expect(within(directory).getByText("客户11")).toBeTruthy();
   fireEvent.change(screen.getByRole("combobox", { name: "客户状态" }), { target: { value: "DRAFT" } });
   expect(within(directory).getByText("客户24")).toBeTruthy();
   expect(within(directory).queryByRole("button", { name: "下一页" })).toBeNull();
-  expect((screen.getByRole("textbox", { name: "Client Name", exact: true }) as HTMLInputElement).value).toBe("未保存的客户");
-  expect((screen.getByRole("combobox", { name: "新增账户客户" }) as HTMLInputElement).value).toBe("客户02");
+  fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
+  expect(screen.queryByRole("region", { name: "客户与账户清单" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Client Name", exact: true })).toBeTruthy();
+
 });
 
 test("结算选齐客户、平台和计划后才显示相应账户及可辨认的输入标签", async () => {

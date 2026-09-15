@@ -79,10 +79,12 @@ describe("保存成功后立即更新页面", () => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
     await screen.findByText("原客户");
+    fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
+    fireEvent.click(screen.getByRole("button", { name: "查询信息", exact: true }));
     const panel = screen.getByRole("heading", { name: "客户与账户清单" }).closest("section")!;
     if (path === "/api/accounts") {
       expect(within(panel).queryByText(text)).toBeNull();
@@ -157,9 +159,9 @@ describe("保存成功后立即更新页面", () => {
     render(<TransactionsPage notify={notify} />);
     fireEvent.focus(screen.getByRole("combobox", { name: "资金与余额客户" }));
     fireEvent.click(await screen.findByRole("option", { name: "原客户" }));
-    await screen.findByRole("option", { name: /2026-03-31/ });
+    fireEvent.focus(screen.getByRole("combobox", { name: "关联记录" }));
+    fireEvent.click(await screen.findByRole("option", { name: /2026-03-31/ }));
     const form = screen.getByRole("button", { name: "上传并关联" }).closest("form")!;
-    fill(form, { entity_id: "7" });
     fireEvent.change(form.querySelector('[name="file"]')!, { target: { files: [new File(["synthetic"], "凭证.pdf", { type: "application/pdf" })] } });
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());

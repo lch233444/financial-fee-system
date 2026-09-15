@@ -190,6 +190,8 @@ def _calculate(client: TestClient, data: dict, *, original_hwm: str) -> dict:
                     "beginning_snapshot_id": data["beginning"]["id"],
                     "closing_snapshot_id": data["closing"]["id"],
                     "original_hwm": original_hwm,
+                    "hwm_override_reason": "合成测试：核对首次HWM更正",
+                    "hwm_override_confirmed": True,
                 }
             ],
         },

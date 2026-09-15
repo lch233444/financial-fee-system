@@ -77,6 +77,8 @@ class SettlementLineSpec:
     closing_snapshot_id: int | None
     original_hwm_cents: int | None
     remark: str | None = None
+    hwm_override_reason: str | None = None
+    hwm_override_confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,9 @@ class CurrentSettlementLine:
     beginning_snapshot_id: int
     closing_snapshot_id: int
     previous_line_id: int | None
+    hwm_source_type: str
+    hwm_override_reason: str | None
+    hwm_override_confirmed: bool
 
 
 @dataclass(frozen=True)
@@ -324,6 +329,8 @@ def calculate_current_settlement(
             db, account_id=spec.account_id, year=year, quarter=quarter
         )
         if previous_line:
+            if spec.hwm_override_reason or spec.hwm_override_confirmed:
+                raise SettlementCurrentStateError(409, "后续季度HWM必须继承，不允许修改原因或覆盖确认")
             previous = db.get(QuarterlySettlement, previous_line.settlement_id)
             if previous.year * 4 + previous.quarter != year * 4 + quarter - 1:
                 missing_year = previous.year + (previous.quarter == 4)
@@ -352,6 +359,9 @@ def calculate_current_settlement(
             beginning_snapshot_id = previous_line.closing_snapshot_id
             beginning_cents = previous_line.closing_cents
             original_hwm_cents = previous_line.next_hwm_cents
+            hwm_source_type = "PREVIOUS_SETTLEMENT"
+            hwm_override_reason = None
+            hwm_override_confirmed = False
         else:
             if spec.beginning_snapshot_id is None:
                 raise SettlementCurrentStateError(400, "首次账户结算必须选择明确的Beginning Snapshot")
@@ -367,11 +377,15 @@ def calculate_current_settlement(
                     400,
                     "首次Beginning Snapshot必须等于Starting Date；季度首日也可选择上一季末快照",
                 )
-            if spec.original_hwm_cents is None:
-                raise SettlementCurrentStateError(400, "首次账户结算必须输入该Sub Account的Original HWM")
             beginning_snapshot_id = beginning_snapshot.id
             beginning_cents = beginning_snapshot.total_balance_cents
-            original_hwm_cents = spec.original_hwm_cents
+            original_hwm_cents = beginning_cents if spec.original_hwm_cents is None else spec.original_hwm_cents
+            hwm_source_type = "INITIAL_SNAPSHOT"
+            modified = original_hwm_cents != beginning_cents
+            hwm_override_reason = spec.hwm_override_reason.strip() if modified and spec.hwm_override_reason else None
+            hwm_override_confirmed = bool(modified and spec.hwm_override_confirmed)
+            if modified and (not hwm_override_reason or len(hwm_override_reason) < 2 or not hwm_override_confirmed):
+                raise SettlementCurrentStateError(400, "修改首次自动HWM必须填写原因并单独确认")
 
         contribution_cents = db.scalar(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
@@ -412,6 +426,9 @@ def calculate_current_settlement(
                 beginning_snapshot_id=beginning_snapshot_id,
                 closing_snapshot_id=closing_snapshot.id,
                 previous_line_id=previous_line.id if previous_line else None,
+                hwm_source_type=hwm_source_type,
+                hwm_override_reason=hwm_override_reason,
+                hwm_override_confirmed=hwm_override_confirmed,
             )
         )
 
@@ -476,6 +493,9 @@ def current_state_differences(
             "previous_line_id": current_line.previous_line_id,
             "beginning_snapshot_id": current_line.beginning_snapshot_id,
             "closing_snapshot_id": current_line.closing_snapshot_id,
+            "hwm_source_type": current_line.hwm_source_type,
+            "hwm_override_reason": current_line.hwm_override_reason,
+            "hwm_override_confirmed": current_line.hwm_override_confirmed,
         }
         for field_name, expected in expected_line.items():
             if getattr(persisted, field_name) != expected:

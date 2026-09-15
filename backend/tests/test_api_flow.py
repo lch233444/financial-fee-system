@@ -164,7 +164,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
             json={"issue_date": "2026-10-05", "language": "zh"},
         )
         assert issued.status_code == 200, issued.text
-        assert issued.json()["invoice_number"] == "Alpha Advisory Limited-TW-20261005-1"
+        assert issued.json()["invoice_number"].startswith("202610") and len(issued.json()["invoice_number"]) == 9
         assert issued.json()["due_date"] == "2026-10-19"
 
         proof_id = _upload_unclaimed_proof(client, "full-flow")

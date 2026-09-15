@@ -33,7 +33,7 @@ def test_unpaid_invoice_company_correction_preserves_sources_and_original_archiv
         assert correction["target_company_id"] == target["id"]
         replacement = _issue(client, data, correction=True)
         assert replacement["company_name"] == target["name"]
-        assert replacement["invoice_number"].startswith(target["name"] + "-")
+        assert replacement["invoice_number"] == str(int(original["invoice_number"]) + 1)
         assert replacement["due_date"] == "2026-05-05"
         assert replacement["amount"] == original["amount"] == "120.00"
         assert replacement["settlement_ids"] == original["settlement_ids"] == [settlement["id"]]
@@ -63,7 +63,7 @@ def test_unpaid_invoice_company_correction_preserves_sources_and_original_archiv
         _create(client, f"/api/invoice-corrections/{second['id']}/complete", {'replacement_invoice_id': restored['id']})
         assert restored['company_name'] == data['company']['name']
         assert restored['invoice_number'] != original['invoice_number']
-        assert restored['invoice_number'].endswith('-2')
+        assert restored['invoice_number'] == str(int(replacement['invoice_number']) + 1)
 
 
 def test_paid_invoice_company_correction_is_rejected_before_voiding_or_reversing_cash():
@@ -100,7 +100,7 @@ def test_later_financial_correction_keeps_the_corrected_invoice_payee():
         assert replacement['amount'] == '100.00'
         assert replacement['settlement_ids'] != original['settlement_ids']
         assert replacement['payee_company_id'] == target['id']
-        assert replacement['invoice_number'].startswith(target['name'] + '-')
+        assert replacement['invoice_number'] == str(int(company_invoice['invoice_number']) + 1)
         result = _create(client, f"/api/invoice-corrections/{financial['id']}/complete", {'replacement_invoice_id': replacement['id']})
         assert result['status'] == 'COMPLETED'
 

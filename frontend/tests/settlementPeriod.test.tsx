@@ -46,8 +46,8 @@ test("组合总览先按年季选择，只有明确选定客户才显示其账�
   expect((screen.getByLabelText("Q2-ONLY Original HWM") as HTMLInputElement).value).toBe("");
   fireEvent.change(overview.getByLabelText("结算季度"), { target: { value: "1" } });
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
-  expect((screen.getByLabelText("Q1-ONLY Original HWM") as HTMLInputElement).value).toBe("");
-  expect((screen.getByLabelText("Q1-ONLY Beginning Snapshot") as HTMLSelectElement).value).toBe("");
+  expect((screen.getByLabelText("Q1-ONLY Original HWM") as HTMLInputElement).value).toBe("1000.00");
+  expect((screen.getByLabelText("Q1-ONLY Beginning Snapshot") as HTMLSelectElement).value).toBe("1");
 });
 
 test("换年清除旧计算结果和可提交账户，清空客户后总览恢复隐藏", async () => {

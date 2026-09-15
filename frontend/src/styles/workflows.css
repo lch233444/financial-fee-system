@@ -1654,3 +1654,10 @@
 @media (max-width: 900px) { .invoice-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .invoice-list-filters { grid-template-columns: 1fr; } .payment-evidence-dialog { padding: 16px; } }
 
+
+/* The overview keeps its period controls at the right after removing the duplicate title. */
+.page-dashboard .dashboard-period { justify-content: flex-end; }
+
+.hwm-entry { display: grid; gap: 0.45rem; }
+.hwm-entry small { white-space: normal; overflow-wrap: anywhere; }
+.hwm-entry button { white-space: normal; }

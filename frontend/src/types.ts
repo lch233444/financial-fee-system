@@ -189,6 +189,9 @@ export type Settlement = {
     account_number: string;
     scheme_name: string | null;
     previous_line_id: number | null;
+    hwm_source_type?: "INITIAL_SNAPSHOT" | "PREVIOUS_SETTLEMENT" | null;
+    hwm_override_reason?: string | null;
+    hwm_override_confirmed?: boolean;
     start_date: string;
     closing_date: string;
     days: number;
@@ -246,6 +249,9 @@ export type Invoice = {
   } | null;
   invoice_number: string | null;
   lifecycle_status: "DRAFT" | "ISSUING" | "ISSUED" | "VOID";
+  last_issue_status?: string | null;
+  replacement_invoice_id?: number | null;
+  original_invoice_id?: number | null;
   payment_status: "UNPAID" | "PAID";
   is_overdue: boolean;
   issue_date: string | null;

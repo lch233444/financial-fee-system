@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "0.2.34"
+APP_VERSION = "1.0.0"
 
 
 def application_root() -> Path:

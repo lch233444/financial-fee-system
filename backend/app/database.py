@@ -81,6 +81,10 @@ def init_db() -> None:
         bootstrap_metadata = MetaData()
         for table in Base.metadata.sorted_tables:
             table.to_metadata(bootstrap_metadata)
+        bootstrap_metadata.remove(bootstrap_metadata.tables["invoice_monthly_sequences"])
+        bootstrap_lines = bootstrap_metadata.tables["settlement_account_lines"]
+        for field in ("hwm_source_type", "hwm_override_reason", "hwm_override_confirmed"):
+            bootstrap_lines._columns.remove(bootstrap_lines.c[field])
         for master_name in ("fcs", "fee_plans"):
             bootstrap_metadata.tables[master_name].c.company_id.nullable = False
         bootstrap_invoice = bootstrap_metadata.tables["invoices"]
@@ -423,7 +427,11 @@ def init_db() -> None:
         delete_guard_trigger_sql_is_current = _delete_guard_sql_is_current(trigger_sql)
         trigger_shape_is_0_2_14 = settlement_triggers == expected_0_2_14_head_triggers
         trigger_shape_is_current = (
-            settlement_triggers in (expected_current_head_triggers, expected_current_head_triggers | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert"})
+            settlement_triggers in (
+                expected_current_head_triggers,
+                expected_current_head_triggers | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert"},
+                expected_current_head_triggers | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert", "trg_settlement_hwm_confirm_finalize"},
+            )
             and delete_guard_trigger_sql_is_current
         )
         settlement_version_shape_complete = (
@@ -530,7 +538,15 @@ def init_db() -> None:
                                     with engine.connect() as scope_connection:
                                         if not company_scope_schema_is_current(scope_connection):
                                             raise RuntimeError("未版本化数据库的公司解绑保护不完整；已停止启动")
-                                    command.stamp(alembic_config, COMPANY_SCOPE_REVISION)
+                                    from .services.release_100_contract import HWM_COLUMNS, RELEASE_100_REVISION, release_100_schema_is_current
+                                    if HWM_COLUMNS & account_line_columns or "invoice_monthly_sequences" in refreshed_tables:
+                                        with engine.connect() as release_connection:
+                                            if not release_100_schema_is_current(release_connection):
+                                                raise RuntimeError("未版本化数据库的首次HWM或月度编号保护不完整；已停止启动")
+                                        command.stamp(alembic_config, RELEASE_100_REVISION)
+                                    else:
+                                        command.stamp(alembic_config, COMPANY_SCOPE_REVISION)
+                                        command.upgrade(alembic_config, "head")
                                 else:
                                     command.stamp(alembic_config, INVOICE_GROUP_REVISION)
                                     command.upgrade(alembic_config, "head")
@@ -683,3 +699,7 @@ def init_db() -> None:
     with engine.connect() as scope_connection:
         if not company_scope_schema_is_current(scope_connection):
             raise RuntimeError("数据库公司解绑保护不完整；系统已停止启动")
+    from .services.release_100_contract import release_100_schema_is_current
+    with engine.connect() as release_connection:
+        if not release_100_schema_is_current(release_connection):
+            raise RuntimeError("数据库首次HWM或月度编号保护不完整；系统已停止启动")

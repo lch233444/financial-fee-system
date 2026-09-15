@@ -19,7 +19,7 @@ from app.models import (
     FeePlan,
     Invoice,
     InvoiceIssueAttempt,
-    InvoiceSequence,
+    InvoiceMonthlySequence,
     InvoiceSource,
 )
 from app.routes import invoices as invoices_module
@@ -33,6 +33,12 @@ from app.services.pdf_invoice import _money
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
+
+
+def _next_monthly_number(month: str) -> str:
+    with SessionLocal() as db:
+        sequence = db.get(InvoiceMonthlySequence, month)
+        return f"{month}{(sequence.last_number if sequence else 0) + 1:03d}"
 
 
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, amount: str, *, closing: bool) -> dict:
@@ -182,7 +188,7 @@ def _pdf_text(content: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
 
 
-def test_full_company_name_number_uses_safe_internal_archive_and_skips_reserved_collision(
+def test_monthly_number_uses_safe_internal_archive_and_skips_reserved_collision(
     monkeypatch,
 ) -> None:
     rendered_paths: list[str] = []
@@ -199,7 +205,7 @@ def test_full_company_name_number_uses_safe_internal_archive_and_skips_reserved_
         data = _group(client, "FULLNAME829", platform_count=1, company_name=company_name)
         _finalized_settlement(client, data, 0, year=2026, quarter=1)
         draft = _draft(client, data, year=2026, quarter=1).json()
-        first_candidate = f"{company_name}-{data['fc']['code']}-20260405-1"
+        first_candidate = _next_monthly_number("202604")
         with SessionLocal() as db:
             db.add(
                 InvoiceIssueAttempt(
@@ -216,7 +222,7 @@ def test_full_company_name_number_uses_safe_internal_archive_and_skips_reserved_
             json={"issue_date": "2026-04-05", "language": "zh"},
         )
         assert issued.status_code == 200, issued.text
-        expected_number = f"{company_name}-{data['fc']['code']}-20260405-2"
+        expected_number = str(int(first_candidate) + 1)
         assert issued.json()["invoice_number"] == expected_number
 
         pdf_root = get_settings().data_root / "output" / "pdf"
@@ -259,7 +265,7 @@ def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monk
         data = _group(client, "INVCOLL829", platform_count=1, company_name="Invoice Collision Company")
         _finalized_settlement(client, data, 0, year=2026, quarter=1)
         draft = _draft(client, data, year=2026, quarter=1).json()
-        first_candidate = f"{data['company']['name']}-{data['fc']['code']}-20260405-1"
+        first_candidate = _next_monthly_number("202604")
         with SessionLocal() as db:
             blocker = db.get(Invoice, blocker_draft["id"])
             blocker.invoice_number = first_candidate
@@ -273,19 +279,12 @@ def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monk
             json={"issue_date": "2026-04-05", "language": "en"},
         )
         assert issued.status_code == 200, issued.text
-        assert issued.json()["invoice_number"] == (
-            f"{data['company']['name']}-{data['fc']['code']}-20260405-2"
-        )
+        assert issued.json()["invoice_number"] == str(int(first_candidate) + 1)
 
         with SessionLocal() as db:
-            sequence = db.scalar(
-                select(InvoiceSequence).where(
-                    InvoiceSequence.company_id == data["company"]["id"],
-                    InvoiceSequence.fc_id == data["fc"]["id"],
-                )
-            )
+            sequence = db.get(InvoiceMonthlySequence, "202604")
             assert sequence is not None
-            assert sequence.last_number == 2
+            assert sequence.last_number == int(first_candidate[-3:]) + 1
             events = db.scalars(
                 select(AuditEvent).where(
                     AuditEvent.action == "INVOICE_NUMBER_COLLISION_SKIPPED",
@@ -296,7 +295,7 @@ def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monk
             assert len(events) == 1
             assert events[0].details_json == {
                 "invoice_number": first_candidate,
-                "sequence": 1,
+                "sequence": int(first_candidate[-3:]),
             }
 
 
@@ -717,7 +716,7 @@ def test_bilingual_payment_notices_show_chinese_company_and_issued_number() -> N
         )
         assert issued.status_code == 200, issued.text
         invoice_number = issued.json()["invoice_number"]
-        assert invoice_number == f"{company_name}-{data['fc']['code']}-20261005-1"
+        assert len(invoice_number) == 9 and invoice_number.isdigit() and invoice_number.startswith("202610")
 
         for language in ("zh", "en"):
             response = client.post(f"/api/invoices/{draft['id']}/pdf?language={language}")
@@ -755,7 +754,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
 
         expected_english = (
             "Service Fee Payment Notice",
-            "INVOICE NO.",
+            "INVOICE NO.", "ISSUE DATE", "05/10/2026",
             "CLIENT NAME",
             "SERVICE FEE PAYABLE",
             "PAYMENT DUE DATE",
@@ -768,7 +767,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
         )
         expected_chinese = (
             "服務費繳款通知書", "客戶名稱", "應繳服務費", "付款期限", "19/10/2026",
-            "付款方式", "銀行轉賬", "支票", "賬單編號",
+            "付款方式", "銀行轉賬", "支票", "賬單編號", "出具日期", "05/10/2026",
         )
 
         for language, expected in (("en", expected_english), ("zh", expected_chinese)):
@@ -791,7 +790,7 @@ def test_invoice_pdfs_show_only_customer_payment_information() -> None:
                 assert value in normalized_text
             assert normalized_text.count("HKD 40.00") == 1
             for value in (
-                "SUB ACCOUNT", "PERIOD", "SUBTOTAL", "Issue Date",
+                "SUB ACCOUNT", "PERIOD", "SUBTOTAL",
                 "HWM", "2026 Q3", "20.00", data["plan"]["name"],
                 *(account["account_number"] for account in data["accounts"]),
             ):
@@ -971,13 +970,14 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
         assert failed.status_code == 500
         after_failure = next(item for item in client.get("/api/invoices").json() if item["id"] == draft["id"])
         assert after_failure["lifecycle_status"] == "DRAFT"
+        assert after_failure["last_issue_status"] == "FAILED"
         assert after_failure["invoice_number"] is None
         with SessionLocal() as db:
             failed_attempt = db.scalar(
                 select(InvoiceIssueAttempt).where(InvoiceIssueAttempt.invoice_id == draft["id"])
             )
             assert failed_attempt.status == "FAILED"
-            assert failed_attempt.invoice_number.endswith("-20260405-1")
+            assert len(failed_attempt.invoice_number) == 9 and failed_attempt.invoice_number.startswith("202604")
             assert failed_attempt.completed_at is not None
             failed_number = failed_attempt.invoice_number
         pdf_root = get_settings().data_root / "output" / "pdf"
@@ -986,7 +986,7 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
         for final_path in failed_paths.values():
             assert not list(pdf_root.glob(f".{final_path.name}.*.tmp"))
         legacy_paths = legacy_invoice_archive_paths(failed_number, pdf_root)
-        assert legacy_paths is None
+        assert not legacy_paths or not any(path.exists() for path in legacy_paths.values())
 
         def write_pdf(*, output_path, **_kwargs):
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -999,7 +999,7 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
             json={"issue_date": "2026-04-06", "language": "en"},
         )
         assert retried.status_code == 200, retried.text
-        assert retried.json()["invoice_number"].endswith("-20260406-2")
+        assert retried.json()["invoice_number"] == str(int(failed_number) + 1)
 
 
 def test_legacy_missing_pdf_uses_atomic_single_writer_fallback(monkeypatch) -> None:

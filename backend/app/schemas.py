@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -209,7 +209,14 @@ class SettlementAccountInput(BaseModel):
     beginning_snapshot_id: int | None = None
     closing_snapshot_id: int
     original_hwm: Decimal | None = Field(default=None, ge=0)
+    hwm_override_reason: str | None = Field(default=None, min_length=2, max_length=500)
+    hwm_override_confirmed: StrictBool = False
     remark: str | None = None
+
+    @field_validator("hwm_override_reason")
+    @classmethod
+    def validate_hwm_reason(cls, value: str | None) -> str | None:
+        return _require_meaningful_reason(value) if value is not None else None
 
     @field_validator("original_hwm")
     @classmethod

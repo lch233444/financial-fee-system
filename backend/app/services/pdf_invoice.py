@@ -245,6 +245,7 @@ def generate_invoice_pdf(
         "subtitle": "" if is_english else "SERVICE FEE PAYMENT NOTICE",
         "client": "CLIENT NAME" if is_english else "客戶名稱",
         "invoice_no": "INVOICE NO." if is_english else "賬單編號 Invoice No.",
+        "issue": "ISSUE DATE" if is_english else "出具日期 Issue Date",
         "due": "PAYMENT DUE DATE" if is_english else "付款期限",
         "fee": "SERVICE FEE PAYABLE" if is_english else "應繳服務費",
         "payment": "Payment methods" if is_english else "付款方式",
@@ -288,7 +289,8 @@ def generate_invoice_pdf(
     ])
 
     reference = Table(
-        [[p(copy["invoice_no"], small), p(invoice.invoice_number, reference_value)]],
+        [[p(copy["invoice_no"], small), p(invoice.invoice_number, reference_value)],
+         [p(copy["issue"], small), p(f"{invoice.issue_date:%d/%m/%Y}" if invoice.issue_date else "", reference_value)]],
         colWidths=[content_width * 0.27, content_width * 0.73],
     )
     reference.setStyle(TableStyle([

@@ -14,14 +14,15 @@ const SettlementsPage = lazy(() => import("./pages/SettlementsPage"));
 const InvoicesPage = lazy(() => import("./pages/InvoicesPage"));
 const SystemPage = lazy(() => import("./pages/SystemPage"));
 
-type Page = "dashboard" | "setup" | "clients" | "imports" | "transactions" | "settlements" | "invoices" | "system";
+type Page = "dashboard" | "setup" | "clients" | "imports" | "transactions" | "settlements" | "invoices" | "payments" | "system";
 const navigation = [
   { id: "dashboard", label: "经营概览", sub: "Overview", icon: Gauge, group: "工作台" },
-  { id: "clients", label: "客户与账户", sub: "Clients & accounts", icon: UsersRound, group: "日常财务" },
-  { id: "imports", label: "余额快照导入", sub: "Statement review", icon: FileScan, group: "日常财务" },
-  { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "日常财务" },
-  { id: "settlements", label: "季度结算", sub: "Quarterly settlement", icon: Calculator, group: "日常财务" },
-  { id: "invoices", label: "Invoice与收款", sub: "Invoices & payments", icon: ReceiptText, group: "日常财务" },
+  { id: "clients", label: "客户与账户", sub: "Clients & accounts", icon: UsersRound, group: "账单制作" },
+  { id: "imports", label: "余额快照导入", sub: "Statement review", icon: FileScan, group: "账单制作" },
+  { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "账单制作" },
+  { id: "settlements", label: "账单计算", sub: "Fee calculation", icon: Calculator, group: "账单制作" },
+  { id: "invoices", label: "账单出具", sub: "Invoice issuance", icon: ReceiptText, group: "账单制作" },
+  { id: "payments", label: "付款状态", sub: "Payment status", icon: ReceiptText, group: "收款情况" },
   { id: "setup", label: "基础设置", sub: "Master data", icon: Building2, group: "管理" },
   { id: "system", label: "数据与系统", sub: "Data & system", icon: Database, group: "管理" },
 ] as const;
@@ -123,13 +124,14 @@ export default function App() {
   }
 
   const pages = {
-    dashboard: <DashboardPage navigate={navigate} />,
+    dashboard: <DashboardPage />,
     setup: <SetupPage notify={setToast} />,
     clients: <ClientsPage notify={setToast} />,
     imports: <ImportsPage notify={setToast} />,
     transactions: <TransactionsPage notify={setToast} />,
     settlements: <SettlementsPage notify={setToast} />,
-    invoices: <InvoicesPage notify={setToast} />,
+    invoices: <InvoicesPage mode="issue" notify={setToast} />,
+    payments: <InvoicesPage mode="payment" notify={setToast} />,
     system: <SystemPage notify={setToast} />,
   };
 
@@ -137,7 +139,7 @@ export default function App() {
     <a className="skip-link" href="#workspace" onClick={(event) => { event.preventDefault(); content.current?.focus(); }}>跳到主要内容</a>
     <aside ref={sidebar} id="app-navigation" className={sidebarOpen ? "sidebar open" : "sidebar"} aria-label="主导航">
       <div className="brand"><span className="brand-mark"><Landmark size={25} aria-hidden="true" /></span><div><strong>Financial Fee</strong><small>金融计划收费系统</small></div><button className="mobile-close icon-button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X /></button></div>
-      <nav aria-label="功能页面">{["工作台", "日常财务", "管理"].map((group) => <div className="nav-group" key={group}><span className="nav-group-label">{group}</span>{navigation.filter((item) => item.group === group).map((item) => {
+      <nav aria-label="功能页面">{["工作台", "账单制作", "收款情况", "管理"].map((group) => <div className="nav-group" key={group}><span className="nav-group-label">{group}</span>{navigation.filter((item) => item.group === group).map((item) => {
         const Icon = item.icon;
         return <button key={item.id} className={page === item.id ? "active" : ""} aria-current={page === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon size={20} aria-hidden="true" /><span><b>{item.label}</b><small>{item.sub}</small></span>{page === item.id ? <ChevronRight className="nav-arrow" size={16} aria-hidden="true" /> : null}</button>;
       })}</div>)}</nav>

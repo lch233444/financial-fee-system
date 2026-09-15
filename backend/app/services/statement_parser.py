@@ -18,7 +18,7 @@ from ..config import application_root, get_settings, installation_root
 from .ocr_runtime import OcrRuntimeError, check_tesseract, prepare_windows_runtime
 
 
-OCR_PARSER_VERSION = "2.0"
+OCR_PARSER_VERSION = "2.1"
 DOCUMENT_TYPE_LABELS = {
     "empf_account_page": "eMPF账户余额页面",
     "contribution_record": "eMPF供款记录详情",
@@ -138,7 +138,7 @@ def _preprocess(image: Image.Image) -> Image.Image:
     return gray.filter(ImageFilter.SHARPEN)
 
 
-def _ocr(image: Image.Image, psm: int = 11) -> tuple[str, float]:
+def _ocr_language() -> str:
     language = "eng"
     try:
         available = set(pytesseract.get_languages())
@@ -147,22 +147,31 @@ def _ocr(image: Image.Image, psm: int = 11) -> tuple[str, float]:
             language = "+".join(requested)
     except (OSError, pytesseract.TesseractError):
         language = "eng"
+    return language
+
+
+def _ocr(image: Image.Image, psm: int = 11, *, language: str | None = None) -> tuple[str, float]:
+    language = language or _ocr_language()
     config = f"--oem 3 --psm {psm}"
     data = pytesseract.image_to_data(image, lang=language, config=config, output_type=Output.DICT, timeout=30)
-    words: list[str] = []
+    lines: dict[tuple, list[str]] = {}
     confidences: list[float] = []
-    for word, confidence in zip(data.get("text", []), data.get("conf", []), strict=False):
+    positions = [data.get(field, [0] * len(data.get("text", []))) for field in ("page_num", "block_num", "par_num", "line_num")]
+    for index, (word, confidence) in enumerate(zip(data.get("text", []), data.get("conf", []), strict=False)):
         word = str(word).strip()
         try:
             numeric_confidence = float(confidence)
         except (TypeError, ValueError):
             numeric_confidence = -1
         if word:
-            words.append(word)
+            key = tuple(column[index] for column in positions)
+            lines.setdefault(key, []).append(word)
             if numeric_confidence >= 0:
                 confidences.append(numeric_confidence / 100)
-    text = pytesseract.image_to_string(image, lang=language, config=config, timeout=30)
-    return text or " ".join(words), mean(confidences) if confidences else 0.0
+    # TSV already contains both text and confidence. Preserve line boundaries
+    # for holdings instead of recognizing the same image a second time.
+    text = "\n".join(" ".join(words) for words in lines.values())
+    return text, mean(confidences) if confidences else 0.0
 
 
 def _money(value: str | None) -> str | None:
@@ -501,6 +510,11 @@ def _extract(
         ],
         header_flattened,
     )
+    if not client_name:
+        client_name = _first(
+            [r"Name\s*[:：]\s*([A-Za-z][A-Za-z .'-]{1,80}?)(?=\s+(?:Scheme|Account|$))"],
+            flattened,
+        )
     scheme_name = _first(
         [
             r"Scheme\s*[:：]\s*(.+?)(?=\s*\(Member\s+Account)",
@@ -645,10 +659,10 @@ def _extract(
     return parsed
 
 
-def _ocr_page_text(image: Image.Image) -> tuple[str, float]:
+def _ocr_page_text(image: Image.Image, *, language: str | None = None) -> tuple[str, float]:
     """OCR a page and add overlapping bands for unusually long screenshots."""
 
-    text, confidence = _ocr(image, psm=11)
+    text, confidence = _ocr(image, psm=11, language=language)
     width, height = image.size
     if height <= width * 2.2:
         return text, confidence
@@ -659,7 +673,7 @@ def _ocr_page_text(image: Image.Image) -> tuple[str, float]:
     tiled_confidences: list[float] = []
     for top in range(0, height, step):
         bottom = min(top + tile_height, height)
-        tile_text, tile_confidence = _ocr(image.crop((0, top, width, bottom)), psm=6)
+        tile_text, tile_confidence = _ocr(image.crop((0, top, width, bottom)), psm=6, language=language)
         if tile_text.strip():
             tiled_text.append(tile_text)
         if tile_confidence > 0:
@@ -721,7 +735,8 @@ def parse_empf_statement(path: Path) -> ParsedStatement:
         else:
             raw_pages, truncated = [_open_document(path)], False
         pages = [_preprocess(page) for page in raw_pages]
-        page_results = [_ocr_page_text(page) for page in pages]
+        language = _ocr_language()
+        page_results = [_ocr_page_text(page, language=language) for page in pages]
         text = "\n\n--- PDF PAGE ---\n\n".join(value[0] for value in page_results)
         scores = [value[1] for value in page_results if value[1] > 0]
         confidence = mean(scores) if scores else 0.0
@@ -742,7 +757,7 @@ def parse_empf_statement(path: Path) -> ParsedStatement:
                 "holding": (0, int(height * 0.20), width, int(height * 0.88)),
             }
             regions = {
-                name: _ocr(first_page.crop(box), psm=6)
+                name: _ocr(first_page.crop(box), psm=6, language=language)
                 for name, box in region_boxes.items()
             }
             parsed = _extract(text, confidence, regions=regions)

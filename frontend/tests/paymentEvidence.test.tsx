@@ -47,7 +47,7 @@ function setup({ fileError = false, unpaid = false } = {}) {
   const createUrl = vi.fn(() => "blob:synthetic");
   const revokeUrl = vi.fn();
   vi.stubGlobal("URL", class extends URL { static createObjectURL = createUrl; static revokeObjectURL = revokeUrl; });
-  render(<InvoicesPage notify={vi.fn()} />);
+  render(<InvoicesPage mode="payment" notify={vi.fn()} />);
   return { writes, revokeUrl };
 }
 async function choose(label: string, name: string) {
@@ -65,7 +65,7 @@ test("账单按六项条件联合筛选，混合计划按任一来源匹配且�
   await choose("账单收款公司", "实际收款公司乙 · #2");
   await choose("账单FC", "同名FC · #1");
   fireEvent.click(screen.getByRole("button", { name: "已付款", exact: true }));
-  const table = within(screen.getByRole("region", { name: "Invoice清单" }));
+  const table = within(screen.getByRole("region", { name: "付款账单清单" }));
   expect(table.getAllByRole("row")).toHaveLength(2);
   expect(table.getByText("HKD 300.00")).toBeTruthy();
   expect(table.getByText("计划20 / 计划30")).toBeTruthy();

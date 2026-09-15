@@ -1,10 +1,11 @@
 """Upgrade real d4 schemas with synthetic history, including an old skipped quarter."""
 from datetime import date
 import sqlite3
+from types import SimpleNamespace
 
 from alembic import command
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, MetaData, Table
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -20,13 +21,20 @@ from app.services.workflow_guard_contract import workflow_trigger_sql_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 
 PREVIOUS = "d4f8a1c73b29"
-HEAD = "c6f3a8d92e10"
+HEAD = "f1c0a915b100"
 
 
 def _seed_history(settings, *, finalize_q3=True):
     engine = create_engine(settings.database_url)
+    # Seed the actual historical schema, not columns introduced by later releases.
+    historical_lines = Table('settlement_account_lines', MetaData(), autoload_with=engine)
     with Session(engine) as db:
         def add(model, **values):
+            if model is SettlementAccountLine:
+                values.update(created_at=utcnow(), updated_at=utcnow())
+                stored = {key: value for key, value in values.items() if key in historical_lines.c}
+                result = db.execute(historical_lines.insert().values(**stored))
+                return SimpleNamespace(id=result.inserted_primary_key[0], **stored)
             row = model(**values)
             if model in (Client, SubAccount, BalanceSnapshot):
                 row.id = allocate_entity_id(db, model)
@@ -103,8 +111,11 @@ def test_upgrade_preserves_skipped_history_and_locks_every_used_cash_date(tmp_pa
     account_id, transaction_id, q3_id = _seed_history(settings)
     before = _business_rows(settings.database_path)
     command.upgrade(config, "head")
-    assert _business_rows(settings.database_path) == before
-    assert len(_trigger_sql(settings.database_path)) == 59
+    after = _business_rows(settings.database_path)
+    assert after.pop('invoice_monthly_sequences') == []
+    after['settlement_account_lines'] = [row[:-3] for row in after['settlement_account_lines']]
+    assert after == before
+    assert len(_trigger_sql(settings.database_path)) == 60
     assert workflow_trigger_sql_is_current(_trigger_sql(settings.database_path))
     engine = create_engine(settings.database_url)
     with Session(engine) as db:
@@ -138,6 +149,8 @@ def test_migrated_draft_cannot_finalize_across_missing_quarter_even_by_sql(tmp_p
     _, _, q3_id = _seed_history(settings, finalize_q3=False)
     command.upgrade(config, "head")
     with sqlite3.connect(settings.database_path) as connection:
+        # Supply the new HWM metadata so this test isolates the quarter-gap guard.
+        connection.execute("UPDATE settlement_account_lines SET hwm_source_type='PREVIOUS_SETTLEMENT' WHERE settlement_id=?", (q3_id,))
         with pytest.raises(sqlite3.IntegrityError, match="settlement_missing_previous_quarter"):
             connection.execute("UPDATE quarterly_settlements SET status='FINALIZED', finalized_at=CURRENT_TIMESTAMP WHERE id=?", (q3_id,))
 

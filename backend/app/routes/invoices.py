@@ -24,7 +24,7 @@ from ..models import (
     InvoiceCorrection,
     InvoiceIssueAttempt,
     InvoiceLine,
-    InvoiceSequence,
+    InvoiceMonthlySequence,
     InvoiceSource,
     Payment,
     PaymentAllocation,
@@ -473,23 +473,17 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
 
 
 def _next_number(db: Session, invoice: Invoice, issue_date: date) -> str:
-    sequence = db.scalar(
-        select(InvoiceSequence).where(
-            InvoiceSequence.company_id == invoice.receiving_company_id,
-            InvoiceSequence.fc_id == invoice.fc_id,
-        )
-    )
+    month = issue_date.strftime("%Y%m")
+    sequence = db.get(InvoiceMonthlySequence, month)
     if not sequence:
-        sequence = InvoiceSequence(company_id=invoice.receiving_company_id, fc_id=invoice.fc_id, last_number=0)
+        sequence = InvoiceMonthlySequence(issue_month=month, last_number=0)
         db.add(sequence)
         db.flush()
-    yyyymmdd = issue_date.strftime("%Y%m%d")
-    company_name = invoice.receiving_company.name.strip()
-    if not company_name:
-        raise HTTPException(status_code=409, detail="Company全名为空，不能生成Invoice编号")
     while True:
+        if sequence.last_number >= 999:
+            raise HTTPException(status_code=409, detail="本出具月份的三位账单编号已用完，请联系负责人；系统不会重复使用编号")
         sequence.last_number += 1
-        candidate = f"{company_name}-{invoice.fc.code}-{yyyymmdd}-{sequence.last_number}"
+        candidate = f"{month}{sequence.last_number:03d}"
         used_by_invoice = db.scalar(
             select(Invoice.id).where(Invoice.invoice_number == candidate).limit(1)
         )

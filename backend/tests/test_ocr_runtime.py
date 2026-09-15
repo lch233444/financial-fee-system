@@ -129,7 +129,24 @@ def test_language_directory_with_spaces_uses_environment_not_quoted_config(tmp_p
     def recognize(*args, **kwargs):
         assert "tessdata" not in kwargs["config"]
         assert kwargs["timeout"] == 30
-        return {"text": [], "conf": []} if "output_type" in kwargs else "recognized"
+        return {"text": ["recognized"], "conf": ["90"]}
     monkeypatch.setattr(statement_parser.pytesseract, "image_to_data", recognize)
-    monkeypatch.setattr(statement_parser.pytesseract, "image_to_string", recognize)
+    monkeypatch.setattr(statement_parser.pytesseract, "image_to_string", lambda *_args, **_kwargs: pytest.fail("OCR不得重复运行"))
     assert statement_parser._ocr(None)[0] == "recognized"
+
+
+def test_single_ocr_pass_preserves_holdings_lines_and_word_confidence(monkeypatch):
+    calls = []
+    monkeypatch.setattr(statement_parser.pytesseract, 'get_languages', lambda: pytest.fail('language must be reused for the page'))
+    monkeypatch.setattr(statement_parser.pytesseract, 'image_to_string', lambda *_args, **_kwargs: pytest.fail('duplicate OCR pass'))
+    def recognize(image, **kwargs):
+        calls.append(kwargs)
+        return {'text': ['', 'Fund', 'A', '100.00', 'Fund', 'B', '200.00'],
+                'conf': [-1, 80, 90, 100, 80, 90, 100], 'page_num': [1]*7,
+                'block_num': [0,1,1,1,1,1,1], 'par_num': [0,1,1,1,1,1,1],
+                'line_num': [0,1,1,1,2,2,2]}
+    monkeypatch.setattr(statement_parser.pytesseract, 'image_to_data', recognize)
+    recognized, confidence = statement_parser._ocr(None, language='eng+chi_tra')
+    assert recognized == 'Fund A 100.00\nFund B 200.00'
+    assert confidence == pytest.approx(0.9)
+    assert len(calls) == 1 and calls[0]['lang'] == 'eng+chi_tra'

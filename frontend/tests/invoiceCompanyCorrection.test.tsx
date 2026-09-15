@@ -74,7 +74,7 @@ test("已收款Invoice不允许打开更正收款公司表单", async () => {
 
 test("原Settlement保持不变的公司替代单可以完成关联，完成前禁止收款", async () => {
   const db = scenario(false, true);
-  render(<InvoicesPage notify={vi.fn()} />);
+  render(<InvoicesPage mode="payment" notify={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "查看新公司-FC-20260908-1" }));
   expect(screen.queryByRole("button", { name: "确认已付款" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "查看原公司-FC-20260908-1" }));

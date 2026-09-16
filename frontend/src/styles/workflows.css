@@ -1660,8 +1660,17 @@
 @media (max-width: 520px) { .invoice-list-filters { grid-template-columns: 1fr; } .payment-evidence-dialog { padding: 16px; } }
 
 
-/* The overview keeps its period controls at the right after removing the duplicate title. */
-.page-dashboard .dashboard-period { justify-content: flex-end; }
+/* Keep the period filters together and centered within the overview. */
+.page-dashboard .dashboard-period { justify-content: center; }
+.page-dashboard .dashboard-period .dashboard-period-controls {
+  width: min(100%, 440px);
+  margin-inline: auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 480px) {
+  .page-dashboard .dashboard-period .dashboard-period-controls { grid-template-columns: minmax(0, 1fr); }
+}
 
 .hwm-entry { display: grid; gap: 0.45rem; }
 .hwm-entry small { white-space: normal; overflow-wrap: anywhere; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
 import { api } from "../api";
 import { ErrorBanner, Field, Loading, Money, PageHeader, Panel } from "../components";
+import SearchableSelect from "../SearchableSelect";
 
 type Dashboard = {
   managed_clients: number;
@@ -16,6 +17,11 @@ type Dashboard = {
 
 export default function DashboardPage() {
   const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 201 }, (_, index) => 2000 + index).sort((a, b) => {
+    if (a <= currentYear && b <= currentYear) return b - a;
+    if (a > currentYear && b > currentYear) return a - b;
+    return a <= currentYear ? -1 : 1;
+  });
   const [year, setYear] = useState(currentYear);
   const [quarter, setQuarter] = useState("");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -45,7 +51,7 @@ export default function DashboardPage() {
 
       <div className="dashboard-period">
         <div className="settlement-controls dashboard-period-controls">
-          <Field label="统计年度"><select value={year} onChange={(event) => setYear(Number(event.target.value))}>{Array.from({ length: 201 }, (_, index) => 2200 - index).map((value) => <option key={value} value={value}>{value}年</option>)}</select></Field>
+          <Field group label="统计年度"><SearchableSelect label="统计年度" required value={String(year)} onChange={(value) => setYear(Number(value))} options={years.map((value) => ({ value: String(value), label: `${value}年` }))} searchPlaceholder="输入年份搜索" /></Field>
           <Field label="统计季度"><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">全年 · 全部季度</option><option value="1">Q1 · 第一季度</option><option value="2">Q2 · 第二季度</option><option value="3">Q3 · 第三季度</option><option value="4">Q4 · 第四季度</option></select></Field>
         </div>
       </div>

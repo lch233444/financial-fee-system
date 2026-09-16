@@ -790,7 +790,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
 
   return (
     <>
-      <PageHeader title={mode === "issue" ? "账单出具" : "付款状态"} subtitle="各子账户独立算费，同一客户同一季度跨平台、跨收费计划合并一张缴费单" />
+      <PageHeader title={mode === "issue" ? "账单出具" : "收款情况"} subtitle="各子账户独立算费，同一客户同一季度跨平台、跨收费计划合并一张缴费单" />
       <SectionNav items={[{ id: "invoice-directory", label: "账单清单" }, ...(mode === "issue" ? [{ id: "invoice-create", label: "建立账单" }] : []), { id: "invoice-detail", label: "选中账单" }, { id: "invoice-corrections", label: "更正记录" }]} />
       {error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error} /> : null}
       <Panel id="invoice-directory" title={mode === "issue" ? "账单清单" : "付款账单清单"} subtitle="先找到账单，再确认付款或查看凭证；计划筛选匹配整张账单，应付金额保持完整。">
@@ -865,7 +865,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
           <button className="primary" type="submit" disabled={invoiceMutationBusy || companies.loading || Boolean(companies.error)}>确认更正收款公司</button>
           <small>原Invoice将作废并保留原PDF；随后建立替代账单，分配新的全系统月度编号，并使用新公司的银行资料和付款期限。</small>
         </form> : null}
-        {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往付款状态，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
+        {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往收款情况，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
           <Field label="Payment Date"><input name="payment_date" type="date" defaultValue={todayIso()} required disabled={paymentBusy} /></Field>
           <Field label="实际现金 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={paymentBusy} /></Field>
           <Field label="公司承担差额 (HKD)" hint={`实际现金＋差额必须等于 HKD ${selected.amount}`}><input name="company_difference" type="number" min="0" step="0.01" value={paymentDifference} onChange={(event) => setPaymentDifference(event.target.value)} required disabled={paymentBusy} /></Field>
@@ -886,7 +886,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
           <b>→</b>
           <span><small>替代Invoice</small><strong>{selectedCorrection.replacement_invoice?.invoice_number || "等待建立并出具"}</strong>{selectedCorrection.replacement_invoice ? <InvoiceLifecycleBadge invoice={selectedCorrection.replacement_invoice} /> : null}</span>
         </div>
-        {selectedCorrection.status === "OPEN" && mode === "issue" ? <a className="text-link" href={`#/payments/${selectedCorrection.original_invoice.id}`}>前往付款状态完成更正及资金关联</a> : selectedCorrection.status === "OPEN" ? <form className="correction-form" onSubmit={(event) => void completeCorrection(event, selectedCorrection)}>
+        {selectedCorrection.status === "OPEN" && mode === "issue" ? <a className="text-link" href={`#/payments/${selectedCorrection.original_invoice.id}`}>前往收款情况完成更正及资金关联</a> : selectedCorrection.status === "OPEN" ? <form className="correction-form" onSubmit={(event) => void completeCorrection(event, selectedCorrection)}>
           <Field label="替代Invoice"><select name="replacement_invoice_id" required value={replacementInvoiceId} onChange={(event) => setReplacementInvoiceId(event.target.value)} disabled={correctionBusy || !replacementCandidates.length}><option value="" disabled>{selectedCorrection.target_company_id != null ? "请选择新收款公司的Issued替代Invoice" : "请选择通过完整Settlement版本链校验的同组Issued Invoice"}</option>{replacementCandidates.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number || `Invoice #${invoice.id}`} · HKD {invoice.amount}</option>)}</select></Field>
           {!replacementCandidates.length ? <div className="invoice-candidate-warning">{selectedCorrection.target_company_id != null ? "点击上方建立或查看替代账单，核对新公司并签发后，回到本更正记录完成关联；原Settlement保持不变。" : "请先在Settlement页按版本链作废并重建全部相关Settlement，再建立并出具空白替代Invoice。已有资金、差额、其他更正占用或版本链不完整的Invoice不会出现在候选中。"}</div> : null}
           {selectedCorrection.payments.length ? <>

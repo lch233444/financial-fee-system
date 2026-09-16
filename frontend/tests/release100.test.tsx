@@ -76,10 +76,10 @@ test("计算锁定不冒充已生成账单，生成清单仅含已签发及正�
   expect(screen.getByRole("link", { name: "查看账单及PDF" }).getAttribute("href")).toBe("#/invoices/2");
 });
 
-test("付款状态不显示建单入口，账单出具不显示付款确认表单", async () => {
+test("收款情况不显示建单入口，账单出具不显示付款确认表单", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")));
   const view = render(<InvoicesPage mode="payment" notify={vi.fn()} />);
-  expect(screen.getByRole("heading", { name: "付款状态", exact: true })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "收款情况", exact: true })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "建立Invoice Draft" })).toBeNull();
   view.unmount();
   render(<InvoicesPage mode="issue" notify={vi.fn()} />);

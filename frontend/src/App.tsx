@@ -22,7 +22,7 @@ const navigation = [
   { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "账单制作" },
   { id: "settlements", label: "账单计算", sub: "Fee calculation", icon: Calculator, group: "账单制作" },
   { id: "invoices", label: "账单出具", sub: "Invoice issuance", icon: ReceiptText, group: "账单制作" },
-  { id: "payments", label: "付款状态", sub: "Payment status", icon: ReceiptText, group: "收款情况" },
+  { id: "payments", label: "收款情况", sub: "Collections", icon: ReceiptText, group: "收款情况" },
   { id: "setup", label: "基础设置", sub: "Master data", icon: Building2, group: "管理" },
   { id: "system", label: "数据与系统", sub: "Data & system", icon: Database, group: "管理" },
 ] as const;

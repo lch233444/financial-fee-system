@@ -42,7 +42,7 @@ def test_first_system_snapshot_hwm_override_and_strict_inheritance():
             # A direct database status write must not bypass the separate confirmation.
             db.execute(text('UPDATE settlement_account_lines SET hwm_override_confirmed=0 WHERE settlement_id=:id'), {'id': item['id']})
             with pytest.raises(IntegrityError, match='settlement_hwm_source_or_confirmation_invalid'):
-                db.execute(text("UPDATE quarterly_settlements SET status='FINALIZED' WHERE id=:id"), {'id': item['id']})
+                db.execute(text("UPDATE quarterly_settlements SET status='FINALIZED', finalized_at=CURRENT_TIMESTAMP WHERE id=:id"), {'id': item['id']})
             db.rollback()
         finalized = client.post(f"/api/settlements/{item['id']}/finalize", json={})
         assert finalized.status_code == 200, finalized.text

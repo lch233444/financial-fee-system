@@ -1,9 +1,10 @@
+import InvoiceCorrectionForm, { type CorrectionChoice } from "../InvoiceCorrectionForm";
 import { InvoiceHistoryLinks } from "../GeneratedBills";
 import PaymentEvidenceDialog from "../PaymentEvidenceDialog";
 import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CheckCircle2, FileDown, FilePlus2, ReceiptText, RotateCcw } from "lucide-react";
-import { api, download, postJson } from "../api";
+import { api, download, patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, SectionNav, Pagination } from "../components";
 import { accountOverlapsQuarter } from "../settlementWorkspace";
 import { todayIso, useApiList, usePagination } from "../hooks";
@@ -133,7 +134,8 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
   const companies = useApiList<Company>("/api/companies");
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [payeeCompanyId, setPayeeCompanyId] = useState("");
-  const [showCompanyCorrection, setShowCompanyCorrection] = useState(false);
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [editingCorrection, setEditingCorrection] = useState<InvoiceCorrection | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(() => Number(window.location.hash.split("/")[2]) || null);
   useEffect(() => {
     const selectFromAddress = () => {
@@ -204,7 +206,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
 
   useEffect(() => {
     setPaymentDifference("0.00");
-    setShowCompanyCorrection(false);
+    setShowCorrection(false);
   }, [selectedId]);
 
   useEffect(() => {
@@ -225,7 +227,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
     const claimedSettlementIds = new Set(activeInvoices.flatMap((invoice) =>
       invoice.settlement_ids?.length ? invoice.settlement_ids : [invoice.settlement_id]));
     const correctionSourceIds = new Set<number>();
-    for (const correction of corrections.data.filter((item) => item.status === "OPEN" && item.target_company_id == null)) {
+    for (const correction of corrections.data.filter((item) => item.status === "OPEN" && item.recalculate_settlements)) {
       const original = invoices.data.find((invoice) => invoice.id === correction.original_invoice.id);
       for (const settlementId of original?.settlement_ids ?? []) correctionSourceIds.add(settlementId);
     }
@@ -332,7 +334,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       const selectedSettlementIds = selected.settlement_ids?.length
         ? selected.settlement_ids
         : [selected.settlement_id];
-      if (settlementSourcesFollowOriginal(originalSettlementIds, selectedSettlementIds, settlementById, correction.target_company_id != null)) {
+      if (settlementSourcesFollowOriginal(originalSettlementIds, selectedSettlementIds, settlementById, !correction.recalculate_settlements)) {
         return correction;
       }
     }
@@ -363,11 +365,21 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
         originalSettlementIds,
         invoice.settlement_ids?.length ? invoice.settlement_ids : [invoice.settlement_id],
         settlementById,
-        selectedOriginalCorrection.target_company_id != null,
+        !selectedOriginalCorrection.recalculate_settlements,
       ));
   }, [corrections.data, invoices.data, selectedOriginalCorrection, settlements.data]);
   const selectedReplacementCandidate = replacementCandidates.find((invoice) =>
     invoice.id === Number(replacementInvoiceId)) ?? null;
+  const correctionOriginal = invoices.data.find((invoice) => invoice.id === selectedCorrection?.original_invoice.id);
+  const activeReplacement = correctionOriginal ? invoices.data.find((invoice) => invoice.id !== correctionOriginal.id
+    && ACTIVE_INVOICE_STATUSES.has(invoice.lifecycle_status) && invoice.client_id === correctionOriginal.client_id
+    && invoice.year === correctionOriginal.year && invoice.quarter === correctionOriginal.quarter) : null;
+  const correctionSourcesReady = Boolean(selectedCorrection && correctionOriginal && settlementSourcesFollowOriginal(
+    correctionOriginal.settlement_ids?.length ? correctionOriginal.settlement_ids : [correctionOriginal.settlement_id],
+    settlements.data.filter((item) => item.client_id === correctionOriginal.client_id && item.year === correctionOriginal.year
+      && item.quarter === correctionOriginal.quarter && item.status === "FINALIZED").map((item) => item.id),
+    new Map(settlements.data.map((item) => [item.id, item])), !selectedCorrection.recalculate_settlements,
+  ));
   const retainedTotalCents = Object.values(retainedAmounts).reduce(
     (total, amount) => total + moneyToCents(amount), 0,
   );
@@ -493,36 +505,34 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
     }
   }
 
-  async function startCompanyCorrection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selected?.can_correct_company || !correctionContextReady || pendingReplacementCorrection || invoiceMutationBusy || correctionBusyRef.current) return;
-    const data = new FormData(event.currentTarget);
-    const targetId = Number(data.get("target_company_id"));
-    const reason = String(data.get("reason") ?? "").trim();
-    if (!companies.data.some((company) => company.id === targetId && company.id !== selected.payee_company_id) || reason.length < 2 || reason.length > 500) {
-      setError("请选择另一家收款公司，并填写2至500字符的更正原因");
-      return;
-    }
+  async function saveCorrection(choice: CorrectionChoice) {
+    if (!selected || !correctionContextReady || invoiceMutationBusy || correctionBusyRef.current) return;
     correctionBusyRef.current = true;
     setCorrectionBusy(true);
     setError("");
     try {
-      await postJson<InvoiceCorrection>(`/api/invoices/${selected.id}/corrections`, { reason, target_company_id: targetId });
+      if (editingCorrection) {
+        await patchJson<InvoiceCorrection>(`/api/invoice-corrections/${editingCorrection.id}`, {
+          ...choice, expected_revision: editingCorrection.revision_no,
+        });
+      } else {
+        await postJson<InvoiceCorrection>(`/api/invoices/${selected.id}/corrections`, choice);
+      }
+      setShowCorrection(false);
       await Promise.all([invoices.reload(), corrections.reload(), settlements.reload()]);
-      setShowCompanyCorrection(false);
-      notify("收款公司更正已开启；请建立替代Draft并签发，原结算和金额保持不变");
+      notify(choice.recalculate_settlements ? "更正已保存；请完成结算版本链后建立替代账单" : "更正已保存；可直接建立替代账单，原结算和金额保持不变");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "更正收款公司失败");
-      await Promise.all([invoices.reload(), corrections.reload()]);
+      setError(err instanceof Error ? err.message : "保存更正失败");
+      await Promise.all([invoices.reload(), corrections.reload(), settlements.reload()]);
     } finally {
       correctionBusyRef.current = false;
       setCorrectionBusy(false);
     }
   }
 
-  async function createCompanyReplacement(correction: InvoiceCorrection) {
+  async function createReplacement(correction: InvoiceCorrection) {
     const original = invoices.data.find((invoice) => invoice.id === correction.original_invoice.id);
-    if (!original || correction.target_company_id == null || invoiceMutationBusy || correctionBusyRef.current) return;
+    if (!original || invoiceMutationBusy || correctionBusyRef.current) return;
     const existing = invoices.data.find((invoice) => invoice.id !== original.id && ACTIVE_INVOICE_STATUSES.has(invoice.lifecycle_status)
       && invoiceGroupKey(invoice.client_id, invoice.year, invoice.quarter)
         === invoiceGroupKey(original.client_id, original.year, original.quarter));
@@ -539,57 +549,6 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
     } catch (err) {
       setError(err instanceof Error ? err.message : "建立替代Draft失败");
       await invoices.reload();
-    } finally {
-      correctionBusyRef.current = false;
-      setCorrectionBusy(false);
-    }
-  }
-
-  async function startCorrection() {
-    if (
-      !selected
-      || selected.lifecycle_status !== "ISSUED"
-      || selectedOriginalCorrection
-      || pendingReplacementCorrection
-      || hasIncompleteHistoricalFunds
-      || !correctionContextReady
-      || correctionBusyRef.current
-      || paymentBusyRef.current
-      || invoiceVoidBusyRef.current
-    ) return;
-    const enteredReason = window.prompt("请输入Invoice更正原因。原编号、PDF及现金记录会永久保留：");
-    const reason = enteredReason?.trim() ?? "";
-    if (!reason) return;
-    if (reason.length < 2 || reason.length > 500) {
-      setError("更正原因必须为2至500个字符");
-      return;
-    }
-    if (!window.confirm(
-      `确认对 ${selected.invoice_number || `Invoice #${selected.id}`} 发起更正？\n\n` +
-      "系统会作废原Invoice并冲回原现金分配；不会删除原PDF，也不会虚构新的现金收入。",
-    )) return;
-    correctionBusyRef.current = true;
-    try {
-      setCorrectionBusy(true);
-      setError("");
-      await postJson<InvoiceCorrection>(`/api/invoices/${selected.id}/corrections`, { reason });
-      await Promise.all([invoices.reload(), corrections.reload(), settlements.reload()]);
-      notify("Invoice更正已开启；请先按版本链更正Settlement，再建立替代Invoice");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "发起Invoice更正失败";
-      try {
-        const refreshed = await api<InvoiceCorrection[]>("/api/invoice-corrections");
-        if (refreshed.some((correction) =>
-          correction.original_invoice.id === selected.id && correction.reason === reason)) {
-          await Promise.all([invoices.reload(), corrections.reload(), settlements.reload()]);
-          notify("Invoice更正已开启；请先按版本链更正Settlement，再建立替代Invoice");
-          return;
-        }
-      } catch {
-        // Preserve the original mutation error when current state cannot be confirmed.
-      }
-      await Promise.all([invoices.reload(), corrections.reload(), settlements.reload()]);
-      setError(message);
     } finally {
       correctionBusyRef.current = false;
       setCorrectionBusy(false);
@@ -856,15 +815,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       {mode === "issue" && selected?.lifecycle_status === "DRAFT" ? <Panel title="正式出具" subtitle="编号为出具年月＋全系统三位流水，例如202609001；不同收款公司共用当月流水，次月从001开始。编号一经预留不会复用。"><form className="inline-form" onSubmit={(e) => void issue(e)}><Field label="Issue Date"><input name="issue_date" type="date" defaultValue={todayIso()} required disabled={invoiceMutationBusy} /></Field><Field label="Due Date" hint="留空则采用Company默认天数"><input name="due_date" type="date" disabled={invoiceMutationBusy} /></Field><Field label="Language"><select name="language" defaultValue={selected.language} disabled={invoiceMutationBusy}><option value="zh">中文</option><option value="en">English</option></select></Field><button className="primary" type="submit" disabled={invoiceMutationBusy}>{issueBusy ? "正在出具..." : "Issued并分配编号"}</button><button className="danger" type="button" disabled={invoiceMutationBusy} onClick={() => void voidInvoice()}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "作废Draft"}</button></form><small className="cell-note">请先核对：Company全名为“{selected.company_name || "未识别"}”，中介人为“{selected.fc_name || "未识别"}”，Fee Plan为“{selected.fee_plan_name || "未识别"}”，并逐行核对Platform、Sub Account及当前Scheme。若Draft建立后同组Settlement发生变化，服务端会拒绝漏项签发。</small></Panel> : null}
       {mode === "issue" && selected?.lifecycle_status === "ISSUING" ? <Panel title="恢复出具中的Invoice" subtitle="系统在预留编号后曾中断。请依据归档文件完整性完成签发，或退回Draft重新出具；已预留编号永久保留且不会复用。"><div className="invoice-recovery"><div><strong>{!selected.issue_recovery ? "恢复状态尚未就绪" : selected.issue_recovery.files_complete ? "中英文归档文件完整" : "归档文件不完整"}</strong><span>{!selected.issue_recovery ? "请刷新Invoice清单；恢复状态可用前不会开放任何操作。" : selected.issue_recovery.files_complete ? "可以完成签发，也可以退回Draft重新核对。" : "不能直接完成签发，请退回Draft后重新生成两份归档PDF。"}</span></div><div className="invoice-actions"><button className="primary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_complete} onClick={() => void recoverIssuing("COMPLETE")}><CheckCircle2 size={17} />{recoveryBusy === "COMPLETE" ? "正在核验..." : "完成签发"}</button><button className="secondary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_return_to_draft} onClick={() => void recoverIssuing("RETURN_TO_DRAFT")}><RotateCcw size={17} />{recoveryBusy === "RETURN_TO_DRAFT" ? "正在退回..." : "退回Draft"}</button></div></div></Panel> : null}
       {selected?.lifecycle_status === "ISSUED" ? <Panel id="invoice-payment" title={mode === "issue" ? "账单PDF与更正" : "付款确认与更正"} subtitle="新付款只允许一次完整确认；实际现金与人工确认的公司承担差额必须精确结清Invoice，付款凭证是硬前置。">
-        <div className="invoice-actions"><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />中文PDF</button><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />English PDF</button><button className="danger" type="button" onClick={() => void startCorrection()} disabled={invoiceMutationBusy || !correctionContextReady || Boolean(selectedOriginalCorrection) || Boolean(pendingReplacementCorrection) || hasIncompleteHistoricalFunds} title={selectedOriginalCorrection ? "该Invoice已经作为原单发起过更正" : pendingReplacementCorrection ? `请先完成Invoice更正 #${pendingReplacementCorrection.id}` : hasIncompleteHistoricalFunds ? "历史资金台账未完整平账，必须先人工核对" : undefined}><RotateCcw size={17} />{correctionBusy ? "更正处理中..." : "发起更正"}</button>{!selected.payments.length && !selectedCorrection ? <button className="ghost" type="button" onClick={() => void voidInvoice()} disabled={invoiceMutationBusy || !correctionContextReady}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "直接作废（无替代）"}</button> : null}</div>
-        <div className="invoice-actions"><button className="secondary" type="button" disabled={invoiceMutationBusy || !correctionContextReady || !selected.can_correct_company || Boolean(pendingReplacementCorrection)} onClick={() => setShowCompanyCorrection((value) => !value)} title="仅允许未收款且无资金或差额台账的Invoice">更正收款公司</button><small>仅限未收款账单；客户、FC、收费计划和金额保持不变。</small></div>
-        {showCompanyCorrection && selected.can_correct_company && !pendingReplacementCorrection ? <form className="inline-form" onSubmit={(event) => void startCompanyCorrection(event)}>
-          {companies.error ? <ErrorBanner message={companies.error} /> : null}
-          <Field label="新的收款公司"><select name="target_company_id" required defaultValue="" disabled={correctionBusy || companies.loading}><option value="" disabled>请选择另一家公司</option>{companies.data.filter((company) => company.id !== selected.payee_company_id).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>
-          <Field label="收款公司更正原因"><input name="reason" minLength={2} maxLength={500} required disabled={correctionBusy} /></Field>
-          <button className="primary" type="submit" disabled={invoiceMutationBusy || companies.loading || Boolean(companies.error)}>确认更正收款公司</button>
-          <small>原Invoice将作废并保留原PDF；随后建立替代账单，分配新的全系统月度编号，并使用新公司的银行资料和付款期限。</small>
-        </form> : null}
+        <div className="invoice-actions"><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />中文PDF</button><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />English PDF</button><button className="danger" type="button" aria-expanded={showCorrection} onClick={() => { setEditingCorrection(null); setShowCorrection((value) => !value); }} disabled={invoiceMutationBusy || !correctionContextReady || Boolean(selectedOriginalCorrection) || Boolean(pendingReplacementCorrection) || hasIncompleteHistoricalFunds} title={selectedOriginalCorrection ? "该Invoice已经作为原单发起过更正" : pendingReplacementCorrection ? `请先完成Invoice更正 #${pendingReplacementCorrection.id}` : hasIncompleteHistoricalFunds ? "历史资金台账未完整平账，必须先人工核对" : undefined}><RotateCcw size={17} />{correctionBusy ? "更正处理中..." : "更正账单"}</button>{!selected.payments.length && !selectedCorrection ? <button className="ghost" type="button" onClick={() => void voidInvoice()} disabled={invoiceMutationBusy || !correctionContextReady}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "直接作废（无替代）"}</button> : null}</div>
         {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往收款情况，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
           <Field label="Payment Date"><input name="payment_date" type="date" defaultValue={todayIso()} required disabled={paymentBusy} /></Field>
           <Field label="实际现金 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={paymentBusy} /></Field>
@@ -876,19 +827,35 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
           <button className="primary" type="submit" disabled={invoiceMutationBusy}>{paymentBusy ? "正在核验并锁定..." : "确认已付款"}</button>
         </form> : <div className="invoice-candidate-warning">{selected.payment_status === "PAID" ? "该Invoice已结清。Payment、现金分配、公司差额及凭证均已锁定；如发生错单，请使用受控更正流程。" : "该Invoice已有历史资金台账但未完整结清，不能追加或部分付款；请先人工核对台账。"}</div>}
       </Panel> : null}
+      {showCorrection && selected ? <Panel title={editingCorrection ? "调整本次更正" : "更正账单"} subtitle="在同一处选择收款公司及是否重新核算；提交时重新核对收款和结算状态。">
+        {companies.error ? <ErrorBanner message={companies.error} /> : null}
+        <InvoiceCorrectionForm key={`${selected.id}:${editingCorrection?.revision_no ?? "new"}`} original={selected}
+          correction={editingCorrection} companies={companies.data}
+          busy={invoiceMutationBusy || companies.loading || Boolean(companies.error) || !correctionContextReady}
+          onSubmit={(choice) => void saveCorrection(choice)} onCancel={() => setShowCorrection(false)} />
+      </Panel> : null}
       {selected?.lifecycle_status === "VOID" ? <Panel title="作废Invoice档案" subtitle={`作废原因：${selected.void_reason || "未记录"}`}>{selected.invoice_number ? <div className="invoice-actions"><button className="secondary" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />原中文PDF</button><button className="secondary" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />Original English PDF</button></div> : <EmptyState title="Draft在签发前已作废" detail="该记录未分配Invoice编号，因此没有正式归档PDF。" />}</Panel> : null}
 
       {selectedCorrection ? <Panel title={`Invoice更正 #${selectedCorrection.id}`} subtitle={`${selectedOriginalCorrection ? "当前Invoice作为本轮原单" : "当前Invoice作为上一轮替代单"} · 状态：${selectedCorrection.status === "OPEN" ? "处理中" : "已完成"} · 原因：${selectedCorrection.reason}`}>
         {selectedOriginalCorrection && selectedReplacementCorrection ? <div className="correction-continuity">连续更正：当前Invoice曾是更正 #{selectedReplacementCorrection.id} 的替代单，现在又是更正 #{selectedOriginalCorrection.id} 的原单；两轮关系均保留。</div> : null}
-        {selectedCorrection.target_company_id != null ? <div className="correction-continuity">收款公司：{selectedCorrection.original_company_name} → {selectedCorrection.target_company_name}。只更正本张Invoice，无需作废或重算Settlement。{selectedCorrection.status === "OPEN" ? <button className="secondary" type="button" disabled={invoiceMutationBusy} onClick={() => void createCompanyReplacement(selectedCorrection)}>建立或查看替代账单</button> : null}</div> : null}
+        <div className="correction-continuity">收款公司：{selectedCorrection.original_company_name}{selectedCorrection.target_company_id != null ? ` → ${selectedCorrection.target_company_name}` : "（保持不变）"}。
+          {selectedCorrection.recalculate_settlements ? "需要按版本链重新核算费用／结算来源。" : "保留原结算和金额，无需重新核算。"}
+          {selectedCorrection.status === "OPEN" ? <div className="invoice-actions">
+            <button className="secondary" type="button" disabled={invoiceMutationBusy || !correctionContextReady || (!activeReplacement && !correctionSourcesReady)} onClick={() => void createReplacement(selectedCorrection)}>建立或查看替代账单</button>
+            {selectedOriginalCorrection?.can_amend ? <button className="secondary" type="button" disabled={invoiceMutationBusy || !correctionContextReady || Boolean(activeReplacement)}
+              onClick={() => { setEditingCorrection(selectedOriginalCorrection); setShowCorrection(true); }}>调整本次更正</button> : null}
+          </div> : null}
+          {selectedCorrection.status === "OPEN" && activeReplacement ? <small>已有替代账单。若需调整更正内容，请先核对并作废该替代账单。</small>
+            : selectedCorrection.status === "OPEN" && !correctionSourcesReady ? <small>结算来源尚未齐备；请完成结算版本链后建立替代账单。</small> : null}
+        </div>
         <div className="correction-chain">
           <span><small>原Invoice</small><strong>{selectedCorrection.original_invoice.invoice_number || `#${selectedCorrection.original_invoice.id}`}</strong><InvoiceLifecycleBadge invoice={selectedCorrection.original_invoice} /></span>
           <b>→</b>
           <span><small>替代Invoice</small><strong>{selectedCorrection.replacement_invoice?.invoice_number || "等待建立并出具"}</strong>{selectedCorrection.replacement_invoice ? <InvoiceLifecycleBadge invoice={selectedCorrection.replacement_invoice} /> : null}</span>
         </div>
         {selectedCorrection.status === "OPEN" && mode === "issue" ? <a className="text-link" href={`#/payments/${selectedCorrection.original_invoice.id}`}>前往收款情况完成更正及资金关联</a> : selectedCorrection.status === "OPEN" ? <form className="correction-form" onSubmit={(event) => void completeCorrection(event, selectedCorrection)}>
-          <Field label="替代Invoice"><select name="replacement_invoice_id" required value={replacementInvoiceId} onChange={(event) => setReplacementInvoiceId(event.target.value)} disabled={correctionBusy || !replacementCandidates.length}><option value="" disabled>{selectedCorrection.target_company_id != null ? "请选择新收款公司的Issued替代Invoice" : "请选择通过完整Settlement版本链校验的同组Issued Invoice"}</option>{replacementCandidates.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number || `Invoice #${invoice.id}`} · HKD {invoice.amount}</option>)}</select></Field>
-          {!replacementCandidates.length ? <div className="invoice-candidate-warning">{selectedCorrection.target_company_id != null ? "点击上方建立或查看替代账单，核对新公司并签发后，回到本更正记录完成关联；原Settlement保持不变。" : "请先在Settlement页按版本链作废并重建全部相关Settlement，再建立并出具空白替代Invoice。已有资金、差额、其他更正占用或版本链不完整的Invoice不会出现在候选中。"}</div> : null}
+          <Field label="替代Invoice"><select name="replacement_invoice_id" required value={replacementInvoiceId} onChange={(event) => setReplacementInvoiceId(event.target.value)} disabled={correctionBusy || !replacementCandidates.length}><option value="" disabled>{!selectedCorrection.recalculate_settlements ? "请选择新收款公司的Issued替代Invoice" : "请选择通过完整Settlement版本链校验的同组Issued Invoice"}</option>{replacementCandidates.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number || `Invoice #${invoice.id}`} · HKD {invoice.amount}</option>)}</select></Field>
+          {!replacementCandidates.length ? <div className="invoice-candidate-warning">{!selectedCorrection.recalculate_settlements ? "点击上方建立或查看替代账单，核对新公司并签发后，回到本更正记录完成关联；原Settlement保持不变。" : "请先在Settlement页按版本链作废并重建全部相关Settlement，再建立并出具空白替代Invoice。已有资金、差额、其他更正占用或版本链不完整的Invoice不会出现在候选中。"}</div> : null}
           {selectedCorrection.payments.length ? <>
             <div className="correction-payment-heading">逐笔处理本轮可处置现金；每笔必须满足“留存分配＋退款＝本轮可处置现金”。只有退款金额大于0时才要求退款日期、方式、原因及实体凭证。</div>
             {selectedCorrection.payments.map((payment) => {

@@ -280,6 +280,9 @@ export type PaymentRecord = {
 };
 
 export type InvoiceCorrection = {
+  recalculate_settlements: boolean;
+  revision_no: number;
+  can_amend: boolean;
   target_company_id: number | null;
   target_company_name: string | null;
   original_company_name: string;

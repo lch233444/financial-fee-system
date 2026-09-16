@@ -22,6 +22,7 @@ from .settlement_boundary_contract import (
 from .storage import sha256_file
 from .invoice_group_contract import INVOICE_GROUP_REVISION, invoice_group_schema_is_current
 from .company_scope_contract import COMPANY_SCOPE_REVISION, CODE_TRIGGER_SQL, company_scope_schema_is_current
+from .invoice_correction_contract import CORRECTION_REVISION, correction_schema_is_current
 from .release_100_contract import RELEASE_100_REVISION, HWM_TRIGGER_SQL, release_100_schema_is_current
 from .invoice_payee_contract import PAYEE_REVISION, payee_trigger_sql_is_current
 from .workflow_guard_contract import workflow_trigger_sql_is_current, workflow_trigger_sql_is_legacy
@@ -55,7 +56,7 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "7f3c2a91b6e4",
         "c1a7d5e9b402",
         "d4f8a1c73b29",
-        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION,
+        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
     }
 )
 OLD_HEAD_TRIGGER_NAMES = frozenset(
@@ -184,7 +185,7 @@ _LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
 _LEGACY_REUSE_REVISION = "c1a7d5e9b402"
 _LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
 _LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
-CURRENT_DATABASE_REVISION = RELEASE_100_REVISION
+CURRENT_DATABASE_REVISION = CORRECTION_REVISION
 PATH_REBASE_TRIGGER_NAMES = (
     "trg_attachment_update_block_finalized_evidence",
     "trg_attachment_update_block_payment_evidence",
@@ -1825,13 +1826,13 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     "7f3c2a91b6e4",
                     "c1a7d5e9b402",
                     "d4f8a1c73b29",
-                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION,
+                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
                 }:
                     _require_named_partial_unique_index(
                         connection,
                         "invoices",
-                        "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION} else "uq_invoices_active_client_period_plan",
-                        ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
+                        "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} else "uq_invoices_active_client_period_plan",
+                        ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
                         "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')",
                     )
                     _require_named_partial_unique_index(
@@ -1856,7 +1857,7 @@ def _validate_sqlite_database(database_path: Path) -> None:
                     "7f3c2a91b6e4",
                     "c1a7d5e9b402",
                     "d4f8a1c73b29",
-                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION,
+                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
                 }:
                     settlement_columns = {
                         row[1]
@@ -2017,9 +2018,9 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         if database_revision == "7f3c2a91b6e4"
                         else LATEST_HEAD_TRIGGER_NAMES
                     )
-                    if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION}:
+                    if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
                         expected_trigger_names = expected_trigger_names | set(CODE_TRIGGER_SQL)
-                    if database_revision == RELEASE_100_REVISION:
+                    if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION}:
                         expected_trigger_names = expected_trigger_names | set(HWM_TRIGGER_SQL)
                     if set(trigger_sql) != expected_trigger_names or any(
                         not trigger_sql[name].strip() for name in expected_trigger_names
@@ -2076,24 +2077,24 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         "trg_invoice_block_void_with_payment", ""
                     ):
                         raise ValueError("备份数据库结构不兼容")
-                    if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION}:
+                    if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
                         _validate_backup_id_high_water_settings(connection)
                         if not delete_guard_trigger_sql_is_current(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
                     if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
                         if not settlement_boundary_trigger_sql_is_legacy(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
-                    elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION}:
+                    elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
                         if not settlement_boundary_trigger_sql_is_current(trigger_sql):
                             raise ValueError("备份数据库结构不兼容")
                         workflow_valid = (
                             workflow_trigger_sql_is_current(trigger_sql)
-                            if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION}
+                            if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}
                             else workflow_trigger_sql_is_legacy(trigger_sql)
                         )
                         if not workflow_valid:
                             raise ValueError("备份数据库财务流程保护结构不兼容")
-                if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION}:
+                if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
                     if not payee_trigger_sql_is_current(trigger_sql):
                         raise ValueError("备份数据库收款公司保护结构不兼容")
                     for table, column in (("invoices", "payee_company_id"), ("invoice_corrections", "target_company_id")):
@@ -2101,12 +2102,14 @@ def _validate_sqlite_database(database_path: Path) -> None:
                         foreign_keys = {(row[3], row[2], row[4], row[6]) for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')}
                         if column not in info or info[column][2].upper() != 'INTEGER' or (column, 'companies', 'id', 'RESTRICT') not in foreign_keys:
                             raise ValueError("备份数据库收款公司字段或外键结构不兼容")
-                if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION} and not invoice_group_schema_is_current(connection):
+                if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} and not invoice_group_schema_is_current(connection):
                     raise ValueError("备份数据库客户季度合并保护结构不兼容")
-                if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION} and not company_scope_schema_is_current(connection):
+                if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} and not company_scope_schema_is_current(connection):
                     raise ValueError("备份数据库公司解绑保护结构不兼容")
-                if database_revision == RELEASE_100_REVISION and not release_100_schema_is_current(connection):
+                if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION} and not release_100_schema_is_current(connection):
                     raise ValueError("备份数据库首次HWM或月度编号结构不兼容")
+                if database_revision == CORRECTION_REVISION and not correction_schema_is_current(connection):
+                    raise ValueError("备份数据库统一更正保护结构不兼容")
         finally:
             connection.close()
     except sqlite3.Error as exc:

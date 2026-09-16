@@ -31,7 +31,7 @@ from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "f1c0a915b100"
+HEAD_REVISION = "a916c0e2b102"
 
 
 def _master(client: TestClient, suffix: str) -> dict:

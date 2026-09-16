@@ -543,7 +543,15 @@ def init_db() -> None:
                                         with engine.connect() as release_connection:
                                             if not release_100_schema_is_current(release_connection):
                                                 raise RuntimeError("未版本化数据库的首次HWM或月度编号保护不完整；已停止启动")
-                                        command.stamp(alembic_config, RELEASE_100_REVISION)
+                                        from .services.invoice_correction_contract import CORRECTION_COLUMNS, CORRECTION_REVISION, correction_schema_is_current
+                                        if CORRECTION_COLUMNS & target_columns:
+                                            with engine.connect() as correction_connection:
+                                                if not correction_schema_is_current(correction_connection):
+                                                    raise RuntimeError("未版本化数据库的统一更正保护不完整；已停止启动")
+                                            command.stamp(alembic_config, CORRECTION_REVISION)
+                                        else:
+                                            command.stamp(alembic_config, RELEASE_100_REVISION)
+                                            command.upgrade(alembic_config, "head")
                                     else:
                                         command.stamp(alembic_config, COMPANY_SCOPE_REVISION)
                                         command.upgrade(alembic_config, "head")
@@ -703,3 +711,8 @@ def init_db() -> None:
     with engine.connect() as release_connection:
         if not release_100_schema_is_current(release_connection):
             raise RuntimeError("数据库首次HWM或月度编号保护不完整；系统已停止启动")
+
+    from .services.invoice_correction_contract import correction_schema_is_current
+    with engine.connect() as correction_connection:
+        if not correction_schema_is_current(correction_connection):
+            raise RuntimeError("数据库统一更正保护不完整；系统已停止启动")

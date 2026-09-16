@@ -37,6 +37,7 @@ from ..schemas import (
     InvoiceDraftCreate,
     InvoiceCorrectionComplete,
     InvoiceCorrectionCreate,
+    InvoiceCorrectionUpdate,
     InvoiceIssueRecoveryRequest,
     InvoiceIssueRequest,
     PaymentCreate,
@@ -208,7 +209,7 @@ def _replacement_sources_follow_original(
         db,
         original,
         [source.settlement for source in active_sources],
-        same_sources=correction is not None and correction.target_company_id is not None,
+        same_sources=correction is not None and not correction.requires_recalculation,
     )
 
 
@@ -244,11 +245,11 @@ def _validate_open_correction_sources(
         quarter=quarter,
     )
     if correction and not settlements_follow_original(db, correction.original_invoice, settlements,
-                                                      same_sources=correction.target_company_id is not None):
+                                                      same_sources=not correction.requires_recalculation):
         raise HTTPException(
             status_code=409,
             detail=("收款公司更正必须保留原Settlement来源和金额，不能增减来源或重算结算"
-                    if correction.target_company_id is not None else
+                    if not correction.requires_recalculation else
                     "该分组正在更正，必须先作废原Settlement并使用完整的替代版本链重建Invoice"),
         )
     return correction
@@ -562,7 +563,7 @@ def _validate_issue_sources(db: Session, invoice: Invoice) -> None:
         expected = correction.target_company_id or correction.original_invoice.receiving_company_id
         if invoice.receiving_company_id != expected:
             raise HTTPException(status_code=409, detail="Invoice收款公司与本轮更正目标不一致")
-        if correction.target_company_id is not None and invoice.amount_cents != correction.original_invoice.amount_cents:
+        if not correction.requires_recalculation and invoice.amount_cents != correction.original_invoice.amount_cents:
             raise HTTPException(status_code=409, detail="仅更正收款公司不能改变Invoice金额")
 
 
@@ -969,6 +970,9 @@ def create_invoice_correction(
     if item.original_correction is not None:
         raise HTTPException(status_code=409, detail="该Invoice已有更正记录")
 
+    recalculate = payload.recalculate_settlements if payload.recalculate_settlements is not None else payload.target_company_id is None
+    if not recalculate and payload.target_company_id is None:
+        raise HTTPException(status_code=400, detail="请选择更换收款公司或重新核算")
     if payload.target_company_id is not None:
         if item.payments or item.payment_allocations or item.adjustments:
             raise HTTPException(status_code=409, detail="仅允许未收款且无资金或差额台账的Invoice更正收款公司")
@@ -992,6 +996,7 @@ def create_invoice_correction(
     correction = InvoiceCorrection(
         original_invoice_id=item.id,
         target_company_id=payload.target_company_id,
+        recalculate_settlements=recalculate,
         status="OPEN",
         reason=payload.reason,
         opened_at=datetime.now(timezone.utc),
@@ -1025,7 +1030,8 @@ def create_invoice_correction(
             entity_id=correction.id,
             details_json={"original_invoice_id": item.id, "reason": payload.reason,
                           "original_company_id": item.receiving_company_id,
-                          "target_company_id": payload.target_company_id},
+                          "target_company_id": payload.target_company_id,
+                          "recalculate_settlements": recalculate, "revision_no": 1},
         )
     )
     db.add(
@@ -1183,6 +1189,62 @@ def get_invoice_correction(correction_id: int, db: Session = Depends(get_db)) ->
     return invoice_correction_dict(_reload_correction(db, correction_id))
 
 
+@correction_router.patch("/{correction_id}")
+def update_invoice_correction(
+    correction_id: int, payload: InvoiceCorrectionUpdate, db: Session = Depends(get_db),
+) -> dict:
+    _begin_immediate(db)
+    correction = _reload_correction(db, correction_id)
+    original = _reload_invoice(db, correction.original_invoice_id)
+    if correction.status != "OPEN" or correction.replacement_invoice_id is not None or original.lifecycle_status != "VOID":
+        raise HTTPException(status_code=409, detail="仅允许调整尚未关联替代账单、原账单仍为VOID的处理中更正")
+    if payload.expected_revision != correction.revision_no:
+        raise HTTPException(status_code=409, detail="更正内容已变化，请刷新后重新核对")
+    if (original.payments or original.payment_allocations or original.adjustments
+            or correction.allocations or correction.refunds or correction.adjustments):
+        raise HTTPException(status_code=409, detail="仅允许调整未收款且无资金或差额台账的更正")
+    active_invoice = db.scalar(select(Invoice.id).where(
+        Invoice.client_id == original.client_id, Invoice.year == original.year,
+        Invoice.quarter == original.quarter, Invoice.lifecycle_status.in_(ACTIVE_INVOICE_STATUSES),
+    ).limit(1))
+    if active_invoice is not None:
+        raise HTTPException(status_code=409, detail="已经建立替代账单；请先核对并作废该替代账单，再调整更正")
+    if payload.target_company_id is not None:
+        if db.get(Company, payload.target_company_id) is None:
+            raise HTTPException(status_code=404, detail="目标收款Company不存在")
+        if payload.target_company_id == original.receiving_company_id:
+            raise HTTPException(status_code=400, detail="保留原收款公司时请勿设置目标公司")
+    if not payload.recalculate_settlements:
+        if payload.target_company_id is None:
+            raise HTTPException(status_code=400, detail="请选择更换收款公司或重新核算")
+        current = list(db.scalars(select(QuarterlySettlement).where(
+            QuarterlySettlement.client_id == original.client_id, QuarterlySettlement.year == original.year,
+            QuarterlySettlement.quarter == original.quarter, QuarterlySettlement.status == "FINALIZED",
+        )))
+        if (not settlements_follow_original(db, original, current, same_sources=True)
+                or any(source.settlement is None or source.locked_amount_cents != source.settlement.service_fee_cents
+                       for source in original.sources)):
+            raise HTTPException(status_code=409, detail="原结算已变化，不能改为仅更换收款公司；请保留重新核算并完成替代版本链")
+    before = {"target_company_id": correction.target_company_id, "recalculate_settlements": correction.requires_recalculation}
+    after = {"target_company_id": payload.target_company_id, "recalculate_settlements": payload.recalculate_settlements}
+    if before == after:
+        raise HTTPException(status_code=400, detail="更正内容没有变化")
+    revision = correction.revision_no + 1
+    db.add(AuditEvent(action="INVOICE_CORRECTION_UPDATED", entity_type="INVOICE_CORRECTION", entity_id=correction.id,
+                      details_json={"before": before, "after": after, "reason": payload.reason, "revision_no": revision}))
+    _flush_financial_state(db, "更正修改记录未能保存，调整未生效")
+    correction.target_company_id = payload.target_company_id
+    correction.recalculate_settlements = payload.recalculate_settlements
+    correction.revision_no = revision
+    try:
+        db.commit()
+    except (IntegrityError, OperationalError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="收款、结算或更正状态已变化，调整未生效") from exc
+    db.expire_all()
+    return invoice_correction_dict(_reload_correction(db, correction_id))
+
+
 @correction_router.post("/{correction_id}/complete")
 def complete_invoice_correction(
     correction_id: int,
@@ -1211,12 +1273,13 @@ def complete_invoice_correction(
     expected_company_id = correction.target_company_id or original.receiving_company_id
     if replacement.receiving_company_id != expected_company_id:
         raise HTTPException(status_code=409, detail="替代Invoice收款公司与本轮更正目标不一致")
-    if correction.target_company_id is not None and (
-        original.payments or original.payment_allocations or original.adjustments
-        or replacement.amount_cents != original.amount_cents
+    if correction.target_company_id is not None and (original.payments or original.payment_allocations or original.adjustments):
+        raise HTTPException(status_code=409, detail="更换收款公司仅限未收款且无资金或差额台账的Invoice")
+    if not correction.requires_recalculation and (
+        replacement.amount_cents != original.amount_cents
         or replacement.company_id != original.company_id or replacement.fc_id != original.fc_id
     ):
-        raise HTTPException(status_code=409, detail="收款公司更正仅限未收款Invoice，金额和服务归属必须保持不变")
+        raise HTTPException(status_code=409, detail="未选择重新核算时，金额和服务归属必须保持不变")
     if replacement.replacement_correction is not None:
         raise HTTPException(status_code=409, detail="替代Invoice已被其他更正记录占用")
     if replacement.payments or replacement.payment_allocations or replacement.adjustments:

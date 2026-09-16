@@ -532,6 +532,9 @@ class InvoiceCorrection(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="OPEN", index=True)
     reason: Mapped[str] = mapped_column(Text)
     target_company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
+    # NULL keeps the original policy of pre-unification correction records.
+    recalculate_settlements: Mapped[bool | None] = mapped_column(Boolean)
+    revision_no: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     target_company: Mapped[Company | None] = relationship()
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -545,6 +548,10 @@ class InvoiceCorrection(TimestampMixin, Base):
     allocations: Mapped[list[PaymentAllocation]] = relationship(back_populates="correction")
     refunds: Mapped[list[PaymentRefund]] = relationship(back_populates="correction")
     adjustments: Mapped[list[InvoiceAdjustment]] = relationship(back_populates="correction")
+
+    @property
+    def requires_recalculation(self) -> bool:
+        return self.recalculate_settlements if self.recalculate_settlements is not None else self.target_company_id is None
 
 
 class PaymentAllocation(TimestampMixin, Base):

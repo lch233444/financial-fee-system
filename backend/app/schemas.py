@@ -298,11 +298,17 @@ class InvoiceCorrectionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(min_length=2, max_length=500)
     target_company_id: int | None = Field(default=None, gt=0)
+    recalculate_settlements: StrictBool | None = None
 
     @field_validator("reason")
     @classmethod
     def validate_reason(cls, value: str) -> str:
         return _require_meaningful_reason(value)
+
+
+class InvoiceCorrectionUpdate(InvoiceCorrectionCreate):
+    recalculate_settlements: StrictBool
+    expected_revision: int = Field(gt=0)
 
 
 class RetainedPaymentAllocation(BaseModel):

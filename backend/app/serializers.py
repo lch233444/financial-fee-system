@@ -309,6 +309,11 @@ def invoice_correction_dict(item: InvoiceCorrection) -> dict:
         "id": item.id,
         "target_company_id": item.target_company_id,
         "target_company_name": item.target_company.name if item.target_company else None,
+        "recalculate_settlements": item.requires_recalculation,
+        "revision_no": item.revision_no,
+        "can_amend": item.status == "OPEN" and item.replacement_invoice_id is None
+        and not (original.payments or original.payment_allocations or original.adjustments
+                 or item.allocations or item.refunds or item.adjustments),
         "original_company_name": original.receiving_company.name,
         "status": item.status,
         "reason": item.reason,

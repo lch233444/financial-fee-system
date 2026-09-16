@@ -21,10 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload
 from app.models import Invoice
-from app.services.backup import _validate_sqlite_database
+from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 from app.services.invoice_archive import invoice_archive_paths
 from app.services.pdf_invoice import generate_invoice_pdf
-from app.services.release_100_contract import RELEASE_100_REVISION
 
 
 def digest(path):
@@ -50,8 +49,8 @@ def convert_test_copy(data_root: Path, *, acknowledged_test_copy: bool, renderer
     generated = []
     try:
         sql.execute('BEGIN IMMEDIATE')
-        if sql.execute('SELECT version_num FROM alembic_version').fetchone() != (RELEASE_100_REVISION,):
-            raise ValueError('测试副本必须先完整升级到1.0结构')
+        if sql.execute('SELECT version_num FROM alembic_version').fetchone() != (CURRENT_DATABASE_REVISION,):
+            raise ValueError('测试副本必须先完整升级到当前版本结构')
         if sql.execute("SELECT 1 FROM invoices WHERE lifecycle_status='ISSUING'").fetchone():
             raise ValueError('存在出具中账单，须先恢复后转换')
         before = _rows(sql)

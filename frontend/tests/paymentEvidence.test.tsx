@@ -24,7 +24,7 @@ function setup({ fileError = false, unpaid = false } = {}) {
     { ...base, id: 11, invoice_number: "VOID-001", lifecycle_status: "VOID" },
     { ...base, id: 12, invoice_number: null, lifecycle_status: "DRAFT" },
   ];
-  const correction = { id: 1, status: "COMPLETED", reason: "更正收费金额", original_invoice: { id: 9, invoice_number: "ORIGINAL-009", lifecycle_status: "VOID", amount: "320.00" }, replacement_invoice: { id: 1, invoice_number: "MIXED-001", lifecycle_status: "ISSUED", amount: "300.00" }, opened_at: "2026-04-13", payments: [], adjustments: [],
+  const correction = { recalculate_settlements: true, revision_no: 1, can_amend: false, id: 1, status: "COMPLETED", reason: "更正收费金额", original_invoice: { id: 9, invoice_number: "ORIGINAL-009", lifecycle_status: "VOID", amount: "320.00" }, replacement_invoice: { id: 1, invoice_number: "MIXED-001", lifecycle_status: "ISSUED", amount: "300.00" }, opened_at: "2026-04-13", payments: [], adjustments: [],
     allocations: [{ id: 1, entry_type: "REVERSAL", payment_id: 8, invoice_id: 9, amount: "320.00" }, { id: 2, entry_type: "APPLY", payment_id: 8, invoice_id: 1, amount: "280.00" }],
     refunds: [{ id: 1, payment_id: 8, refund_date: "2026-04-13", amount: "40.00", reason: "退回多收款", proof_attachment_id: 78 }] };
   const writes: { path: string; body: unknown }[] = [];

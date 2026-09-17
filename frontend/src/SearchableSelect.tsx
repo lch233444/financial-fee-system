@@ -11,9 +11,11 @@ export function matchesSearch(text: string, query: string) {
 export default function SearchableSelect({
   label, value, onChange, options, name, required = false, disabled = false,
   placeholder = "请选择", searchPlaceholder = "输入客户名称搜索…",
+  optionLimit = 100, centerSelectedOnOpen = false,
 }: {
   label: string; value: string; onChange: (value: string) => void; options: Option[];
   name?: string; required?: boolean; disabled?: boolean; placeholder?: string; searchPlaceholder?: string;
+  optionLimit?: number; centerSelectedOnOpen?: boolean;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -26,7 +28,7 @@ export default function SearchableSelect({
   const selected = options.find((option) => option.value === value);
   const matches = useMemo(() => options.filter((option) => matchesSearch(option.label, query)), [options, query]);
   // Limit rendered options while allowing a focused name search over the complete list.
-  const visible = matches.slice(0, 100);
+  const visible = matches.slice(0, optionLimit);
 
   useEffect(() => {
     input.current?.setCustomValidity(required && !selected ? `请从列表选择${label}` : "");
@@ -59,11 +61,22 @@ export default function SearchableSelect({
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open || !centerSelectedOnOpen || query) return;
+    const list = document.getElementById(`${id}-list`);
+    const option = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !option) return;
+    const optionBox = option.getBoundingClientRect();
+    const listBox = list.getBoundingClientRect();
+    // Scroll only the options, keeping the year field and page in place.
+    list.scrollTop += optionBox.top - listBox.top - (list.clientHeight - optionBox.height) / 2;
+  }, [open, centerSelectedOnOpen, query, position.maxHeight, id]);
+
   useEffect(() => {
     if (open && active >= 0) document.getElementById(`${id}-option-${active}`)?.scrollIntoView?.({ block: "nearest" });
   }, [active, id, open]);
 
-  function show() { if (!disabled) { setQuery(""); setActive(-1); setOpen(true); } }
+  function show() { if (!disabled) { setQuery(""); setActive(centerSelectedOnOpen ? options.slice(0, optionLimit).findIndex((option) => option.value === value) : -1); setOpen(true); } }
   function choose(option: Option) {
     onChange(option.value);
     setQuery("");
@@ -108,7 +121,7 @@ export default function SearchableSelect({
         {!visible.length ? <div className="combobox-empty">没有匹配项，请更换关键词</div> : null}
       </div>
       <div id={`${id}-hint`} className="combobox-hint" role="status">
-        {matches.length > 100 ? `找到 ${matches.length} 项，显示前100项；输入更多关键词缩小范围。` : `${matches.length} 个选项 · ↑↓ 移动，Enter 选择`}
+        {matches.length > optionLimit ? `找到 ${matches.length} 项，显示前${optionLimit}项；输入更多关键词缩小范围。` : `${matches.length} 个选项 · ↑↓ 移动，Enter 选择`}
         {selected ? <span>当前选择已保留：{selected.label}</span> : null}
       </div>
     </div>, document.body) : null}

@@ -442,6 +442,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
   async function addPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !correctionContextReady || pendingReplacementCorrection || paymentBusyRef.current || correctionBusyRef.current || invoiceVoidBusyRef.current) return;
+    const target = selected;
     const form = event.currentTarget;
     const data = new FormData(form);
     let uploadedProofId: number | null = null;
@@ -458,15 +459,15 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       if (!paymentDate) throw new Error("必须填写Payment Date");
       if (amountCents == null || amountCents <= 0) throw new Error("实际现金必须为大于0且最多两位小数的金额");
       if (differenceCents == null || differenceCents < 0) throw new Error("公司承担差额必须为非负且最多两位小数的金额");
-      if (amountCents + differenceCents !== moneyToCents(selected.amount)) {
-        throw new Error(`实际现金与公司承担差额必须精确等于Invoice金额 HKD ${selected.amount}`);
+      if (amountCents + differenceCents !== moneyToCents(target.amount)) {
+        throw new Error(`实际现金与公司承担差额必须精确等于Invoice金额 HKD ${target.amount}`);
       }
       if (differenceCents > 0 && !differenceReason) throw new Error("公司承担差额大于0时必须填写原因");
       const proof = data.get("proof");
       if (!(proof instanceof File) || !proof.size) throw new Error("必须选择付款凭证文件");
       const uploaded = await uploadUnclaimedProof(proof, "PAYMENT");
       uploadedProofId = uploaded.id;
-      await postJson<Invoice>(`/api/invoices/${selected.id}/payments`, {
+      await postJson<Invoice>(`/api/invoices/${target.id}/payments`, {
         payment_date: paymentDate,
         amount,
         method: String(data.get("method") || "BANK_TRANSFER"),
@@ -483,7 +484,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       const message = err instanceof Error ? err.message : "付款登记失败";
       if (uploadedProofId != null) {
         try {
-          const refreshed = await api<Invoice>(`/api/invoices/${selected.id}`);
+          const refreshed = await api<Invoice>(`/api/invoices/${target.id}`);
           if (refreshed.payments.some((payment) => payment.proof_attachment_id === uploadedProofId)) {
             form.reset();
             setPaymentDifference("0.00");
@@ -816,7 +817,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       {mode === "issue" && selected?.lifecycle_status === "ISSUING" ? <Panel title="恢复出具中的Invoice" subtitle="系统在预留编号后曾中断。请依据归档文件完整性完成签发，或退回Draft重新出具；已预留编号永久保留且不会复用。"><div className="invoice-recovery"><div><strong>{!selected.issue_recovery ? "恢复状态尚未就绪" : selected.issue_recovery.files_complete ? "中英文归档文件完整" : "归档文件不完整"}</strong><span>{!selected.issue_recovery ? "请刷新Invoice清单；恢复状态可用前不会开放任何操作。" : selected.issue_recovery.files_complete ? "可以完成签发，也可以退回Draft重新核对。" : "不能直接完成签发，请退回Draft后重新生成两份归档PDF。"}</span></div><div className="invoice-actions"><button className="primary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_complete} onClick={() => void recoverIssuing("COMPLETE")}><CheckCircle2 size={17} />{recoveryBusy === "COMPLETE" ? "正在核验..." : "完成签发"}</button><button className="secondary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_return_to_draft} onClick={() => void recoverIssuing("RETURN_TO_DRAFT")}><RotateCcw size={17} />{recoveryBusy === "RETURN_TO_DRAFT" ? "正在退回..." : "退回Draft"}</button></div></div></Panel> : null}
       {selected?.lifecycle_status === "ISSUED" ? <Panel id="invoice-payment" title={mode === "issue" ? "账单PDF与更正" : "付款确认与更正"} subtitle="新付款只允许一次完整确认；实际现金与人工确认的公司承担差额必须精确结清Invoice，付款凭证是硬前置。">
         <div className="invoice-actions"><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />中文PDF</button><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />English PDF</button><button className="danger" type="button" aria-expanded={showCorrection} onClick={() => { setEditingCorrection(null); setShowCorrection((value) => !value); }} disabled={invoiceMutationBusy || !correctionContextReady || Boolean(selectedOriginalCorrection) || Boolean(pendingReplacementCorrection) || hasIncompleteHistoricalFunds} title={selectedOriginalCorrection ? "该Invoice已经作为原单发起过更正" : pendingReplacementCorrection ? `请先完成Invoice更正 #${pendingReplacementCorrection.id}` : hasIncompleteHistoricalFunds ? "历史资金台账未完整平账，必须先人工核对" : undefined}><RotateCcw size={17} />{correctionBusy ? "更正处理中..." : "更正账单"}</button>{!selected.payments.length && !selectedCorrection ? <button className="ghost" type="button" onClick={() => void voidInvoice()} disabled={invoiceMutationBusy || !correctionContextReady}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "直接作废（无替代）"}</button> : null}</div>
-        {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往收款情况，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
+        {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往收款情况，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form key={selected.id} className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
           <Field label="Payment Date"><input name="payment_date" type="date" defaultValue={todayIso()} required disabled={paymentBusy} /></Field>
           <Field label="实际现金 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={paymentBusy} /></Field>
           <Field label="公司承担差额 (HKD)" hint={`实际现金＋差额必须等于 HKD ${selected.amount}`}><input name="company_difference" type="number" min="0" step="0.01" value={paymentDifference} onChange={(event) => setPaymentDifference(event.target.value)} required disabled={paymentBusy} /></Field>

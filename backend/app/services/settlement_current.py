@@ -322,6 +322,8 @@ def calculate_current_settlement(
             raise SettlementCurrentStateError(400, "Closing Snapshot与Sub Account不匹配")
         if closing_snapshot.as_of_date != line_closing_date:
             raise SettlementCurrentStateError(400, "Closing Snapshot日期必须等于该账户Closing Date")
+        if line_closing_date != natural_end and line_closing_date != account.end_date:
+            raise SettlementCurrentStateError(400, "Closing Date必须是所选季末或Sub Account当前实际退出日")
         if not closing_snapshot.eligible_for_closing:
             raise SettlementCurrentStateError(400, "该余额快照不是季末或退出日，不能作为Closing")
 

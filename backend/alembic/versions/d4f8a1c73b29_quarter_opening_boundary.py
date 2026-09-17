@@ -46,6 +46,8 @@ EXPECTED_OLD_BOUNDARY_COUNTS = {
 
 def upgrade() -> None:
     connection = op.get_bind()
+    if not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
     rows = connection.exec_driver_sql(
         "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN (?, ?, ?)",
         TARGET_TRIGGER_NAMES,

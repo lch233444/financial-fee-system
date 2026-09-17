@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 import app.config as config_module
 import app.database as database_module
 from app.config import Settings
-from app.services.backup import _validate_sqlite_database
+from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 from app.services.settlement_boundary_contract import (
     settlement_boundary_trigger_sql_is_current,
 )
@@ -20,7 +20,7 @@ from app.services.settlement_boundary_contract import (
 
 PREVIOUS_REVISION = "7f3c2a91b6e4"
 DELETE_GUARD_REVISION = "c1a7d5e9b402"
-HEAD_REVISION = "a916c0e2b102"
+HEAD_REVISION = CURRENT_DATABASE_REVISION
 DELETE_GUARD_TRIGGERS = {
     "trg_client_delete_no_cascade",
     "trg_account_delete_no_cascade",

@@ -23,6 +23,7 @@ from .storage import sha256_file
 from .invoice_group_contract import INVOICE_GROUP_REVISION, invoice_group_schema_is_current
 from .company_scope_contract import COMPANY_SCOPE_REVISION, CODE_TRIGGER_SQL, company_scope_schema_is_current
 from .invoice_correction_contract import CORRECTION_REVISION, correction_schema_is_current
+from .closing_date_contract import CLOSING_DATE_REVISION, closing_date_schema_is_current
 from .release_100_contract import RELEASE_100_REVISION, HWM_TRIGGER_SQL, release_100_schema_is_current
 from .invoice_payee_contract import PAYEE_REVISION, payee_trigger_sql_is_current
 from .workflow_guard_contract import workflow_trigger_sql_is_current, workflow_trigger_sql_is_legacy
@@ -56,7 +57,7 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "7f3c2a91b6e4",
         "c1a7d5e9b402",
         "d4f8a1c73b29",
-        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
+        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION,
     }
 )
 OLD_HEAD_TRIGGER_NAMES = frozenset(
@@ -185,7 +186,7 @@ _LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
 _LEGACY_REUSE_REVISION = "c1a7d5e9b402"
 _LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
 _LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
-CURRENT_DATABASE_REVISION = CORRECTION_REVISION
+CURRENT_DATABASE_REVISION = CLOSING_DATE_REVISION
 PATH_REBASE_TRIGGER_NAMES = (
     "trg_attachment_update_block_finalized_evidence",
     "trg_attachment_update_block_payment_evidence",
@@ -1790,330 +1791,340 @@ def _sqlite_database_revision(database_path: Path) -> str | None:
 
 def _validate_sqlite_database(database_path: Path) -> None:
     try:
-        # ``immutable=1`` prevents a WAL-mode backup from creating -wal/-shm
-        # sidecar files inside the already validated archive tree.
+        # Immutable archives must not create WAL/SHM files in the verified tree.
         connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
         try:
-            integrity_rows = connection.execute("PRAGMA integrity_check").fetchall()
-            foreign_key_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
-            table_names = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).fetchall()
-            }
-            for table_name, required_columns in REQUIRED_DATABASE_COLUMNS.items():
-                if table_name not in table_names:
-                    raise ValueError("备份数据库不是金融计划收费系统数据库")
-                actual_columns = {
-                    row[1]
-                    for row in connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
-                }
-                if not required_columns.issubset(actual_columns):
-                    raise ValueError("备份数据库结构不兼容")
-            if "alembic_version" in table_names:
-                revision_rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
-                if (
-                    len(revision_rows) != 1
-                    or not isinstance(revision_rows[0][0], str)
-                    or revision_rows[0][0] not in SUPPORTED_DATABASE_REVISIONS
-                ):
-                    raise ValueError("备份数据库迁移版本不受当前系统支持")
-                database_revision = revision_rows[0][0]
-                if database_revision in {
-                    "c4b7f1d92e60",
-                    "9d2f6a8c4b13",
-                    "7f3c2a91b6e4",
-                    "c1a7d5e9b402",
-                    "d4f8a1c73b29",
-                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
-                }:
-                    _require_named_partial_unique_index(
-                        connection,
-                        "invoices",
-                        "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} else "uq_invoices_active_client_period_plan",
-                        ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
-                        "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')",
-                    )
-                    _require_named_partial_unique_index(
-                        connection,
-                        "invoice_sources",
-                        "uq_invoice_sources_active_settlement",
-                        ("settlement_id",),
-                        "active = 1",
-                    )
-                if database_revision == "9d2f6a8c4b13":
-                    trigger_sql = {
-                        str(row[0]): str(row[1] or "")
-                        for row in connection.execute(
-                            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
-                        ).fetchall()
-                    }
-                    if set(trigger_sql) != OLD_HEAD_TRIGGER_NAMES or any(
-                        not trigger_sql[name].strip() for name in OLD_HEAD_TRIGGER_NAMES
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                if database_revision in {
-                    "7f3c2a91b6e4",
-                    "c1a7d5e9b402",
-                    "d4f8a1c73b29",
-                    "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION,
-                }:
-                    settlement_columns = {
-                        row[1]
-                        for row in connection.execute(
-                            'PRAGMA table_info("quarterly_settlements")'
-                        ).fetchall()
-                    }
-                    required_ledger_columns = {
-                        "invoice_corrections": {
-                            "original_invoice_id", "replacement_invoice_id", "status", "reason"
-                        },
-                        "payment_allocations": {
-                            "payment_id", "invoice_id", "amount_cents", "entry_type",
-                            "reverses_allocation_id", "correction_id"
-                        },
-                        "payment_refunds": {
-                            "payment_id", "correction_id", "amount_cents", "proof_attachment_id"
-                        },
-                        "invoice_adjustments": {
-                            "invoice_id", "correction_id", "payment_id",
-                            "adjustment_type", "amount_cents"
-                        },
-                    }
-                    if not {"version_no", "replaces_settlement_id"}.issubset(
-                        settlement_columns
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    for table_name, required_columns in required_ledger_columns.items():
-                        if table_name not in table_names:
-                            raise ValueError("备份数据库结构不兼容")
-                        actual_columns = {
-                            row[1]
-                            for row in connection.execute(
-                                f'PRAGMA table_info("{table_name}")'
-                            ).fetchall()
-                        }
-                        if not required_columns.issubset(actual_columns):
-                            raise ValueError("备份数据库结构不兼容")
-                    payment_info = {
-                        row[1]: row
-                        for row in connection.execute('PRAGMA table_info("payments")').fetchall()
-                    }
-                    if (
-                        not payment_info.get("proof_attachment_id")
-                        or payment_info["proof_attachment_id"][3] != 1
-                        or not payment_info.get("company_difference_cents")
-                        or payment_info["company_difference_cents"][3] != 1
-                        or "difference_reason" not in payment_info
-                        or str(payment_info["company_difference_cents"][4] or "").strip(
-                            "()'\" "
-                        ) != "0"
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    _require_named_partial_unique_index(
-                        connection,
-                        "quarterly_settlements",
-                        "uq_settlement_group_period_active",
-                        ("client_id", "platform_id", "fee_plan_id", "year", "quarter"),
-                        "status != 'VOID'",
-                    )
-
-                    def foreign_keys(table_name: str) -> set[tuple[str, str, str, str]]:
-                        return {
-                            (str(row[3]), str(row[2]), str(row[4]), str(row[6]).upper())
-                            for row in connection.execute(
-                                f'PRAGMA foreign_key_list("{table_name}")'
-                            ).fetchall()
-                        }
-
-                    required_foreign_keys = {
-                        "quarterly_settlements": {
-                            ("previous_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
-                            ("replaces_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
-                        },
-                        "payments": {
-                            ("invoice_id", "invoices", "id", "RESTRICT"),
-                            ("proof_attachment_id", "attachments", "id", "RESTRICT"),
-                        },
-                        "invoice_corrections": {
-                            ("original_invoice_id", "invoices", "id", "RESTRICT"),
-                            ("replacement_invoice_id", "invoices", "id", "RESTRICT"),
-                        },
-                        "payment_allocations": {
-                            ("payment_id", "payments", "id", "RESTRICT"),
-                            ("invoice_id", "invoices", "id", "RESTRICT"),
-                            ("reverses_allocation_id", "payment_allocations", "id", "RESTRICT"),
-                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
-                        },
-                        "payment_refunds": {
-                            ("payment_id", "payments", "id", "RESTRICT"),
-                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
-                            ("proof_attachment_id", "attachments", "id", "RESTRICT"),
-                        },
-                        "invoice_adjustments": {
-                            ("invoice_id", "invoices", "id", "RESTRICT"),
-                            ("correction_id", "invoice_corrections", "id", "RESTRICT"),
-                            ("payment_id", "payments", "id", "RESTRICT"),
-                        },
-                    }
-                    if any(
-                        not required.issubset(foreign_keys(table_name))
-                        for table_name, required in required_foreign_keys.items()
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-
-                    required_unique_columns = {
-                        "quarterly_settlements": {
-                            (
-                                "client_id", "platform_id", "fee_plan_id",
-                                "year", "quarter", "version_no",
-                            ),
-                            ("replaces_settlement_id",),
-                        },
-                        "payments": {("proof_attachment_id",)},
-                        "invoice_corrections": {
-                            ("original_invoice_id",),
-                            ("replacement_invoice_id",),
-                        },
-                        "payment_allocations": {("reverses_allocation_id",)},
-                        "payment_refunds": {("proof_attachment_id",)},
-                        "invoice_adjustments": {("payment_id",)},
-                    }
-                    for table_name, required_columns in required_unique_columns.items():
-                        _require_nonpartial_unique_columns(
-                            connection, table_name, required_columns
-                        )
-
-                    table_sql = {
-                        table_name: str(
-                            connection.execute(
-                                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-                                (table_name,),
-                            ).fetchone()[0]
-                            or ""
-                        )
-                        for table_name in ("payments", "invoice_adjustments")
-                    }
-                    if not all(
-                        marker in table_sql["payments"]
-                        for marker in (
-                            "ck_payment_company_difference_nonnegative",
-                            "ck_payment_difference_reason",
-                        )
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "ck_invoice_adjustment_owner_shape" not in table_sql[
-                        "invoice_adjustments"
-                    ]:
-                        raise ValueError("备份数据库结构不兼容")
-                    trigger_sql = {
-                        row[0]: str(row[1] or "")
-                        for row in connection.execute(
-                            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
-                        ).fetchall()
-                    }
-                    expected_trigger_names = (
-                        NEW_HEAD_TRIGGER_NAMES
-                        if database_revision == "7f3c2a91b6e4"
-                        else LATEST_HEAD_TRIGGER_NAMES
-                    )
-                    if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
-                        expected_trigger_names = expected_trigger_names | set(CODE_TRIGGER_SQL)
-                    if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION}:
-                        expected_trigger_names = expected_trigger_names | set(HWM_TRIGGER_SQL)
-                    if set(trigger_sql) != expected_trigger_names or any(
-                        not trigger_sql[name].strip() for name in expected_trigger_names
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    required_trigger_markers = {
-                        "trg_settlement_validate_finalize": "settlement_container_previous_changed",
-                        "trg_settlement_insert_draft_only": "settlement_replacement_invalid",
-                        "trg_settlement_parent_financial_lock": "settlement_replacement_identity_immutable",
-                        "trg_invoice_lifecycle_transition": "invoice_void_metadata_invalid",
-                        "trg_payment_validate_insert": "payment_proof_invalid",
-                        "trg_payment_allocation_validate_insert": "ordinary_payment_must_settle_invoice",
-                        "trg_invoice_block_void_with_payment": "invoice_payment_allocation_not_reversed",
-                        "trg_invoice_correction_validate_insert": "invoice_correction_group_already_open",
-                        "trg_invoice_correction_validate_update": "invoice_correction_source_lineage_invalid",
-                        "trg_invoice_adjustment_validate_insert": "payment.company_difference_cents",
-                    }
-                    if any(
-                        marker not in trigger_sql.get(trigger_name, "")
-                        for trigger_name, marker in required_trigger_markers.items()
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "invoice_void_metadata_immutable" not in trigger_sql.get(
-                        "trg_invoice_lifecycle_transition", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "payment_invoice_group_has_open_correction" not in trigger_sql.get(
-                        "trg_payment_validate_insert", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if not all(
-                        marker in trigger_sql.get("trg_payment_validate_insert", "")
-                        for marker in (
-                            "payment_invoice_ledger_not_empty",
-                            "payment_must_settle_invoice",
-                            "payment_difference_invalid",
-                            "payment_method_invalid",
-                        )
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "payment_refund_method_invalid" not in trigger_sql.get(
-                        "trg_payment_refund_validate_insert", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "invoice_correction_blank_replacement_ledger_required" not in trigger_sql.get(
-                        "trg_invoice_correction_validate_update", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "settlement_replacement_invalid_at_finalize" not in trigger_sql.get(
-                        "trg_settlement_parent_financial_lock", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if "invoice_open_correction_replacement_cannot_void" not in trigger_sql.get(
-                        "trg_invoice_block_void_with_payment", ""
-                    ):
-                        raise ValueError("备份数据库结构不兼容")
-                    if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
-                        _validate_backup_id_high_water_settings(connection)
-                        if not delete_guard_trigger_sql_is_current(trigger_sql):
-                            raise ValueError("备份数据库结构不兼容")
-                    if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
-                        if not settlement_boundary_trigger_sql_is_legacy(trigger_sql):
-                            raise ValueError("备份数据库结构不兼容")
-                    elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
-                        if not settlement_boundary_trigger_sql_is_current(trigger_sql):
-                            raise ValueError("备份数据库结构不兼容")
-                        workflow_valid = (
-                            workflow_trigger_sql_is_current(trigger_sql)
-                            if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}
-                            else workflow_trigger_sql_is_legacy(trigger_sql)
-                        )
-                        if not workflow_valid:
-                            raise ValueError("备份数据库财务流程保护结构不兼容")
-                if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION}:
-                    if not payee_trigger_sql_is_current(trigger_sql):
-                        raise ValueError("备份数据库收款公司保护结构不兼容")
-                    for table, column in (("invoices", "payee_company_id"), ("invoice_corrections", "target_company_id")):
-                        info = {row[1]: row for row in connection.execute(f'PRAGMA table_info("{table}")')}
-                        foreign_keys = {(row[3], row[2], row[4], row[6]) for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')}
-                        if column not in info or info[column][2].upper() != 'INTEGER' or (column, 'companies', 'id', 'RESTRICT') not in foreign_keys:
-                            raise ValueError("备份数据库收款公司字段或外键结构不兼容")
-                if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} and not invoice_group_schema_is_current(connection):
-                    raise ValueError("备份数据库客户季度合并保护结构不兼容")
-                if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION} and not company_scope_schema_is_current(connection):
-                    raise ValueError("备份数据库公司解绑保护结构不兼容")
-                if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION} and not release_100_schema_is_current(connection):
-                    raise ValueError("备份数据库首次HWM或月度编号结构不兼容")
-                if database_revision == CORRECTION_REVISION and not correction_schema_is_current(connection):
-                    raise ValueError("备份数据库统一更正保护结构不兼容")
+            validate_database_structure(connection)
         finally:
             connection.close()
     except sqlite3.Error as exc:
         raise ValueError("备份数据库无法打开") from exc
+
+
+def validate_database_structure(connection: sqlite3.Connection) -> None:
+    """Validate one connection's schema, guards and integrity for startup or backup.
+
+    Startup supplies its live WAL-aware connection; archived backups supply an
+    immutable read-only connection. Neither path repairs an incomplete schema.
+    """
+    integrity_rows = connection.execute("PRAGMA integrity_check").fetchall()
+    foreign_key_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
+    table_names = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    for table_name, required_columns in REQUIRED_DATABASE_COLUMNS.items():
+        if table_name not in table_names:
+            raise ValueError("备份数据库不是金融计划收费系统数据库")
+        actual_columns = {
+            row[1]
+            for row in connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        }
+        if not required_columns.issubset(actual_columns):
+            raise ValueError("备份数据库结构不兼容")
+    if "alembic_version" in table_names:
+        revision_rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+        if (
+            len(revision_rows) != 1
+            or not isinstance(revision_rows[0][0], str)
+            or revision_rows[0][0] not in SUPPORTED_DATABASE_REVISIONS
+        ):
+            raise ValueError("备份数据库迁移版本不受当前系统支持")
+        database_revision = revision_rows[0][0]
+        if database_revision in {
+            "c4b7f1d92e60",
+            "9d2f6a8c4b13",
+            "7f3c2a91b6e4",
+            "c1a7d5e9b402",
+            "d4f8a1c73b29",
+            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION,
+        }:
+            _require_named_partial_unique_index(
+                connection,
+                "invoices",
+                "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION} else "uq_invoices_active_client_period_plan",
+                ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
+                "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')",
+            )
+            _require_named_partial_unique_index(
+                connection,
+                "invoice_sources",
+                "uq_invoice_sources_active_settlement",
+                ("settlement_id",),
+                "active = 1",
+            )
+        if database_revision == "9d2f6a8c4b13":
+            trigger_sql = {
+                str(row[0]): str(row[1] or "")
+                for row in connection.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+                ).fetchall()
+            }
+            if set(trigger_sql) != OLD_HEAD_TRIGGER_NAMES or any(
+                not trigger_sql[name].strip() for name in OLD_HEAD_TRIGGER_NAMES
+            ):
+                raise ValueError("备份数据库结构不兼容")
+        if database_revision in {
+            "7f3c2a91b6e4",
+            "c1a7d5e9b402",
+            "d4f8a1c73b29",
+            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION,
+        }:
+            settlement_columns = {
+                row[1]
+                for row in connection.execute(
+                    'PRAGMA table_info("quarterly_settlements")'
+                ).fetchall()
+            }
+            required_ledger_columns = {
+                "invoice_corrections": {
+                    "original_invoice_id", "replacement_invoice_id", "status", "reason"
+                },
+                "payment_allocations": {
+                    "payment_id", "invoice_id", "amount_cents", "entry_type",
+                    "reverses_allocation_id", "correction_id"
+                },
+                "payment_refunds": {
+                    "payment_id", "correction_id", "amount_cents", "proof_attachment_id"
+                },
+                "invoice_adjustments": {
+                    "invoice_id", "correction_id", "payment_id",
+                    "adjustment_type", "amount_cents"
+                },
+            }
+            if not {"version_no", "replaces_settlement_id"}.issubset(
+                settlement_columns
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            for table_name, required_columns in required_ledger_columns.items():
+                if table_name not in table_names:
+                    raise ValueError("备份数据库结构不兼容")
+                actual_columns = {
+                    row[1]
+                    for row in connection.execute(
+                        f'PRAGMA table_info("{table_name}")'
+                    ).fetchall()
+                }
+                if not required_columns.issubset(actual_columns):
+                    raise ValueError("备份数据库结构不兼容")
+            payment_info = {
+                row[1]: row
+                for row in connection.execute('PRAGMA table_info("payments")').fetchall()
+            }
+            if (
+                not payment_info.get("proof_attachment_id")
+                or payment_info["proof_attachment_id"][3] != 1
+                or not payment_info.get("company_difference_cents")
+                or payment_info["company_difference_cents"][3] != 1
+                or "difference_reason" not in payment_info
+                or str(payment_info["company_difference_cents"][4] or "").strip(
+                    "()'\" "
+                ) != "0"
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            _require_named_partial_unique_index(
+                connection,
+                "quarterly_settlements",
+                "uq_settlement_group_period_active",
+                ("client_id", "platform_id", "fee_plan_id", "year", "quarter"),
+                "status != 'VOID'",
+            )
+
+            def foreign_keys(table_name: str) -> set[tuple[str, str, str, str]]:
+                return {
+                    (str(row[3]), str(row[2]), str(row[4]), str(row[6]).upper())
+                    for row in connection.execute(
+                        f'PRAGMA foreign_key_list("{table_name}")'
+                    ).fetchall()
+                }
+
+            required_foreign_keys = {
+                "quarterly_settlements": {
+                    ("previous_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
+                    ("replaces_settlement_id", "quarterly_settlements", "id", "RESTRICT"),
+                },
+                "payments": {
+                    ("invoice_id", "invoices", "id", "RESTRICT"),
+                    ("proof_attachment_id", "attachments", "id", "RESTRICT"),
+                },
+                "invoice_corrections": {
+                    ("original_invoice_id", "invoices", "id", "RESTRICT"),
+                    ("replacement_invoice_id", "invoices", "id", "RESTRICT"),
+                },
+                "payment_allocations": {
+                    ("payment_id", "payments", "id", "RESTRICT"),
+                    ("invoice_id", "invoices", "id", "RESTRICT"),
+                    ("reverses_allocation_id", "payment_allocations", "id", "RESTRICT"),
+                    ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                },
+                "payment_refunds": {
+                    ("payment_id", "payments", "id", "RESTRICT"),
+                    ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                    ("proof_attachment_id", "attachments", "id", "RESTRICT"),
+                },
+                "invoice_adjustments": {
+                    ("invoice_id", "invoices", "id", "RESTRICT"),
+                    ("correction_id", "invoice_corrections", "id", "RESTRICT"),
+                    ("payment_id", "payments", "id", "RESTRICT"),
+                },
+            }
+            if any(
+                not required.issubset(foreign_keys(table_name))
+                for table_name, required in required_foreign_keys.items()
+            ):
+                raise ValueError("备份数据库结构不兼容")
+
+            required_unique_columns = {
+                "quarterly_settlements": {
+                    (
+                        "client_id", "platform_id", "fee_plan_id",
+                        "year", "quarter", "version_no",
+                    ),
+                    ("replaces_settlement_id",),
+                },
+                "payments": {("proof_attachment_id",)},
+                "invoice_corrections": {
+                    ("original_invoice_id",),
+                    ("replacement_invoice_id",),
+                },
+                "payment_allocations": {("reverses_allocation_id",)},
+                "payment_refunds": {("proof_attachment_id",)},
+                "invoice_adjustments": {("payment_id",)},
+            }
+            for table_name, required_columns in required_unique_columns.items():
+                _require_nonpartial_unique_columns(
+                    connection, table_name, required_columns
+                )
+
+            table_sql = {
+                table_name: str(
+                    connection.execute(
+                        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (table_name,),
+                    ).fetchone()[0]
+                    or ""
+                )
+                for table_name in ("payments", "invoice_adjustments")
+            }
+            if not all(
+                marker in table_sql["payments"]
+                for marker in (
+                    "ck_payment_company_difference_nonnegative",
+                    "ck_payment_difference_reason",
+                )
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "ck_invoice_adjustment_owner_shape" not in table_sql[
+                "invoice_adjustments"
+            ]:
+                raise ValueError("备份数据库结构不兼容")
+            trigger_sql = {
+                row[0]: str(row[1] or "")
+                for row in connection.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+                ).fetchall()
+            }
+            expected_trigger_names = (
+                NEW_HEAD_TRIGGER_NAMES
+                if database_revision == "7f3c2a91b6e4"
+                else LATEST_HEAD_TRIGGER_NAMES
+            )
+            if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}:
+                expected_trigger_names = expected_trigger_names | set(CODE_TRIGGER_SQL)
+            if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}:
+                expected_trigger_names = expected_trigger_names | set(HWM_TRIGGER_SQL)
+            if set(trigger_sql) != expected_trigger_names or any(
+                not trigger_sql[name].strip() for name in expected_trigger_names
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            required_trigger_markers = {
+                "trg_settlement_validate_finalize": "settlement_container_previous_changed",
+                "trg_settlement_insert_draft_only": "settlement_replacement_invalid",
+                "trg_settlement_parent_financial_lock": "settlement_replacement_identity_immutable",
+                "trg_invoice_lifecycle_transition": "invoice_void_metadata_invalid",
+                "trg_payment_validate_insert": "payment_proof_invalid",
+                "trg_payment_allocation_validate_insert": "ordinary_payment_must_settle_invoice",
+                "trg_invoice_block_void_with_payment": "invoice_payment_allocation_not_reversed",
+                "trg_invoice_correction_validate_insert": "invoice_correction_group_already_open",
+                "trg_invoice_correction_validate_update": "invoice_correction_source_lineage_invalid",
+                "trg_invoice_adjustment_validate_insert": "payment.company_difference_cents",
+            }
+            if any(
+                marker not in trigger_sql.get(trigger_name, "")
+                for trigger_name, marker in required_trigger_markers.items()
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "invoice_void_metadata_immutable" not in trigger_sql.get(
+                "trg_invoice_lifecycle_transition", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "payment_invoice_group_has_open_correction" not in trigger_sql.get(
+                "trg_payment_validate_insert", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if not all(
+                marker in trigger_sql.get("trg_payment_validate_insert", "")
+                for marker in (
+                    "payment_invoice_ledger_not_empty",
+                    "payment_must_settle_invoice",
+                    "payment_difference_invalid",
+                    "payment_method_invalid",
+                )
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "payment_refund_method_invalid" not in trigger_sql.get(
+                "trg_payment_refund_validate_insert", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "invoice_correction_blank_replacement_ledger_required" not in trigger_sql.get(
+                "trg_invoice_correction_validate_update", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "settlement_replacement_invalid_at_finalize" not in trigger_sql.get(
+                "trg_settlement_parent_financial_lock", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if "invoice_open_correction_replacement_cannot_void" not in trigger_sql.get(
+                "trg_invoice_block_void_with_payment", ""
+            ):
+                raise ValueError("备份数据库结构不兼容")
+            if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}:
+                _validate_backup_id_high_water_settings(connection)
+                if not delete_guard_trigger_sql_is_current(trigger_sql):
+                    raise ValueError("备份数据库结构不兼容")
+            if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
+                if not settlement_boundary_trigger_sql_is_legacy(trigger_sql):
+                    raise ValueError("备份数据库结构不兼容")
+            elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}:
+                if not settlement_boundary_trigger_sql_is_current(trigger_sql):
+                    raise ValueError("备份数据库结构不兼容")
+                workflow_valid = (
+                    workflow_trigger_sql_is_current(trigger_sql)
+                    if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}
+                    else workflow_trigger_sql_is_legacy(trigger_sql)
+                )
+                if not workflow_valid:
+                    raise ValueError("备份数据库财务流程保护结构不兼容")
+        if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION}:
+            if not payee_trigger_sql_is_current(trigger_sql):
+                raise ValueError("备份数据库收款公司保护结构不兼容")
+            for table, column in (("invoices", "payee_company_id"), ("invoice_corrections", "target_company_id")):
+                info = {row[1]: row for row in connection.execute(f'PRAGMA table_info("{table}")')}
+                foreign_keys = {(row[3], row[2], row[4], row[6]) for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')}
+                if column not in info or info[column][2].upper() != 'INTEGER' or (column, 'companies', 'id', 'RESTRICT') not in foreign_keys:
+                    raise ValueError("备份数据库收款公司字段或外键结构不兼容")
+        if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION} and not invoice_group_schema_is_current(connection):
+            raise ValueError("备份数据库客户季度合并保护结构不兼容")
+        if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION} and not company_scope_schema_is_current(connection):
+            raise ValueError("备份数据库公司解绑保护结构不兼容")
+        if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION} and not release_100_schema_is_current(connection):
+            raise ValueError("备份数据库首次HWM或月度编号结构不兼容")
+        if database_revision in {CORRECTION_REVISION, CLOSING_DATE_REVISION} and not correction_schema_is_current(connection):
+            raise ValueError("备份数据库统一更正保护结构不兼容")
+        if database_revision == CLOSING_DATE_REVISION and not closing_date_schema_is_current(connection):
+            raise ValueError("备份数据库Closing日期保护结构不兼容")
     if integrity_rows != [("ok",)]:
         raise ValueError("备份数据库完整性校验失败")
     if foreign_key_rows:

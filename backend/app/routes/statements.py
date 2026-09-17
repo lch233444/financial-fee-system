@@ -378,11 +378,12 @@ def _statement_delete_logical_references(
     return references
 
 
-def _source_path_for_delete(
+def _checked_statement_source(
     db: Session,
     *,
     item: StatementImport,
     require_integrity: bool,
+    operation: str = "删除",
 ) -> tuple[Path | None, str | None]:
     source_path = Path(item.stored_path)
     statement_root = get_settings().data_root / "statement_imports"
@@ -393,34 +394,33 @@ def _source_path_for_delete(
             or statement_root.is_symlink()
             or statement_root.is_junction()
         ):
-            _delete_conflict(db, "账单原件根路径不是非链接普通目录，已停止删除")
+            _delete_conflict(db, f"账单原件根路径不是非链接普通目录，已停止{operation}")
         if not is_within(source_path, statement_root):
-            _delete_conflict(db, "导入原件路径不安全，已停止删除")
+            _delete_conflict(db, f"导入原件路径不安全，已停止{operation}")
         resolved_root = statement_root.resolve(strict=True)
         resolved_parent = source_path.parent.resolve(strict=True)
         if os.path.normcase(str(resolved_parent)) != os.path.normcase(str(resolved_root)):
-            _delete_conflict(db, "导入原件不在账单目录顶层，已停止删除")
+            _delete_conflict(db, f"导入原件不在账单目录顶层，已停止{operation}")
         try:
             source_stat = source_path.lstat()
         except FileNotFoundError:
             source_stat = None
         exists = source_stat is not None
         if exists and not stat_module.S_ISREG(source_stat.st_mode):
-            _delete_conflict(db, "导入原件路径不是普通文件，已停止删除")
+            _delete_conflict(db, f"导入原件路径不是普通文件，已停止{operation}")
         actual_sha256 = sha256_file(source_path) if exists else None
         if exists and actual_sha256.casefold() != item.sha256.casefold():
-            _delete_conflict(db, "导入原件SHA-256不一致（与数据库记录不符），已停止删除")
+            _delete_conflict(db, f"导入原件SHA-256不一致（与数据库记录不符），已停止{operation}")
         if require_integrity:
             if source_stat is None:
-                _delete_conflict(db, "已确认入账的导入原件不存在，已停止删除")
+                _delete_conflict(db, f"导入原件不存在，已停止{operation}")
             else:
                 if source_stat.st_size <= 0:
-                    _delete_conflict(db, "已确认入账的导入原件为空，已停止删除")
+                    _delete_conflict(db, f"导入原件为空，已停止{operation}")
     except (OSError, RuntimeError) as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="导入原件无法安全检查，已停止删除") from exc
+        raise HTTPException(status_code=409, detail=f"导入原件无法安全检查，已停止{operation}") from exc
     return (source_path if exists else None, actual_sha256)
-
 
 def _confirmed_snapshot_audit_summary(
     db: Session,
@@ -906,7 +906,7 @@ def delete_statement_import(
                 f"导入原件路径同时被记录 #{shared_source_id}引用，已停止删除",
             )
 
-        source_path, actual_source_sha256 = _source_path_for_delete(
+        source_path, actual_source_sha256 = _checked_statement_source(
             db,
             item=item,
             require_integrity=confirmed_snapshot is not None,
@@ -1312,6 +1312,7 @@ def _confirm_statement_locked(
     item = _require_statement(db, import_id)
     if item.status == "CONFIRMED":
         raise HTTPException(status_code=409, detail="该文件已经确认入账")
+    _checked_statement_source(db, item=item, require_integrity=True, operation="确认入账")
 
     extracted = item.extracted_json or {}
     document_type = extracted.get("document_type")

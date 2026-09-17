@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 
-from app.services.backup import _validate_sqlite_database
+from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 import app.database as database_module
 from app.services.invoice_correction_contract import CORRECTION_REVISION
 from app.services.invoice_payee_contract import PAYEE_REVISION, payee_trigger_sql_is_current
@@ -99,7 +99,7 @@ def test_unstamped_payee_or_previous_database_gets_proven_schema(tmp_path, monke
         database_module.init_db()
         _validate_sqlite_database(settings.database_path)
         with closing(sqlite3.connect(settings.database_path)) as sql:
-            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (CORRECTION_REVISION,)
+            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (CURRENT_DATABASE_REVISION,)
     finally:
         engine.dispose()
 

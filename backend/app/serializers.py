@@ -3,13 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from .config import get_settings
 from .money import money_string
 from .models import Attachment, BalanceSnapshot, Invoice, InvoiceCorrection, QuarterlySettlement
-from .services.invoice_archive import invoice_recovery_path_sets
-from .services.storage import is_within
+from .services.invoice_recovery import validated_recovery_archives
 
 
 def _optional_money(value: int | None) -> str | None:
@@ -192,17 +191,11 @@ def invoice_dict(item: Invoice) -> dict:
     if item.lifecycle_status == "ISSUING":
         settings = get_settings()
         pdf_root = settings.data_root / "output" / "pdf"
-        recovery_path_sets = (
-            invoice_recovery_path_sets(item.invoice_number, pdf_root)
-            if item.invoice_number
-            else ()
-        )
-        complete_path_sets = [
-            path_set
-            for path_set in recovery_path_sets
-            if all(path.is_file() and is_within(path, pdf_root) for path in path_set.values())
-        ]
-        files_complete = len(complete_path_sets) == 1
+        try:
+            validated_recovery_archives(item, pdf_root, object_session(item))
+            files_complete = True
+        except ValueError:
+            files_complete = False
         issue_recovery = {
             "files_complete": files_complete,
             "can_complete": files_complete,
@@ -281,7 +274,7 @@ def invoice_dict(item: Invoice) -> dict:
             {
                 "id": payment.id,
                 "payment_date": payment.payment_date.isoformat(),
-                "amount": money_string(allocated_by_payment.get(payment.id, payment.amount_cents)),
+                "amount": money_string(allocated_by_payment.get(payment.id, 0)),
                 "method": payment.method,
                 "proof_attachment_id": payment.proof_attachment_id,
                 "original_invoice_id": payment.invoice_id,

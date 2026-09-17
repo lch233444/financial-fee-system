@@ -1,5 +1,7 @@
 """Upgrade real d4 schemas with synthetic history, including an old skipped quarter."""
 from datetime import date
+from app.services.backup import CURRENT_DATABASE_REVISION
+
 import sqlite3
 from types import SimpleNamespace
 
@@ -21,7 +23,7 @@ from app.services.workflow_guard_contract import workflow_trigger_sql_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 
 PREVIOUS = "d4f8a1c73b29"
-HEAD = "a916c0e2b102"
+HEAD = CURRENT_DATABASE_REVISION
 
 
 def _seed_history(settings, *, finalize_q3=True):

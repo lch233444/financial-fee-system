@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 
 import app.database as database_module
 from app.main import app
-from app.services.backup import _validate_sqlite_database
+from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 from app.services.invoice_correction_contract import CORRECTION_REVISION, CORRECTION_COLUMNS, correction_schema_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
 from test_invoice_company_correction import _company
@@ -83,7 +83,7 @@ def test_migration_failure_rolls_back_columns_and_triggers(tmp_path, monkeypatch
         assert not CORRECTION_COLUMNS & {row[1] for row in sql.execute('PRAGMA table_info(invoice_corrections)')}
 
 
-@pytest.mark.parametrize('revision', [PREVIOUS, CORRECTION_REVISION])
+@pytest.mark.parametrize('revision', [PREVIOUS, CORRECTION_REVISION, CURRENT_DATABASE_REVISION])
 def test_unversioned_current_and_previous_schema_are_verified_and_upgraded(tmp_path, monkeypatch, revision):
     settings = _settings(tmp_path, revision, monkeypatch)
     command.upgrade(_alembic_config(settings), revision)
@@ -95,7 +95,7 @@ def test_unversioned_current_and_previous_schema_are_verified_and_upgraded(tmp_p
     try:
         database_module.init_db()
         with sqlite3.connect(settings.database_path) as sql:
-            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (CORRECTION_REVISION,)
+            assert sql.execute('SELECT version_num FROM alembic_version').fetchone() == (CURRENT_DATABASE_REVISION,)
             assert correction_schema_is_current(sql)
         _validate_sqlite_database(settings.database_path)
     finally:

@@ -769,7 +769,7 @@ class CodexAppServerClient:
         self._process: subprocess.Popen[str] | None = None
         self._initialized = False
         self._request_counter = 0
-        self._pending: dict[int, queue.Queue[Any]] = {}
+        self._pending: dict[int, tuple[subprocess.Popen[str], queue.Queue[Any]]] = {}
         self._notifications: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=2048)
         self._stderr_tail: list[str] = []
         self._process_failure: CodexUnavailableError | None = None
@@ -819,8 +819,16 @@ class CodexAppServerClient:
             return "Codex App Server已停止，请重新启动系统后再试"
         return "Codex App Server已停止"
 
-    def _reader_loop(self) -> None:
-        process = self._process
+    @staticmethod
+    def _deliver_response(waiter: queue.Queue[Any], response: Any) -> None:
+        try:
+            waiter.put_nowait(response)
+        except queue.Full:
+            # A valid reply or a previous terminal failure already won the race.
+            pass
+
+    def _reader_loop(self, process: subprocess.Popen[str] | None = None) -> None:
+        process = process if process is not None else self._process
         if not process or not process.stdout:
             return
         try:
@@ -834,48 +842,54 @@ class CodexAppServerClient:
                     continue
                 if not isinstance(message, dict):
                     continue
-                if "id" in message and ("result" in message or "error" in message):
-                    with self._pending_lock:
-                        waiter = self._pending.get(message["id"])
-                    if waiter:
-                        waiter.put(message)
-                    continue
-                # High-volume deltas are not needed; item/completed is the
-                # authoritative output for structured recognition.
-                if message.get("method") in {
-                    "item/agentMessage/delta",
-                    "item/reasoning/summaryTextDelta",
-                    "item/reasoning/textDelta",
-                    "thread/tokenUsage/updated",
-                }:
-                    continue
-                try:
-                    self._notifications.put_nowait(message)
-                except queue.Full:
+                with self._pending_lock:
+                    if self._process is not process:
+                        return
+                    if "id" in message and ("result" in message or "error" in message):
+                        pending = self._pending.get(message["id"])
+                        if pending and pending[0] is process:
+                            self._deliver_response(pending[1], message)
+                        continue
+                    # High-volume deltas are not needed; item/completed is the
+                    # authoritative output for structured recognition.
+                    if message.get("method") in {
+                        "item/agentMessage/delta",
+                        "item/reasoning/summaryTextDelta",
+                        "item/reasoning/textDelta",
+                        "thread/tokenUsage/updated",
+                    }:
+                        continue
                     try:
-                        self._notifications.get_nowait()
-                    except queue.Empty:
-                        pass
-                    self._notifications.put_nowait(message)
+                        self._notifications.put_nowait(message)
+                    except queue.Full:
+                        try:
+                            self._notifications.get_nowait()
+                        except queue.Empty:
+                            pass
+                        self._notifications.put_nowait(message)
         finally:
-            failure = CodexUnavailableError(self._public_process_error())
-            self._process_failure = failure
             with self._pending_lock:
-                waiters = list(self._pending.values())
-            for waiter in waiters:
-                waiter.put(failure)
+                failure = CodexUnavailableError(self._public_process_error())
+                if self._process is process:
+                    self._process_failure = failure
+                for owner, waiter in self._pending.values():
+                    if owner is process:
+                        self._deliver_response(waiter, failure)
 
-    def _stderr_loop(self) -> None:
-        process = self._process
+    def _stderr_loop(self, process: subprocess.Popen[str] | None = None) -> None:
+        process = process if process is not None else self._process
         if not process or not process.stderr:
             return
         for line in process.stderr:
             clean = line.strip()
-            if clean:
-                self._stderr_tail = [*self._stderr_tail[-19:], clean]
+            with self._pending_lock:
+                if self._process is not process:
+                    return
+                if clean:
+                    self._stderr_tail = [*self._stderr_tail[-19:], clean]
 
-    def _write(self, message: dict[str, Any]) -> None:
-        process = self._process
+    def _write(self, message: dict[str, Any], *, process: subprocess.Popen[str] | None = None) -> None:
+        process = process if process is not None else self._process
         if not process or process.poll() is not None or not process.stdin:
             raise CodexUnavailableError(self._public_process_error())
         serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
@@ -888,15 +902,18 @@ class CodexAppServerClient:
 
     def _rpc(self, method: str, params: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
         with self._pending_lock:
+            process = self._process
+            if process is None or self._process_failure is not None:
+                raise CodexUnavailableError(self._public_process_error())
             self._request_counter += 1
             request_id = self._request_counter
             waiter: queue.Queue[Any] = queue.Queue(maxsize=1)
-            self._pending[request_id] = waiter
+            self._pending[request_id] = (process, waiter)
         try:
             message: dict[str, Any] = {"method": method, "id": request_id}
             if params is not None:
                 message["params"] = params
-            self._write(message)
+            self._write(message, process=process)
             try:
                 response = waiter.get(timeout=max(timeout, 0.1))
             except queue.Empty as exc:
@@ -919,7 +936,7 @@ class CodexAppServerClient:
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             command = _codex_app_server_command(executable, overrides)
-            self._process = subprocess.Popen(
+            process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -937,10 +954,15 @@ class CodexAppServerClient:
             raise CodexUnavailableError(
                 "Codex运行程序无法启动；请检查安装或系统权限"
             ) from exc
-        self._process_failure = None
-        self._stderr_tail = []
-        threading.Thread(target=self._reader_loop, name="codex-app-server-reader", daemon=True).start()
-        threading.Thread(target=self._stderr_loop, name="codex-app-server-stderr", daemon=True).start()
+        with self._pending_lock:
+            self._process = process
+            self._process_failure = None
+            self._stderr_tail = []
+            self._notifications = queue.Queue(maxsize=2048)
+        # Bind before the thread starts: a delayed old reader must never attach
+        # itself to a later process or publish into that process's queues.
+        threading.Thread(target=self._reader_loop, args=(process,), name="codex-app-server-reader", daemon=True).start()
+        threading.Thread(target=self._stderr_loop, args=(process,), name="codex-app-server-stderr", daemon=True).start()
         settings = get_settings()
         try:
             initialize_result = self._rpc(
@@ -1005,11 +1027,16 @@ class CodexAppServerClient:
 
     def close(self) -> None:
         with self._start_lock:
-            process = self._process
-            self._process = None
-            self._initialized = False
-            if not process:
-                return
+            with self._pending_lock:
+                process = self._process
+                self._process = None
+                self._initialized = False
+                if not process:
+                    return
+                failure = CodexUnavailableError(self._public_process_error())
+                for owner, waiter in self._pending.values():
+                    if owner is process:
+                        self._deliver_response(waiter, failure)
             try:
                 if process.stdin:
                     process.stdin.close()

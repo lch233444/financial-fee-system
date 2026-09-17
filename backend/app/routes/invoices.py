@@ -52,6 +52,7 @@ from ..services.invoice_archive import (
     invoice_recovery_path_sets,
 )
 from ..services.pdf_invoice import generate_invoice_pdf
+from ..services.invoice_recovery import validated_recovery_archives
 from ..services.storage import is_within, sha256_file
 
 
@@ -817,28 +818,11 @@ def recover_issuing_invoice(
             if not item.invoice_number:
                 raise HTTPException(status_code=409, detail="ISSUING Invoice缺少已预留编号，不能完成签发")
             pdf_root = get_settings().data_root / "output" / "pdf"
-            recovery_path_sets = invoice_recovery_path_sets(item.invoice_number, pdf_root)
-            if any(
-                not is_within(path, pdf_root)
-                for path_set in recovery_path_sets
-                for path in path_set.values()
-            ):
-                raise HTTPException(status_code=409, detail="Invoice归档路径不安全，不能自动完成签发")
-            complete_path_sets = [
-                path_set
-                for path_set in recovery_path_sets
-                if all(path.is_file() for path in path_set.values())
-            ]
-            if not complete_path_sets:
-                raise HTTPException(status_code=409, detail="中文和英文Invoice PDF必须都完整存在于安全归档目录")
-            if len(complete_path_sets) > 1:
-                raise HTTPException(
-                    status_code=409,
-                    detail="同时发现哈希归档和旧版原名双语归档，不能自动完成签发；请人工核对后仅保留一组",
-                )
-            final_paths = complete_path_sets[0]
+            try:
+                final_paths, hashes = validated_recovery_archives(item, pdf_root, db)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             _validate_issue_sources(db, item)
-            hashes = {language: file_sha256(path) for language, path in final_paths.items()}
             attempt = _ensure_recovery_attempt(db, item)
             for language, output_path in final_paths.items():
                 db.add(
@@ -981,7 +965,8 @@ def create_invoice_correction(
             raise HTTPException(status_code=404, detail="目标收款Company不存在")
         if target.id == item.receiving_company_id:
             raise HTTPException(status_code=400, detail="目标收款Company与当前公司相同，无需更正")
-        _validate_issue_sources(db, item)
+        if not recalculate:
+            _validate_issue_sources(db, item)
 
     active_allocations = _active_apply_allocations(item)
     if active_allocations:
@@ -1453,8 +1438,8 @@ def download_invoice_pdf(
     db: Session = Depends(get_db),
 ) -> FileResponse:
     item = _reload_invoice(db, invoice_id)
-    if item.lifecycle_status not in {"ISSUED", "VOID"}:
-        raise HTTPException(status_code=409, detail="只有曾经Issued的Invoice才有正式PDF")
+    if item.lifecycle_status not in {"ISSUED", "VOID"} or not item.invoice_number:
+        raise HTTPException(status_code=409, detail="只有曾经Issued且有签发编号的Invoice才有正式PDF")
     settings = get_settings()
     filename = invoice_download_filename(item.invoice_number, item.id, language)
     paths = dict(item.pdf_paths_json or {})

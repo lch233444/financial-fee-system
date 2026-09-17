@@ -548,7 +548,14 @@ def init_db() -> None:
                                             with engine.connect() as correction_connection:
                                                 if not correction_schema_is_current(correction_connection):
                                                     raise RuntimeError("未版本化数据库的统一更正保护不完整；已停止启动")
-                                            command.stamp(alembic_config, CORRECTION_REVISION)
+                                            from .services.closing_date_contract import CLOSING_DATE_REVISION, closing_date_trigger_sql_is_current
+                                            if "settlement_closing_date_invalid" in trigger_sql.get("trg_settlement_validate_finalize", ""):
+                                                if not closing_date_trigger_sql_is_current(trigger_sql):
+                                                    raise RuntimeError("未版本化数据库的Closing日期保护不完整；已停止启动")
+                                                command.stamp(alembic_config, CLOSING_DATE_REVISION)
+                                            else:
+                                                command.stamp(alembic_config, CORRECTION_REVISION)
+                                                command.upgrade(alembic_config, "head")
                                         else:
                                             command.stamp(alembic_config, RELEASE_100_REVISION)
                                             command.upgrade(alembic_config, "head")
@@ -716,3 +723,13 @@ def init_db() -> None:
     with engine.connect() as correction_connection:
         if not correction_schema_is_current(correction_connection):
             raise RuntimeError("数据库统一更正保护不完整；系统已停止启动")
+
+    # Use the same complete guard/structure contract as data-package validation.
+    # Reading through this live connection includes WAL; immutable archive reads
+    # would miss current transactions and are deliberately not used here.
+    from .services.backup import validate_database_structure
+    with engine.connect() as structure_connection:
+        try:
+            validate_database_structure(structure_connection.connection.driver_connection)
+        except ValueError as exc:
+            raise RuntimeError(str(exc).replace("备份数据库", "数据库") + "；系统已停止启动") from exc

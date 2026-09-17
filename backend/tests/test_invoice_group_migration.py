@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 
 import app.database as database_module
-from app.services.backup import _validate_sqlite_database
+from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 from app.services.invoice_correction_contract import CORRECTION_REVISION
 from app.services.invoice_group_contract import INVOICE_GROUP_REVISION, invoice_group_schema_is_current
 from test_deletion_guard_migration import _settings, _alembic_config, _trigger_sql
@@ -89,6 +89,6 @@ def test_unstamped_client_quarter_database_is_recognized_without_rerunning_old_m
         database_module.init_db()
         _validate_sqlite_database(settings.database_path)
         with closing(sqlite3.connect(settings.database_path)) as sql:
-            assert sql.execute("SELECT version_num FROM alembic_version").fetchone() == (CORRECTION_REVISION,)
+            assert sql.execute("SELECT version_num FROM alembic_version").fetchone() == (CURRENT_DATABASE_REVISION,)
     finally:
         engine.dispose()

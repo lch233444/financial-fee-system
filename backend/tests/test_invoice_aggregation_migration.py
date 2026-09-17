@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.backup import CURRENT_DATABASE_REVISION
+
 import hashlib
 import sqlite3
 from pathlib import Path
@@ -17,7 +19,7 @@ from app import models as _models  # noqa: F401 - register all metadata tables
 from app.config import Settings
 
 
-HEAD_REVISION = "a916c0e2b102"
+HEAD_REVISION = CURRENT_DATABASE_REVISION
 PREVIOUS_REVISION = "a6d1f4c28b73"
 
 

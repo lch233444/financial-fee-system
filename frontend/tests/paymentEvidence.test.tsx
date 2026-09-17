@@ -11,7 +11,7 @@ const base = {
   adjustments: [{ id: 1, amount: "20.00", reason: "公司承担计算差额" }],
   payments: [{ id: 8, payment_date: "2026-04-12", method: "BANK_TRANSFER", amount: "280.00", original_amount: "320.00", original_invoice_id: 9, proof_attachment_id: 77 }],
 };
-function setup({ fileError = false, unpaid = false } = {}) {
+function setup({ fileError = false, unpaid = false, separateUnpaidClient = false } = {}) {
   const paid = { ...base, ...(unpaid ? { payment_status: "UNPAID", paid_amount: "0.00", adjustment_amount: "0.00", outstanding_amount: "300.00", payments: [], adjustments: [] } : {}) };
   const invoices = [paid,
     { ...base, id: 2, invoice_number: "ONLY30", fee_plan_id: 30, fee_plan_ids: [30] },
@@ -20,7 +20,7 @@ function setup({ fileError = false, unpaid = false } = {}) {
     { ...base, id: 5, invoice_number: "OTHER-YEAR", year: 2025 },
     { ...base, id: 6, invoice_number: "OTHER-QUARTER", quarter: 2 },
     { ...base, id: 7, invoice_number: "OTHER-COMPANY", payee_company_id: 1, company_name: "公司甲" },
-    { ...base, id: 10, invoice_number: "UNPAID-001", payment_status: "UNPAID", payments: [], paid_amount: "0.00", outstanding_amount: "300.00" },
+    { ...base, id: 10, invoice_number: "UNPAID-001", ...(separateUnpaidClient ? { client_id: 2, client_name: "客户乙" } : {}), payment_status: "UNPAID", payments: [], paid_amount: "0.00", outstanding_amount: "300.00" },
     { ...base, id: 11, invoice_number: "VOID-001", lifecycle_status: "VOID" },
     { ...base, id: 12, invoice_number: null, lifecycle_status: "DRAFT" },
   ];
@@ -135,4 +135,51 @@ test("选择账单并不显示账户，必须搜索选定对应客户；清空�
   expect(screen.getByText("ACCOUNT-SECRET")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "清空查看账单账户的客户" }));
   expect(screen.queryByText("ACCOUNT-SECRET")).toBeNull();
+});
+
+test("切换客户账单清空全部付款输入和凭证，重新填写后只提交当前账单", async () => {
+  const { writes } = setup({ unpaid: true, separateUnpaidClient: true });
+  fireEvent.click(await screen.findByRole("button", { name: "查看MIXED-001" }));
+  const formA = (await screen.findByRole("button", { name: "确认已付款" })).closest("form")!;
+  const dateA = within(formA).getByLabelText("Payment Date") as HTMLInputElement;
+  const defaultDate = dateA.value;
+  fireEvent.change(dateA, { target: { value: "2026-01-02" } });
+  fireEvent.change(within(formA).getByLabelText("实际现金 (HKD)"), { target: { value: "280.00" } });
+  fireEvent.change(within(formA).getByLabelText(/^公司承担差额/), { target: { value: "20.00" } });
+  fireEvent.change(within(formA).getByLabelText(/^差额原因/), { target: { value: "客户甲差额" } });
+  fireEvent.change(within(formA).getByLabelText("Method"), { target: { value: "CHEQUE" } });
+  fireEvent.change(within(formA).getByLabelText("Remark"), { target: { value: "客户甲付款备注" } });
+  fireEvent.change(within(formA).getByLabelText("付款凭证"), {
+    target: { files: [new File(["proof-A"], "customer-A.png", { type: "image/png" })] },
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "查看UNPAID-001" }));
+  const formB = screen.getByRole("button", { name: "确认已付款" }).closest("form")!;
+  expect((within(formB).getByLabelText("实际现金 (HKD)") as HTMLInputElement).value).toBe("");
+  expect((within(formB).getByLabelText("Payment Date") as HTMLInputElement).value).toBe(defaultDate);
+  expect((within(formB).getByLabelText(/^公司承担差额/) as HTMLInputElement).value).toBe("0.00");
+  expect(within(formB).queryByLabelText(/^差额原因/)).toBeNull();
+  expect((within(formB).getByLabelText("Method") as HTMLSelectElement).value).toBe("BANK_TRANSFER");
+  expect((within(formB).getByLabelText("Remark") as HTMLInputElement).value).toBe("");
+  const proofB = within(formB).getByLabelText("付款凭证") as HTMLInputElement;
+  expect(proofB.files).toHaveLength(0);
+
+  fireEvent.change(within(formB).getByLabelText("实际现金 (HKD)"), { target: { value: "300.00" } });
+  fireEvent.submit(formB);
+  await screen.findByText("必须选择付款凭证文件");
+  expect(writes).toHaveLength(0);
+  fireEvent.change(within(formB).getByLabelText("Remark"), { target: { value: "客户乙付款备注" } });
+  fireEvent.change(proofB, { target: { files: [new File(["proof-B"], "customer-B.png", { type: "image/png" })] } });
+  const originalGet = FormData.prototype.get;
+  // Bridge jsdom's synthetic FileList only; amounts and other fields use real FormData.
+  vi.spyOn(FormData.prototype, "get").mockImplementation(function(this: FormData, name: string) {
+    return name === "proof" ? proofB.files![0] : originalGet.call(this, name);
+  });
+  fireEvent.submit(formB);
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes[0]).toMatchObject({ path: "/api/attachments", body: { file: expect.objectContaining({ name: "customer-B.png" }) } });
+  expect(writes[1]).toMatchObject({ path: "/api/invoices/10/payments", body: {
+    amount: "300.00", payment_date: defaultDate, method: "BANK_TRANSFER", company_difference: "0.00",
+    difference_reason: null, remark: "客户乙付款备注", proof_attachment_id: 77,
+  } });
 });

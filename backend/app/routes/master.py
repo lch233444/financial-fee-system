@@ -774,6 +774,8 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
     client = db.get(Client, payload.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client不存在")
+    if client.status == "CLOSED":
+        raise HTTPException(status_code=400, detail="已关闭客户不可新增子账户")
     if payload.platform_id and not db.get(Platform, payload.platform_id):
         raise HTTPException(status_code=404, detail="Platform不存在")
     plan = db.get(FeePlan, payload.fee_plan_id) if payload.fee_plan_id else None
@@ -803,6 +805,7 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)) -> dic
 
 @router.patch("/accounts/{account_id}")
 def update_account(account_id: int, payload: AccountUpdate, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     item = db.get(SubAccount, account_id)
     if not item:
         raise HTTPException(status_code=404, detail="Sub Account不存在")

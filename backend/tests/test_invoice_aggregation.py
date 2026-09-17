@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 from pypdf import PdfReader
 from sqlalchemy import select
 
@@ -341,6 +342,14 @@ def test_unsafe_full_name_issuing_recovery_removes_hashed_partial_files() -> Non
         assert not temp.exists()
 
 
+def _write_recovery_pdf(path: Path, marker: str) -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=200)
+    writer.add_metadata({"/Title": marker})
+    with path.open("wb") as stream:
+        writer.write(stream)
+
+
 def test_issuing_recovery_completes_unique_hashed_archive_pair() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         company_name = "Hash/香港 Recovery Company"
@@ -368,7 +377,7 @@ def test_issuing_recovery_completes_unique_hashed_archive_pair() -> None:
         paths = invoice_archive_paths(invoice_number, pdf_root)
         for language, path in paths.items():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(f"%PDF-1.4\ncomplete {language}\n%%EOF".encode())
+            _write_recovery_pdf(path, f"complete {language}")
 
         listed = next(item for item in client.get("/api/invoices").json() if item["id"] == draft["id"])
         assert listed["issue_recovery"]["files_complete"] is True
@@ -420,7 +429,7 @@ def test_issuing_recovery_rejects_dual_complete_archives_and_return_cleans_both(
         for path_set in path_sets:
             for path in path_set.values():
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"%PDF-1.4\ndual complete\n%%EOF")
+                _write_recovery_pdf(path, "dual complete")
                 temp_path = path.with_name(f".{path.name}.interrupted.tmp")
                 temp_path.write_bytes(b"partial")
                 temp_paths.append(temp_path)
@@ -849,7 +858,7 @@ def test_issuing_recovery_requires_both_pdfs_and_records_hashes() -> None:
         complete_legacy_paths = legacy_invoice_archive_paths(complete_number, pdf_root)
         assert complete_legacy_paths is not None
         for path in complete_legacy_paths.values():
-            path.write_bytes(b"%PDF-1.4\ncomplete\n%%EOF")
+            _write_recovery_pdf(path, "complete")
 
         invoices = {item["id"]: item for item in client.get("/api/invoices").json()}
         assert invoices[return_draft["id"]]["issue_recovery"] == {
@@ -933,7 +942,7 @@ def test_recover_complete_maps_late_source_trigger_to_409_and_keeps_files(monkey
         ]
         for path in paths:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"%PDF-1.4\ncomplete before late source\n%%EOF")
+            _write_recovery_pdf(path, "complete before late source")
 
         monkeypatch.setattr(invoices_module, "_validate_issue_sources", lambda _db, _invoice: None)
         response = client.post(

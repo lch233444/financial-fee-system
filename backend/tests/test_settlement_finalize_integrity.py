@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.backup import CURRENT_DATABASE_REVISION
+
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +33,7 @@ from app.services.storage import store_bytes
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
-HEAD_REVISION = "a916c0e2b102"
+HEAD_REVISION = CURRENT_DATABASE_REVISION
 
 
 def _master(client: TestClient, suffix: str) -> dict:

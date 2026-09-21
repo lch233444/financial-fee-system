@@ -97,7 +97,7 @@ def test_component_failure_is_a_clear_page_warning(tmp_path, monkeypatch, failur
     assert result.total_balance is None
     assert result.document_type == "unknown"
     assert "本地OCR组件" in result.warnings[0]
-    assert "本次未生成余额快照" in result.warnings[1]
+    assert "本次未生成历史结余" in result.warnings[1]
 
 
 def test_windows_error_mode_is_inherited_without_modal_dialogs(monkeypatch):

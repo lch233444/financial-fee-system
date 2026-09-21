@@ -49,7 +49,7 @@ def export_settlements_to_template(
 
     # Append plan details without shifting the established A:Y references.
     for col, title, note in (
-        (26, "Fee Plan / 收费计划", "Name / Code"),
+        (26, "Fee Plan / 收费计划", "Name"),
         (27, "Fee Rate / 收费费率", "结算时费率"),
     ):
         for row in (1, 2, 3):
@@ -123,7 +123,7 @@ def export_settlements_to_template(
         sheet.cell(row, 23, f"=MAX(T{row},P{row})")
         sheet.cell(row, 24, invoice.issue_date if invoice else None)
         sheet.cell(row, 25, invoice.due_date if invoice else None)
-        sheet.cell(row, 26, f"{settlement.fee_plan.name} ({settlement.fee_plan.code})")
+        sheet.cell(row, 26, settlement.fee_plan.name)
         sheet.cell(row, 26).alignment = Alignment(vertical="center", wrap_text=True)
         sheet.cell(row, 27, int(fee_rate_bps) / 10_000)
         sheet.cell(row, 27).number_format = "0.00%"

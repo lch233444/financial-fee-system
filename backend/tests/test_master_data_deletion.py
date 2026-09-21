@@ -106,7 +106,11 @@ def test_unused_master_data_can_be_deleted_and_missing_records_return_404() -> N
             item_id for _, item_id in targets
         }
         assert all(event.details_json["name"] for event in deletion_events)
-        assert all(event.details_json["code"] for event in deletion_events)
+        for event in deletion_events:
+            if event.details_json["deleted_entity_type"] in {"FC", "FEE_PLAN"}:
+                assert "code" not in event.details_json
+            else:
+                assert event.details_json["code"]
 
 
 def test_referenced_master_data_returns_explicit_409_without_deleting() -> None:
@@ -451,7 +455,7 @@ def test_database_foreign_key_failure_is_mapped_to_stable_409() -> None:
             company = Company(name=f"FK Company {suffix}", code=f"C{suffix}")
             db.add(company)
             db.flush()
-            db.add(FC(company_id=company.id, name=f"FK FC {suffix}", code=f"F{suffix}"))
+            db.add(FC(company_id=company.id, name=f"FK FC {suffix}"))
             db.commit()
 
             with pytest.raises(HTTPException) as exc_info:

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import ImportsPage from "../src/pages/ImportsPage";
 
-function setup({ success = false, clientsFail = false } = {}) {
+function setup({ success = false, clientsFail = false, noAccounts = false } = {}) {
   const extracted = { document_type: "empf_account_page", client_name: "SYNTHETIC CLIENT",
     account_number: "NEW-ACCOUNT", scheme_name: "SYNTHETIC SCHEME", as_of_date: "2026-06-30",
     total_balance: "1000.00", holdings: [] };
@@ -28,27 +28,28 @@ function setup({ success = false, clientsFail = false } = {}) {
       if (clientsFail) return new Response(JSON.stringify({ detail: "客户清单暂不可用" }), { status: 503 });
     }
     return new Response(JSON.stringify(url === "/api/statement-imports" ? records
-      : url === "/api/clients" ? clients : url === "/api/accounts" ? accounts
+      : url === "/api/clients" ? clients : url === "/api/accounts" ? noAccounts ? [] : accounts
       : url === "/api/ai-assistant/status" ? { status: "unavailable" } : []));
   }));
-  render(<ImportsPage notify={notify} />);
-  return { submitted, notify, clientLoads: () => clientLoads };
+  const onConfirmed = vi.fn();
+  render(<ImportsPage notify={notify} embedded onConfirmed={onConfirmed} />);
+  return { submitted, notify, onConfirmed, clientLoads: () => clientLoads };
 }
 
 async function openFirst() {
   fireEvent.click(await screen.findByRole("button", { name: /客户归属测试1/ }));
-  return screen.getByRole("button", { name: /生成余额快照/ }) as HTMLButtonElement;
+  return screen.getByRole("button", { name: /生成历史结余/ }) as HTMLButtonElement;
 }
 
 function chooseCustomer(id: number) {
   const input = screen.getByRole("combobox", { name: "选择已有客户" });
   fireEvent.focus(input);
-  fireEvent.change(input, { target: { value: `客户#${id}` } });
-  fireEvent.click(screen.getByRole("option", { name: new RegExp(`客户#${id}`) }));
+  fireEvent.change(input, { target: { value: `EXISTING-${id}` } });
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(`EXISTING-${id}`) }));
 }
 
 test("新账户遇同名档案必须明确客户归属，提交客户ID并刷新清单", async () => {
-  const { submitted, notify, clientLoads } = setup({ success: true });
+  const { submitted, notify, onConfirmed, clientLoads } = setup({ success: true });
   const save = await openFirst();
   expect(save.disabled).toBe(true);
   expect(screen.getByText(/发现2个同名客户档案/)).toBeTruthy();
@@ -57,9 +58,10 @@ test("新账户遇同名档案必须明确客户归属，提交客户ID并刷新
   chooseCustomer(11);
   expect(save.disabled).toBe(false);
   fireEvent.click(save);
-  await waitFor(() => expect(notify).toHaveBeenCalledWith("已为已有客户新增子账户草稿，余额快照已入账"));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith("已为已有客户新增子账户草稿，历史结余已入账"));
   expect(submitted[0]).toMatchObject({ client_id: 11, account_id: null, account_number: "NEW-ACCOUNT" });
   expect(clientLoads()).toBe(2);
+  expect(onConfirmed).toHaveBeenCalledOnce();
 });
 
 test("切换原件或修改客户姓名清空旧客户选择", async () => {
@@ -81,7 +83,9 @@ test("先选客户才可匹配已有账户，切换客户清空账户并只显�
   chooseCustomer(11);
   fireEvent.focus(input);
   fireEvent.click(screen.getByRole("option", { name: /EXISTING-11/ }));
-  expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toContain("客户#11");
+  expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toContain("EXISTING-11");
+  expect(screen.getByText(/本次账户归属：/).textContent).toContain("EXISTING-11");
+  expect(screen.getByText(/本次账户归属：/).textContent).not.toContain("客户#");
   chooseCustomer(12);
   expect(input.value).toBe("");
   fireEvent.focus(input);
@@ -101,4 +105,16 @@ test("客户清单加载失败时提示错误并阻止确认", async () => {
   expect(submitted).toHaveLength(0);
   fireEvent.submit(save.closest("form")!);
   expect(submitted).toHaveLength(0);
+});
+
+test("同名同FC且无实际账户时保留必要档案编号，确认仍提交选中的客户ID", async () => {
+  const { submitted } = setup({ noAccounts: true });
+  const save = await openFirst();
+  fireEvent.focus(screen.getByRole("combobox", { name: "选择已有客户" }));
+  expect(screen.getByRole("option", { name: /档案 #11$/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("option", { name: /档案 #12$/ }));
+  expect(screen.getByText(/本次账户归属：/).textContent).toContain("档案 #12");
+  fireEvent.click(save);
+  await waitFor(() => expect(submitted).toHaveLength(1));
+  expect(submitted[0]).toMatchObject({ client_id: 12, account_id: null });
 });

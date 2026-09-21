@@ -30,13 +30,13 @@ from ..models import (
     SubAccount,
 )
 from ..money import money_string, to_cents
-from ..schemas import StatementConfirmRequest, StatementDeleteRequest, StatementHoldingInput
-from ..services.calculation import is_quarter_end
+from ..schemas import StatementConfirmRequest, StatementDeleteRequest
 from ..services.codex_app_server import (
     AI_PARSER_VERSION,
     FIXED_AI_MODEL,
     CodexIntegrationError,
     build_ai_review_result,
+    is_retired_holding_field,
     get_codex_app_server,
 )
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
@@ -429,7 +429,7 @@ def _confirmed_snapshot_audit_summary(
 ) -> dict:
     holdings = snapshot.holdings_json if snapshot.holdings_json is not None else []
     if not isinstance(holdings, list):
-        _delete_conflict(db, "已确认余额快照的持仓结构异常，已停止删除")
+        _delete_conflict(db, "已确认历史结余的持仓结构异常，已停止删除")
     try:
         canonical_holdings = json.dumps(
             holdings,
@@ -442,7 +442,7 @@ def _confirmed_snapshot_audit_summary(
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="已确认余额快照的持仓摘要无法安全生成，已停止删除",
+            detail="已确认历史结余的持仓摘要无法安全生成，已停止删除",
         ) from exc
     return {
         "snapshot_as_of_date": snapshot.as_of_date.isoformat(),
@@ -819,7 +819,7 @@ def delete_statement_import(
             if len(linked_snapshots) != 1:
                 _delete_conflict(
                     db,
-                    "已确认入账记录必须且只能关联一条余额快照，当前关系异常，已停止删除",
+                    "已确认入账记录必须且只能关联一条历史结余，当前关系异常，已停止删除",
                 )
             confirmed_snapshot = linked_snapshots[0]
             if (
@@ -831,7 +831,7 @@ def delete_statement_import(
             ):
                 _delete_conflict(
                     db,
-                    "已确认入账记录与余额快照的双向关系不一致，已停止删除",
+                    "已确认入账记录与历史结余的双向关系不一致，已停止删除",
                 )
 
             linked_settlement_id = db.scalar(
@@ -845,7 +845,7 @@ def delete_statement_import(
             if linked_settlement_id is not None:
                 _delete_conflict(
                     db,
-                    f"余额快照已被Settlement #{linked_settlement_id}引用，不能撤销入账或删除",
+                    f"历史结余已被Settlement #{linked_settlement_id}引用，不能撤销入账或删除",
                 )
 
             logical_references = _statement_delete_logical_references(
@@ -856,7 +856,7 @@ def delete_statement_import(
             if logical_references:
                 _delete_conflict(
                     db,
-                    "已确认入账记录或余额快照已被以下资料引用，不能删除："
+                    "已确认入账记录或历史结余已被以下资料引用，不能删除："
                     + "、".join(logical_references),
                 )
         else:
@@ -878,7 +878,7 @@ def delete_statement_import(
                 .limit(1)
             )
             if linked_snapshot_id is not None:
-                _delete_conflict(db, "未确认导入记录已异常关联余额快照，不能删除")
+                _delete_conflict(db, "未确认导入记录已异常关联历史结余，不能删除")
 
         dependent_duplicate_id = db.scalar(
             select(StatementImport.id)
@@ -949,7 +949,7 @@ def delete_statement_import(
                     delete(BalanceSnapshot).where(BalanceSnapshot.id == confirmed_snapshot.id)
                 )
                 if snapshot_result.rowcount != 1:
-                    _delete_conflict(db, "余额快照状态已变化，请刷新后重试")
+                    _delete_conflict(db, "历史结余状态已变化，请刷新后重试")
 
                 import_result = db.execute(
                     delete(StatementImport).where(StatementImport.id == item.id)
@@ -1274,22 +1274,6 @@ def _platform_for_statement(db: Session, scheme_name: str | None, trustee: str |
     return item
 
 
-def _normalized_holdings(value: object) -> list[dict]:
-    """Canonicalize every source through the same strict finance schema."""
-
-    rows = value if isinstance(value, list) else []
-    try:
-        return [
-            StatementHoldingInput.model_validate(row).model_dump(mode="json")
-            for row in rows
-        ]
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="已识别的持仓数据格式异常，财务必须重新核对并提交持仓明细",
-        ) from exc
-
-
 @router.post("/{import_id}/confirm")
 def confirm_statement(
     import_id: int,
@@ -1328,7 +1312,7 @@ def _confirm_statement_locked(
         label = DOCUMENT_TYPE_LABELS.get(str(document_type), DOCUMENT_TYPE_LABELS["unknown"])
         raise HTTPException(
             status_code=409,
-            detail=f"该文件被识别为“{label}”，不是账户余额页面，禁止生成余额快照",
+            detail=f"该文件被识别为“{label}”，不是账户余额页面，禁止生成历史结余",
         )
     if sol_balance_page_override and payload.luna_document_type_reviewed is not True:
         raise HTTPException(
@@ -1336,14 +1320,18 @@ def _confirm_statement_locked(
             detail="本地OCR未能确认文档类型；财务必须查看原件并勾选已确认采用Sol余额页分类",
         )
 
+    # Recompute the current review contract in memory. Legacy holding conflicts
+    # remain in the saved OCR/Sol audit record, but cannot block confirmation.
+    current_ai_review = build_ai_review_result(extracted, ai_values) if item.ai_recognition_json else {}
     ai_requires_acknowledgement = bool(
         item.ai_recognition_json
         and (
-            item.ai_status != "AGREED"
-            or ai_review.get("conflicts")
-            or ai_review.get("uncorroborated")
-            or ai_review.get("validation_failures")
-            or ai_review.get("uncertain_critical_fields")
+            item.ai_status not in {"AGREED", "CONFLICT", "INCOMPLETE"}
+            or current_ai_review.get("recognition_requires_human_review")
+            or any(not is_retired_holding_field(entry.get("field")) for entry in ai_review.get("conflicts", []))
+            or any(not is_retired_holding_field(entry.get("field")) for entry in ai_review.get("uncorroborated", []))
+            or any(not is_retired_holding_field(field) for field in ai_review.get("validation_failures", []))
+            or any(not is_retired_holding_field(field) for field in ai_review.get("uncertain_critical_fields", []))
         )
     )
     if ai_requires_acknowledgement and payload.ai_conflicts_reviewed is not True:
@@ -1351,27 +1339,6 @@ def _confirm_statement_locked(
             status_code=409,
             detail="Sol识别存在冲突、不确定或校验异常；财务必须勾选已逐项人工核对后才能入账",
         )
-
-    recognized_holdings = _normalized_holdings(extracted.get("holdings"))
-    ai_holdings = _normalized_holdings(
-        ai_values.get("holdings") if isinstance(ai_values, dict) else None
-    )
-    submitted_holdings = (
-        _normalized_holdings([holding.model_dump(mode="json") for holding in payload.holdings])
-        if payload.holdings is not None
-        else None
-    )
-    confirmed_holdings = submitted_holdings if submitted_holdings is not None else recognized_holdings
-    if len(confirmed_holdings) < max(len(recognized_holdings), len(ai_holdings)):
-        if not payload.holdings_difference_reason:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"将保存{len(confirmed_holdings)}项持仓，但本地OCR有{len(recognized_holdings)}项、"
-                        f"Sol有{len(ai_holdings)}项；请核对原件并选择完整持仓。"
-                        "若较少的明细才正确，必须单独填写持仓差异原因；统一差异勾选不能代替。"),
-            )
-    elif payload.holdings_difference_reason is not None:
-        raise HTTPException(status_code=400, detail="持仓数量未减少，不应提交持仓差异原因")
 
     requested_client = db.get(Client, payload.client_id) if payload.client_id is not None else None
     if payload.client_id is not None:
@@ -1446,7 +1413,7 @@ def _confirm_statement_locked(
                 id=_next_entity_id(db, Client),
                 name=payload.client_name,
                 status="DRAFT",
-                remark="由eMPF账单导入创建，待补全Company和FC",
+                remark="由eMPF账单导入创建，待补全FC",
             )
             db.add(client)
             db.flush()
@@ -1474,16 +1441,6 @@ def _confirm_statement_locked(
     ):
         raise HTTPException(status_code=409, detail="账单Scheme与选定Sub Account不一致")
 
-    if submitted_holdings is None:
-        holdings_source = "LOCAL_OCR_DEFAULT"
-    elif submitted_holdings == recognized_holdings:
-        holdings_source = "LOCAL_OCR_SELECTED"
-    elif item.ai_recognition_json is not None and submitted_holdings == ai_holdings:
-        holdings_source = "SOL_SELECTED"
-    else:
-        holdings_source = "FINANCE_EDITED"
-
-    eligible = is_quarter_end(payload.as_of_date) or (account.end_date == payload.as_of_date)
     snapshot = BalanceSnapshot(
         id=_next_entity_id(db, BalanceSnapshot),
         account_id=account.id,
@@ -1492,19 +1449,18 @@ def _confirm_statement_locked(
         currency="HKD",
         source_type="STATEMENT_IMPORT",
         statement_import_id=item.id,
-        holdings_json=confirmed_holdings,
-        eligible_for_closing=eligible,
-        remark="季末/退出日Closing候选" if eligible else "非季末余额快照，不可直接作为Closing",
+        holdings_json=[],
+        remark="由账单人工确认的历史结余",
     )
     db.add(snapshot)
     try:
         db.flush()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="该账户在同一天已经有余额快照") from exc
+        raise HTTPException(status_code=409, detail="该账户在同一天已经有历史结余") from exc
 
     reviewed_values = {
-        **extracted,
+        **{key: value for key, value in extracted.items() if not is_retired_holding_field(key)},
         **payload.model_dump(
             mode="json",
             exclude={
@@ -1513,28 +1469,15 @@ def _confirm_statement_locked(
                 "account_platform_id",
                 "ai_conflicts_reviewed",
                 "luna_document_type_reviewed",
-                "holdings",
-                "holdings_difference_reason",
             },
         ),
         "document_type": "empf_account_page",
-        "holdings": confirmed_holdings,
     }
     changes = {
         key: {"recognized": extracted.get(key), "confirmed": value}
         for key, value in reviewed_values.items()
-        if extracted.get(key) != value and key != "holdings"
+        if extracted.get(key) != value
     }
-    changes["holdings"] = {
-        "source": holdings_source,
-        "recognized_count": len(recognized_holdings),
-        "luna_count": len(ai_holdings),
-        "confirmed_count": len(confirmed_holdings),
-        "changed": recognized_holdings != confirmed_holdings,
-    }
-    if payload.holdings_difference_reason is not None:
-        changes["holdings"]["difference_reason"] = payload.holdings_difference_reason
-        reviewed_values["holdings_difference_reason"] = payload.holdings_difference_reason
     item.reviewed_json = reviewed_values
     confirmed_at = datetime.now(timezone.utc)
     item.revision_log_json = [
@@ -1583,6 +1526,5 @@ def _confirm_statement_locked(
             "id": snapshot.id,
             "as_of_date": snapshot.as_of_date.isoformat(),
             "total_balance": money_string(snapshot.total_balance_cents),
-            "eligible_for_closing": snapshot.eligible_for_closing,
         },
     }

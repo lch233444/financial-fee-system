@@ -190,7 +190,7 @@ def dashboard(
         })
         if account.fee_plan:
             plan = account.fee_plan
-            entry["fee_plans"][plan.id] = {"id": plan.id, "name": plan.name, "code": plan.code}
+            entry["fee_plans"][plan.id] = {"id": plan.id, "name": plan.name}
     client_overview = [
         {**entry, "fee_plans": list(entry["fee_plans"].values())}
         for entry in overview.values()
@@ -243,7 +243,6 @@ def fc_report(
             {
                 "fc_id": fc.id,
                 "fc_name": fc.name,
-                "fc_code": fc.code,
                 "company_name": fc.company.name if fc.company else None,
                 "active_client_count": client_count,
                 "charged_client_count": int(charged_client_count),

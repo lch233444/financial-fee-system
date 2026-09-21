@@ -20,6 +20,47 @@ async function chooseClient() {
   fireEvent.click(await screen.findByRole("option", { name: "客户甲" }));
 }
 
+test.each(["结算客户", "导出客户", "历史结算客户"])("%s用实际账户区分同名同FC客户，选定后保持对应档案", async (label) => {
+  const data = { ...records,
+    "/api/clients": [1, 2].map((id) => ({ id, name: "同名客户", fc_name: "同一FC", status: "ACTIVE" })),
+    "/api/accounts": [1, 2].map((id) => ({ ...account, id, client_id: id, client_name: "同名客户", account_number: `SAME-NAME-${id}` })),
+  };
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(data[path] ?? []))));
+  render(<SettlementsPage notify={vi.fn()} />);
+  const input = screen.getByRole("combobox", { name: label });
+  fireEvent.focus(input);
+  const chosen = await screen.findByRole("option", { name: /SAME-NAME-2/ });
+  expect(screen.getByRole("option", { name: /SAME-NAME-1/ })).toBeTruthy();
+  expect(chosen.textContent).not.toContain("档案 #");
+  fireEvent.click(chosen);
+  expect((input as HTMLInputElement).value).toContain("SAME-NAME-2");
+  if (label === "结算客户") {
+    const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+    expect(overview.getByText("SAME-NAME-2")).toBeTruthy();
+    expect(overview.queryByText("SAME-NAME-1")).toBeNull();
+  }
+});
+
+test("Closing选项按同账户日期判断，旧资格为false也可选；非季末且非退出日不能选", async () => {
+  const data = { ...records, "/api/balance-snapshots": [
+    { id: 1, account_id: 1, as_of_date: "2026-01-01", total_balance: "1000.00", evidence_complete: true },
+    { id: 2, account_id: 1, as_of_date: "2026-03-31", total_balance: "1100.00", eligible_for_closing: false, evidence_complete: true },
+    { id: 3, account_id: 1, as_of_date: "2026-03-30", total_balance: "1099.00", eligible_for_closing: true, evidence_complete: true },
+    { id: 4, account_id: 2, as_of_date: "2026-03-31", total_balance: "9999.00", evidence_complete: true },
+  ] };
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(data[path] ?? []))));
+  render(<SettlementsPage notify={vi.fn()} />);
+  const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+  fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
+  await chooseClient();
+  fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
+  const closing = screen.getByLabelText("Q1-ONLY Closing Snapshot");
+  expect(within(closing).getByRole("option", { name: /1100.00/ })).toBeTruthy();
+  expect(within(closing).queryByRole("option", { name: /9999.00/ })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Q1-ONLY Closing Date"), { target: { value: "2026-03-30" } });
+  expect(within(closing).queryByRole("option", { name: /1099.00/ })).toBeNull();
+});
+
 test("组合总览先按年季选择，只有明确选定客户才显示其账户，换季清除旧组合及输入", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);

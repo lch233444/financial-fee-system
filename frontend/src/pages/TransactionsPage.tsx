@@ -1,198 +1,201 @@
+import { type FormEvent, lazy, Suspense, useMemo, useState } from "react";
 import SearchableSelect from "../SearchableSelect";
 import DocumentPreviewDialog, { type PreviewDocument } from "../DocumentPreviewDialog";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import RecordFilters from "../RecordFilters";
+import { defaultRecordFilters, dateInPeriod } from "../periodFilters";
+import { periodSnapshots, transactionLabels } from "../cashRecords";
 import { api, patchJson, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, SectionNav, Loading } from "../components";
 import { todayIso, useApiList } from "../hooks";
 import { useFormAction } from "../useFormAction";
-import { accountIdentityLabel } from "../types";
-import type { Account, BalanceSnapshot } from "../types";
+import { accountIdentityLabel, accountIdentityDetail, formatDate, formatDateTime } from "../types";
+import type { Account, BalanceSnapshot, Client, FC, FeePlan, Settlement } from "../types";
 
-type Transaction = { id: number; account_id: number; account_number: string; transaction_date: string; transaction_type: string; amount: string; remark?: string; evidence_complete: boolean; evidence_count: number; correction_allowed: boolean; locked_settlement_id: number | null };
-type Attachment = { id: number; entity_type: string; entity_id: number; original_name: string; size_bytes: number; created_at: string; duplicate?: boolean };
+const ImportsPage = lazy(() => import("./ImportsPage"));
+type Transaction = { id: number; account_id: number; account_number: string; transaction_date: string; transaction_type: string; amount: string; remark?: string; remark_note?: string; attachment_ids?: number[]; superseded_attachment_ids?: number[]; evidence_complete: boolean; evidence_count: number; correction_allowed: boolean; locked_settlement_id: number | null };
+type Attachment = { id: number; entity_type: string; entity_id: number | null; original_name: string; size_bytes: number; created_at: string; superseded?: boolean };
+type Supplement = { type: "SNAPSHOT" | "TRANSACTION"; id: number; label: string };
+
+async function uploadProofs(data: FormData, entityType: string, required: boolean): Promise<number[]> {
+  const files = data.getAll("files").filter((file): file is File => file instanceof File && file.size > 0);
+  if (required && !files.length) throw new Error("请至少选择一份凭证，再保存记录。");
+  if (entityType === "SNAPSHOT" && files.some((file) => !/\.(png|jpe?g)$/i.test(file.name))) throw new Error("手动导入季度结余只接受 JPG 或 PNG 图片，每张图片单独上传。");
+  const ids: number[] = [];
+  for (const file of files) {
+    const payload = new FormData(); payload.set("entity_type", entityType); payload.set("file", file);
+    const saved = await api<Attachment>("/api/attachments", { method: "POST", body: payload });
+    ids.push(saved.id);
+  }
+  return [...new Set(ids)];
+}
+
+function TransactionType({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled: boolean }) {
+  return <Field label="资金类型"><select name="type" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>{Object.entries(transactionLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></Field>;
+}
 
 export default function TransactionsPage({ notify }: { notify: (message: string) => void }) {
+  const clients = useApiList<Client>("/api/clients");
+  const fcs = useApiList<FC>("/api/fcs");
+  const plans = useApiList<FeePlan>("/api/fee-plans");
   const accounts = useApiList<Account>("/api/accounts");
   const transactions = useApiList<Transaction>("/api/transactions");
   const snapshots = useApiList<BalanceSnapshot>("/api/balance-snapshots");
   const attachments = useApiList<Attachment>("/api/attachments");
-  const [proofType, setProofType] = useState<"SNAPSHOT" | "TRANSACTION">("SNAPSHOT");
-  const [proofTargetId, setProofTargetId] = useState("");
-  const [filterClientId, setFilterClientId] = useState("");
-  const [filterPlatformId, setFilterPlatformId] = useState("");
-  const [filterAccountId, setFilterAccountId] = useState("");
+  const settlements = useApiList<Settlement>("/api/settlements");
+  const [filters, setFilters] = useState(defaultRecordFilters);
+  const [platformId, setPlatformId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [transactionAccountId, setTransactionAccountId] = useState("");
+  const [snapshotAccountId, setSnapshotAccountId] = useState("");
   const [localError, setLocalError] = useState("");
-  const [previewDocument, setPreviewDocument] = useState<PreviewDocument | null>(null);
-  const attachmentAction = useFormAction(setLocalError, notify);
-  const [transactionBusy, setTransactionBusy] = useState(false);
-  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [previewDocuments, setPreviewDocuments] = useState<PreviewDocument[]>([]);
+  const [importMode, setImportMode] = useState<"auto" | "manual">("auto");
+  const [showImporter, setShowImporter] = useState(false);
+  const [transactionType, setTransactionType] = useState("MONTHLY_CONTRIBUTION");
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  const [correctionBusy, setCorrectionBusy] = useState(false);
-  const transactionBusyRef = useRef(false);
-  const snapshotBusyRef = useRef(false);
-  const error = localError || accounts.error || transactions.error || snapshots.error || attachments.error;
+  const [editType, setEditType] = useState("MONTHLY_CONTRIBUTION");
+  const [supplement, setSupplement] = useState<Supplement | null>(null);
+  const transactionAction = useFormAction(setLocalError, notify);
+  const snapshotAction = useFormAction(setLocalError, notify);
+  const correctionAction = useFormAction(setLocalError, notify);
+  const supplementAction = useFormAction(setLocalError, notify);
+  const busy = transactionAction.pending || snapshotAction.pending || correctionAction.pending || supplementAction.pending;
+  const error = localError || clients.error || fcs.error || plans.error || accounts.error || transactions.error || snapshots.error || attachments.error || settlements.error;
   const accountById = useMemo(() => new Map(accounts.data.map((item) => [item.id, item])), [accounts.data]);
-  const clientOptions = useMemo(() => Array.from(new Map(accounts.data.map((item) => [item.client_id, item.client_name])).entries())
-    .map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN")), [accounts.data]);
-  const platformOptions = useMemo(() => Array.from(new Map(accounts.data.filter((item) => item.platform_id != null && (Boolean(filterClientId) && item.client_id === Number(filterClientId))).map((item) => [item.platform_id as number, item.platform_name || "待确认Platform"])).entries())
-    .map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN")), [accounts.data, filterClientId]);
-  const filteredAccounts = useMemo(() => accounts.data.filter((item) =>
-    (Boolean(filterClientId) && item.client_id === Number(filterClientId))
-    && (!filterPlatformId || item.platform_id === Number(filterPlatformId))
-    && (!filterAccountId || item.id === Number(filterAccountId))), [accounts.data, filterAccountId, filterClientId, filterPlatformId]);
-  const filteredAccountIds = useMemo(() => new Set(filteredAccounts.map((item) => item.id)), [filteredAccounts]);
-  const visibleTransactions = useMemo(() => transactions.data.filter((item) => filteredAccountIds.has(item.account_id)), [filteredAccountIds, transactions.data]);
-  const visibleSnapshots = useMemo(() => snapshots.data.filter((item) => filteredAccountIds.has(item.account_id)), [filteredAccountIds, snapshots.data]);
-  const visibleTransactionIds = useMemo(() => new Set(visibleTransactions.map((item) => item.id)), [visibleTransactions]);
-  const visibleSnapshotIds = useMemo(() => new Set(visibleSnapshots.map((item) => item.id)), [visibleSnapshots]);
-  const visibleAttachments = useMemo(() => attachments.data.filter((item) =>
-    (item.entity_type === "SNAPSHOT" && visibleSnapshotIds.has(item.entity_id))
-    || (item.entity_type === "TRANSACTION" && visibleTransactionIds.has(item.entity_id))
-    || (item.entity_type === "ACCOUNT" && filteredAccountIds.has(item.entity_id))), [attachments.data, filteredAccountIds, visibleSnapshotIds, visibleTransactionIds]);
-  const proofTargets = useMemo(() => proofType === "SNAPSHOT"
-    ? visibleSnapshots.map((item) => ({ id: item.id, label: `${accountById.has(item.account_id) ? accountIdentityLabel(accountById.get(item.account_id)!) : item.account_number} · ${item.as_of_date} · HKD ${item.total_balance}` }))
-    : visibleTransactions.map((item) => ({ id: item.id, label: `${accountById.has(item.account_id) ? accountIdentityLabel(accountById.get(item.account_id)!) : item.account_number} · ${item.transaction_date} · ${item.transaction_type} · HKD ${item.amount}` })), [accountById, proofType, visibleSnapshots, visibleTransactions]);
+  const selectedClient = clients.data.find((item) => item.id === Number(filters.clientId));
+  const clientAccounts = accounts.data.filter((item) => Boolean(filters.clientId) && item.client_id === Number(filters.clientId)
+    && (!filters.fcId || selectedClient?.fc_id === Number(filters.fcId)) && (!filters.feePlanId || item.fee_plan_id === Number(filters.feePlanId)));
+  const platformOptions = [...new Map(clientAccounts.filter((item) => item.platform_id != null).map((item) => [item.platform_id!, item.platform_name || "待确认Platform"])).entries()];
+  const availableAccounts = clientAccounts.filter((item) => !platformId || item.platform_id === Number(platformId));
+  const filteredAccounts = availableAccounts.filter((item) => !accountId || item.id === Number(accountId));
+  const filteredIds = new Set(filteredAccounts.map((item) => item.id));
+  const visibleTransactions = transactions.data.filter((item) => filteredIds.has(item.account_id) && dateInPeriod(item.transaction_date, filters.year, filters.quarter));
+  const visibleSnapshots = periodSnapshots(filteredAccounts, snapshots.data, settlements.data, filters.year, filters.quarter);
+  const transactionIds = new Set(visibleTransactions.map((item) => item.id));
+  const snapshotIds = new Set(visibleSnapshots.map((item) => item.id));
+  const transactionProofIds = new Set(visibleTransactions.flatMap((item) => [...(item.attachment_ids || []), ...(item.superseded_attachment_ids || [])]));
+  const visibleAttachments = attachments.data.filter((item) => transactionProofIds.has(item.id) || (item.entity_id != null && ((item.entity_type === "TRANSACTION" && transactionIds.has(item.entity_id))
+    || (item.entity_type === "SNAPSHOT" && snapshotIds.has(item.entity_id)) || (item.entity_type === "ACCOUNT" && filteredIds.has(item.entity_id)))));
+  const refresh = () => Promise.all([transactions.reload(), snapshots.reload(), attachments.reload()]);
 
-  useEffect(() => {
-    if (proofTargetId && !proofTargets.some((item) => item.id === Number(proofTargetId))) {
-      setProofTargetId("");
-    }
-  }, [proofTargetId, proofTargets]);
-
-  async function submitTransaction(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (transactionBusyRef.current || !filterClientId) return;
-    transactionBusyRef.current = true;
-    setTransactionBusy(true);
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    setLocalError("");
-    try {
-      await postJson("/api/transactions", {
-        account_id: Number(data.get("account_id")), transaction_date: data.get("date"),
-        transaction_type: data.get("type"), amount: data.get("amount"), remark: data.get("remark") || null,
-      });
-      form.reset();
-      await transactions.reload();
-      notify("资金流水已保存；请补交该流水凭证后再Finalized");
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "资金流水保存失败");
-    } finally {
-      transactionBusyRef.current = false;
-      setTransactionBusy(false);
-    }
+  function clearEntryAccounts() { setTransactionAccountId(""); setSnapshotAccountId(""); }
+  function clearDependentSelection() { setAccountId(""); clearEntryAccounts(); setPlatformId(""); setEditingTransaction(null); setSupplement(null); }
+  function recordProofs(type: string, id: number) {
+    const transaction = type === "TRANSACTION" ? transactions.data.find((item) => item.id === id) : undefined;
+    const relatedIds = new Set([...(transaction?.attachment_ids || []), ...(transaction?.superseded_attachment_ids || [])]);
+    return attachments.data.filter((item) => (item.entity_type === type && item.entity_id === id) || relatedIds.has(item.id))
+      .sort((a, b) => Number(Boolean(a.superseded)) - Number(Boolean(b.superseded)));
   }
-
-  async function submitSnapshot(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (snapshotBusyRef.current || !filterClientId) return;
-    snapshotBusyRef.current = true;
-    setSnapshotBusy(true);
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    setLocalError("");
-    try {
-      await postJson("/api/balance-snapshots", {
-        account_id: Number(data.get("account_id")), as_of_date: data.get("date"), total_balance: data.get("balance"),
-        eligible_for_closing: data.get("eligible") === "on", remark: data.get("remark") || null,
-      });
-      form.reset();
-      await snapshots.reload();
-      notify("余额快照已保存；请补交快照凭证后再Finalized");
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "余额快照保存失败");
-    } finally {
-      snapshotBusyRef.current = false;
-      setSnapshotBusy(false);
-    }
+  function showProofs(type: "SNAPSHOT" | "TRANSACTION", id: number, statementImportId?: number | null) {
+    const files: PreviewDocument[] = recordProofs(type, id).map((item) => ({ path: `/api/attachments/${item.id}/file`,
+      title: type === "SNAPSHOT" ? "原始凭证" : "结算凭证原件", label: `${item.superseded ? "旧凭证 · " : ""}${item.original_name}`,
+      ...(type === "TRANSACTION" ? { filename: item.original_name } : {}) }));
+    if (statementImportId) files.unshift({ path: `/api/statement-imports/${statementImportId}/file`, title: "原始凭证", label: "导入原件" });
+    if (!files.length) { setLocalError("该记录的凭证索引未能读取，请刷新后核对。"); return; }
+    setPreviewDocuments(files);
   }
-
-  async function submitTransactionCorrection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editingTransaction || correctionBusy) return;
-    setCorrectionBusy(true);
-    setLocalError("");
-    const data = new FormData(event.currentTarget);
-    try {
-      await patchJson(`/api/transactions/${editingTransaction.id}`, {
-        transaction_date: data.get("date"), transaction_type: data.get("type"),
-        amount: data.get("amount"), remark: data.get("remark") || null,
-        correction_reason: data.get("correction_reason"),
-      });
-      setEditingTransaction(null);
-      await transactions.reload();
-      notify("资金流水已更正；原凭证继续保留，更正前后内容及原因已写入审计");
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "资金流水更正失败");
-    } finally {
-      setCorrectionBusy(false);
-    }
-  }
-
-  function submitAttachment(event: FormEvent<HTMLFormElement>) {
-    if (!proofTargets.some((item) => String(item.id) === proofTargetId)) { event.preventDefault(); setLocalError("请先选择客户及其具体凭证记录"); return; }
-    return attachmentAction.submit(event, {
-      save: (data) => {
-        data.set("entity_type", proofType);
-        data.set("entity_id", proofTargetId);
-        return api<Attachment>("/api/attachments", { method: "POST", body: data });
-      },
-      afterSave: () => setProofTargetId(""),
-      refresh: () => Promise.all([attachments.reload(), transactions.reload(), snapshots.reload()]),
-      message: "凭证已关联到具体记录并安全归档",
+  function submitTransaction(event: FormEvent<HTMLFormElement>) {
+    return transactionAction.submit(event, {
+      save: async (data) => {
+        if (!filteredIds.has(Number(data.get("account_id")))) throw new Error("请核对所选客户与账户。");
+        const attachmentIds = await uploadProofs(data, "TRANSACTION", true);
+        return postJson("/api/transactions", { account_id: Number(data.get("account_id")), transaction_date: data.get("date"),
+          transaction_type: data.get("type"), amount: data.get("amount"), remark: data.get("remark") || null, attachment_ids: attachmentIds });
+      }, afterSave: () => { setTransactionType("MONTHLY_CONTRIBUTION"); setTransactionAccountId(""); }, refresh, message: "资金记录与凭证已一并保存",
     });
   }
-
-  function attachmentTarget(item: Attachment): string {
-    if (item.entity_type === "SNAPSHOT") {
-      const snapshot = snapshots.data.find((candidate) => candidate.id === item.entity_id);
-      const account = snapshot ? accountById.get(snapshot.account_id) : null;
-      return snapshot ? `${account ? accountIdentityLabel(account) : snapshot.account_number} · ${snapshot.as_of_date}` : `Snapshot #${item.entity_id}`;
-    }
-    if (item.entity_type === "TRANSACTION") {
-      const transaction = transactions.data.find((candidate) => candidate.id === item.entity_id);
-      const account = transaction ? accountById.get(transaction.account_id) : null;
-      return transaction ? `${account ? accountIdentityLabel(account) : transaction.account_number} · ${transaction.transaction_date}` : `Transaction #${item.entity_id}`;
-    }
-    if (item.entity_type === "ACCOUNT") {
-      const account = accountById.get(item.entity_id);
-      return account ? `${accountIdentityLabel(account)} · 历史账户级凭证` : `Account #${item.entity_id}`;
-    }
-    return `${item.entity_type} #${item.entity_id}`;
-  }
-
-  function snapshotHoldings(snapshot: BalanceSnapshot) {
-    return snapshot.holdings.map((holding, index) => {
-      const fund = String(holding.fund_name || `持仓 #${index + 1}`);
-      const marketValue = holding.market_value == null || holding.market_value === "" ? "" : ` · HKD ${String(holding.market_value)}`;
-      return <span className="cell-note" key={`${fund}-${index}`}>{fund}{marketValue}</span>;
+  function submitSnapshot(event: FormEvent<HTMLFormElement>) {
+    return snapshotAction.submit(event, {
+      save: async (data) => {
+        if (!filteredIds.has(Number(data.get("account_id")))) throw new Error("请核对所选客户与账户。");
+        const attachmentIds = await uploadProofs(data, "SNAPSHOT", true);
+        return postJson("/api/balance-snapshots", { account_id: Number(data.get("account_id")), as_of_date: data.get("date"),
+          total_balance: data.get("balance"), remark: data.get("remark") || null, attachment_ids: attachmentIds });
+      }, afterSave: () => setSnapshotAccountId(""), refresh, message: "季度结余与图片凭证已一并保存",
     });
   }
+  function submitCorrection(event: FormEvent<HTMLFormElement>) {
+    if (!editingTransaction) { event.preventDefault(); return; }
+    return correctionAction.submit(event, {
+      save: async (data) => {
+        const attachmentIds = await uploadProofs(data, "TRANSACTION", !editingTransaction.evidence_complete);
+        return patchJson(`/api/transactions/${editingTransaction.id}`, { transaction_date: data.get("date"), transaction_type: data.get("type"),
+          amount: data.get("amount"), remark: data.get("remark") || null, correction_reason: data.get("correction_reason"),
+          ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) });
+      }, afterSave: () => setEditingTransaction(null), refresh, message: "更正已保存，原凭证及更正记录继续保留",
+    });
+  }
+  function submitSupplement(event: FormEvent<HTMLFormElement>) {
+    if (!supplement) { event.preventDefault(); return; }
+    return supplementAction.submit(event, {
+      save: async (data) => {
+        const file = data.get("file");
+        if (!(file instanceof File) || !file.size) throw new Error("请选择原始凭证。");
+        data.set("entity_type", supplement.type); data.set("entity_id", String(supplement.id));
+        return api("/api/attachments", { method: "POST", body: data });
+      }, afterSave: () => setSupplement(null), refresh, message: "历史记录的凭证已补存",
+    });
+  }
+  const accountSelect = (kind: "transaction" | "snapshot", disabled: boolean) => <Field group label="Sub Account"><SearchableSelect name="account_id" label={kind === "transaction" ? "资金记录账户" : "季度结余账户"} required value={kind === "transaction" ? transactionAccountId : snapshotAccountId} onChange={kind === "transaction" ? setTransactionAccountId : setSnapshotAccountId} disabled={disabled || !filters.clientId} placeholder="搜索并选择账户" searchPlaceholder="搜索账户…" options={filteredAccounts.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>;
+  const identity = (id: number, fallback: string) => { const account = accountById.get(id); return <><strong>{account?.client_name || "客户资料待核对"}</strong><small className="cell-note">{account ? accountIdentityDetail(account) : fallback}</small></>; };
+  const remarkField = (type: string, disabled: boolean, initial = "") => <Field label={type === "CONTRIBUTION" ? "加款备注（必填）" : "备注"} hint={type === "CONTRIBUTION" ? "请填写加款说明，至少2字；系统自动附上到账日期、户口和金额，总长度不超过500字。" : undefined}><textarea name="remark" rows={2} defaultValue={initial} required={type === "CONTRIBUTION"} minLength={type === "CONTRIBUTION" ? 2 : undefined} maxLength={type === "CONTRIBUTION" ? 500 : undefined} disabled={disabled} /></Field>;
 
-  return (
-    <>
-      <PageHeader title="资金与余额" subtitle="Draft允许先保存；Beginning、Closing、Contribution和Withdrawal缺少凭证时不能Finalized" />
-      <SectionNav items={[{ id: "cash-filters", label: "筛选记录" }, { id: "cash-ledger", label: "资金流水" }, { id: "balance-ledger", label: "余额快照" }, { id: "cash-create", label: "新增记录" }, { id: "cash-evidence", label: "上传凭证" }]} />
-      {error ? <ErrorBanner message={error} /> : null}
-      <Panel id="cash-filters" title="账户数据筛选" subtitle="先搜索并选定客户，再查看该客户的账户、资金流水、余额快照及凭证；新增记录时请单独核对账户">
-        <div className="settlement-controls transaction-filters">
-          <Field group label="Client"><SearchableSelect label="资金与余额客户" disabled={correctionBusy || transactionBusy || snapshotBusy || attachmentAction.pending} value={filterClientId} onChange={(value) => { setFilterClientId(value); setFilterPlatformId(""); setFilterAccountId(""); setProofTargetId(""); setEditingTransaction(null); }} placeholder="搜索并选定客户" options={clientOptions.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
-          <Field label="Platform"><select disabled={!filterClientId || correctionBusy || transactionBusy || snapshotBusy || attachmentAction.pending} value={filterPlatformId} onChange={(event) => { setFilterPlatformId(event.target.value); setFilterAccountId(""); setProofTargetId(""); setEditingTransaction(null); }}><option value="">全部Platform</option>{platformOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-          <Field label="Sub Account"><select disabled={!filterClientId || correctionBusy || transactionBusy || snapshotBusy || attachmentAction.pending} value={filterAccountId} onChange={(event) => { setFilterAccountId(event.target.value); setProofTargetId(""); setEditingTransaction(null); }}><option value="">全部账户</option>{accounts.data.filter((item) => (Boolean(filterClientId) && item.client_id === Number(filterClientId)) && (!filterPlatformId || item.platform_id === Number(filterPlatformId))).map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
-        </div>
-      </Panel>
-      <Panel id="cash-ledger" title="最近资金流水">{transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Date</th><th>Client / Platform / A/C</th><th>Type</th><th>Amount</th><th>凭证</th><th>Remark</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((x) => { const account = accountById.get(x.account_id); return <tr key={x.id}><td>{x.transaction_date}</td><td><strong>{account?.client_name || "未知Client"}</strong><small className="cell-note">{account ? [account.platform_name || "待确认Platform", account.account_number, account.scheme_name, account.fee_plan_name].filter(Boolean).join(" · ") : x.account_number}</small></td><td>{x.transaction_type}</td><td><Money value={x.amount} /></td><td>{x.evidence_complete ? `完整 (${x.evidence_count})` : "待补"}</td><td>{x.remark || "-"}</td><td>{x.correction_allowed ? <button className="ghost" type="button" disabled={correctionBusy} onClick={() => { setEditingTransaction(x); setLocalError(""); }}>更正</button> : <small className="cell-note">已由 Settlement #{x.locked_settlement_id} 锁定</small>}</td></tr>; })}</tbody></table></div> : <EmptyState title={filterClientId ? "当前筛选没有资金流水" : "请先搜索并选定客户"} detail="选定客户后查看或登记其账户资金流水。" />}</Panel>
-      <Panel id="balance-ledger" title="余额快照">{snapshots.loading || accounts.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>As-of Date</th><th>Client / Platform / A/C</th><th>Total Balance</th><th>持仓明细</th><th>来源</th><th>Closing资格</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((x) => { const account = accountById.get(x.account_id); return <tr key={x.id}><td>{x.as_of_date}</td><td><strong>{x.client_name || account?.client_name || "未知Client"}</strong><small className="cell-note">{[x.platform_name || account?.platform_name || "待确认Platform", x.account_number, x.scheme_name || account?.scheme_name, account?.fee_plan_name].filter(Boolean).join(" · ")}</small></td><td><Money value={x.total_balance} /></td><td>{x.holdings.length ? <details><summary>{x.holdings.length}项</summary>{snapshotHoldings(x)}</details> : "无"}</td><td>{x.source_type === "STATEMENT_IMPORT" && x.statement_import_id ? <button type="button" className="text-link snapshot-source-link" onClick={() => setPreviewDocument({ path: `/api/statement-imports/${x.statement_import_id}/file`, title: "原账单" })}>查看原账单</button> : x.source_type === "STATEMENT_IMPORT" ? "Statement Import · 原账单索引缺失" : "手工录入"}</td><td>{x.eligible_for_closing ? "可作为Closing" : "普通快照"}</td><td>{x.evidence_complete ? `完整 (${x.evidence_count || 0})` : "待补"}</td></tr>; })}</tbody></table></div> : <EmptyState title={filterClientId ? "当前筛选没有余额快照" : "请先搜索并选定客户"} detail="选定客户后查看其余额快照。" />}</Panel>
-      <div className="split-layout">
-        <Panel id="cash-create" title="新增资金流水" subtitle="日期请按公司确认的实际入账／基金分配口径填写，不要填写供款所属月份的截止日"><form className="form-grid" onSubmit={(e) => void submitTransaction(e)}><Field label="Sub Account"><select key={`${filterClientId}:${filterPlatformId}:${filterAccountId}`} name="account_id" required defaultValue="" disabled={transactionBusy || !filterClientId}><option value="" disabled>请选择</option>{filteredAccounts.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="资金生效日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={transactionBusy || !filterClientId} /></Field><Field label="Type"><select name="type" defaultValue="CONTRIBUTION" disabled={transactionBusy || !filterClientId}><option value="CONTRIBUTION">Contribution 加款</option><option value="WITHDRAWAL">Withdrawal 提款</option></select></Field><Field label="Amount (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={transactionBusy || !filterClientId} /></Field><Field label="Remark"><textarea name="remark" rows={2} disabled={transactionBusy || !filterClientId} /></Field><button className="primary" type="submit" disabled={transactionBusy || !filterClientId}>{transactionBusy ? "保存处理中..." : "保存流水"}</button></form></Panel>
-        <Panel title="手工余额快照" subtitle="非季末且非退出日不可作为Closing"><form className="form-grid" onSubmit={(e) => void submitSnapshot(e)}><Field label="Sub Account"><select key={`${filterClientId}:${filterPlatformId}:${filterAccountId}`} name="account_id" required defaultValue="" disabled={snapshotBusy || !filterClientId}><option value="" disabled>请选择</option>{filteredAccounts.map((x) => <option key={x.id} value={x.id}>{accountIdentityLabel(x)}</option>)}</select></Field><Field label="As-of Date"><input name="date" type="date" defaultValue={todayIso()} required disabled={snapshotBusy || !filterClientId} /></Field><Field label="Total Balance (HKD)"><input name="balance" type="number" min="0" step="0.01" required disabled={snapshotBusy || !filterClientId} /></Field><label className="check-field"><input name="eligible" type="checkbox" disabled={snapshotBusy || !filterClientId} /> 季末或实际退出日，可作为Closing</label><Field label="Remark"><textarea name="remark" rows={2} disabled={snapshotBusy || !filterClientId} /></Field><button className="secondary" type="submit" disabled={snapshotBusy || !filterClientId}>{snapshotBusy ? "保存处理中..." : "保存快照"}</button></form></Panel>
-      </div>
-      {editingTransaction ? <Panel title={`更正资金流水 #${editingTransaction.id}`} subtitle="只更正尚未进入Finalized结算的记录；原凭证不会删除，系统会保留更正前后内容和原因"><form className="form-grid" key={editingTransaction.id} onSubmit={(event) => void submitTransactionCorrection(event)}><Field label="资金生效日期"><input name="date" type="date" defaultValue={editingTransaction.transaction_date} required disabled={correctionBusy} /></Field><Field label="Type"><select name="type" defaultValue={editingTransaction.transaction_type} disabled={correctionBusy}><option value="CONTRIBUTION">Contribution 加款</option><option value="WITHDRAWAL">Withdrawal 提款</option></select></Field><Field label="Amount (HKD)"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingTransaction.amount} required disabled={correctionBusy} /></Field><Field label="Remark"><textarea name="remark" rows={2} defaultValue={editingTransaction.remark || ""} disabled={correctionBusy} /></Field><Field label="更正原因"><textarea name="correction_reason" rows={2} minLength={2} maxLength={500} required disabled={correctionBusy} placeholder="例如：原记录误用了供款月份截止日，现按实际资金生效日期更正" /></Field><div className="form-actions"><button className="primary" type="submit" disabled={correctionBusy}>{correctionBusy ? "保存更正中..." : "保存更正"}</button><button className="ghost" type="button" disabled={correctionBusy} onClick={() => setEditingTransaction(null)}>取消</button></div></form></Panel> : null}
-
-      <Panel id="cash-evidence" title="结算凭证归档" subtitle="凭证必须关联到具体Snapshot或资金流水；切换类型或筛选会清空关联目标，避免错挂"><form className="inline-form evidence-form" onSubmit={(e) => void submitAttachment(e)}><Field label="凭证类型"><select value={proofType} onChange={(e) => { setProofType(e.target.value as "SNAPSHOT" | "TRANSACTION"); setProofTargetId(""); }}><option value="SNAPSHOT">Balance Snapshot</option><option value="TRANSACTION">Contribution / Withdrawal</option></select></Field><Field group label="关联记录"><SearchableSelect key={`${filterClientId}:${proofType}`} label="关联记录" searchPlaceholder="搜索账户、日期、金额或记录编号…" name="entity_id" disabled={!filterClientId || attachmentAction.pending} required value={proofTargetId} onChange={setProofTargetId} placeholder="搜索并选择具体记录" options={proofTargets.map((item) => ({ value: String(item.id), label: `${proofType === "SNAPSHOT" ? "余额快照" : "资金流水"} #${item.id} · ${item.label}` }))} /></Field><Field label="凭证文件"><input name="file" type="file" accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required /></Field><button className="secondary" type="submit" disabled={attachmentAction.pending || !proofTargetId}>{attachmentAction.pending ? "保存中..." : "上传并关联"}</button></form>{visibleAttachments.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap compact-table"><table><thead><tr><th>关联记录</th><th>文件</th><th>归档时间</th><th></th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{attachmentTarget(item)}</td><td>{item.original_name}</td><td>{new Date(item.created_at).toLocaleString("zh-CN")}</td><td><button type="button" className="text-link" onClick={() => setPreviewDocument({ path: `/api/attachments/${item.id}/file`, title: "结算凭证原件", filename: item.original_name })}>查看原件</button></td></tr>)}</tbody></table></div> : <EmptyState title="当前筛选没有结算凭证" detail="调整筛选，或先为具体Snapshot/资金流水上传凭证。" />}</Panel>
-
-
-      {previewDocument ? <DocumentPreviewDialog key={previewDocument.path} document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
-    </>
-  );
+  return <>
+    <PageHeader title="资金与余额" subtitle="查询资金记录与历史结余，导入时一并保存凭证；结算仍须人工核对并锁定。" />
+    <SectionNav items={[{ id: "cash-records", label: "记录与历史结余" }, { id: "balance-import", label: "导入季度结余" }, { id: "cash-create", label: "导入供款加款取款" }]} />
+    {error ? <ErrorBanner message={error} /> : null}
+    <Panel id="cash-records" title="供款、加款、取款记录与历史结余" subtitle="按客户及期间查询，本季历史结余同时带出适用的期初结余。">
+      <RecordFilters value={filters} onChange={(next) => { setFilters(next); clearDependentSelection(); }} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} disabled={busy} clientLabel="资金与余额客户">
+        <Field label="Platform"><select disabled={!filters.clientId || busy} value={platformId} onChange={(event) => { setPlatformId(event.target.value); setAccountId(""); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部Platform</option>{platformOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
+        <Field label="Sub Account"><select disabled={!filters.clientId || busy} value={accountId} onChange={(event) => { setAccountId(event.target.value); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部账户</option>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
+      </RecordFilters>
+      <section className="record-section" aria-labelledby="cash-ledger-heading"><h3 id="cash-ledger-heading">供款、加款、取款记录</h3>
+        {transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="供款、加款、取款记录表" className="table-wrap cash-ledger-table"><table><thead><tr><th>日期</th><th>Client / Platform / A/C</th><th>类型</th><th>金额</th><th>凭证</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={item.id}>
+          <td>{formatDate(item.transaction_date)}</td><td>{identity(item.account_id, item.account_number)}</td><td>{transactionLabels[item.transaction_type] || item.transaction_type}</td><td><Money value={item.amount} /></td>
+          <td>{recordProofs("TRANSACTION", item.id).length ? <button className="text-link" type="button" onClick={() => showProofs("TRANSACTION", item.id)}>查看原件</button> : "待补凭证"}</td>
+          <td className="record-remark">{item.remark?.replace(/到账日期：(\d{4}-\d{2}-\d{2})/, (_, date: string) => `到账日期：${formatDate(date)}`) || "—"}</td>
+          <td>{item.correction_allowed ? <button className="ghost" type="button" disabled={busy} onClick={() => { setEditingTransaction(item); setEditType(item.transaction_type); setSupplement(null); setLocalError(""); }}>更正</button> : <small className="cell-note">已由结算 #{item.locked_settlement_id} 锁定</small>}
+            {!item.evidence_complete ? <button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "TRANSACTION", id: item.id, label: `${formatDate(item.transaction_date)} · ${item.account_number} · HKD ${item.amount}` })}>补存凭证</button> : null}</td>
+        </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有资金记录" : "请先搜索并选定客户"} detail="选定客户和期间后查看供款、加款、取款记录。" />}
+      </section>
+      <section className="record-section" aria-labelledby="balance-ledger-heading"><h3 id="balance-ledger-heading">历史结余</h3>
+        {snapshots.loading || accounts.loading || settlements.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="历史结余表" className="table-wrap balance-ledger-table"><table><thead><tr><th>结余日期</th><th>Client / Platform / A/C</th><th>结余金额</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((item) => <tr key={item.id}>
+          <td>{formatDate(item.as_of_date)}{item.opening ? <small className="cell-note">期初结余</small> : null}</td><td>{identity(item.account_id, item.account_number)}</td><td><Money value={item.total_balance} /></td>
+          <td>{item.statement_import_id || recordProofs("SNAPSHOT", item.id).length ? <button className="text-link snapshot-source-link" type="button" onClick={() => showProofs("SNAPSHOT", item.id, item.statement_import_id)}>查看原始凭证</button> : <><span>待补凭证</span><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "SNAPSHOT", id: item.id, label: `${formatDate(item.as_of_date)} · ${item.account_number} · HKD ${item.total_balance}` })}>补存凭证</button></>}</td>
+        </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有历史结余" : "请先搜索并选定客户"} detail="显示本季结余及按账户结算规则适用的期初结余。" />}
+      </section>
+      {visibleAttachments.length ? <details className="record-archive"><summary>结算凭证归档 · {visibleAttachments.length}份</summary><div tabIndex={0} role="region" aria-label="结算凭证归档" className="table-wrap"><table><thead><tr><th>记录</th><th>文件</th><th>归档时间</th><th>操作</th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{item.entity_type === "SNAPSHOT" ? "历史结余" : item.entity_type === "TRANSACTION" ? "资金记录" : "历史账户凭证"} #{item.entity_id}{item.superseded ? <small className="cell-note">旧凭证（已替换，保留追溯）</small> : null}</td><td>{item.original_name}</td><td>{formatDateTime(item.created_at)}</td><td><button className="text-link" type="button" onClick={() => setPreviewDocuments([{ path: `/api/attachments/${item.id}/file`, title: "结算凭证原件", filename: item.original_name }])}>查看原件</button></td></tr>)}</tbody></table></div></details> : null}
+      {editingTransaction ? <section className="record-section" aria-labelledby="correction-heading"><h3 id="correction-heading">更正资金记录</h3><p>原凭证继续保留；如选择新凭证，保存成功后作为当前凭证。</p><form className="form-grid" key={editingTransaction.id} onSubmit={(event) => void submitCorrection(event)}>
+        <Field label="资金生效日期"><input name="date" type="date" defaultValue={editingTransaction.transaction_date} required disabled={busy} /></Field>
+        <TransactionType value={editType} onChange={setEditType} disabled={busy} />
+        <Field label="金额 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingTransaction.amount} required disabled={busy} /></Field>
+        {remarkField(editType, busy, editingTransaction.remark_note ?? editingTransaction.remark ?? "")}
+        <Field label="更正原因"><textarea name="correction_reason" rows={2} minLength={2} maxLength={500} required disabled={busy} /></Field>
+        <Field label={editingTransaction.evidence_complete ? "替换凭证（可选、多份）" : "原始凭证（必填）"}><input name="files" type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required={!editingTransaction.evidence_complete} disabled={busy} /></Field>
+        <div className="form-actions"><button className="primary" type="submit" disabled={busy}>{correctionAction.pending ? "保存更正中…" : "保存更正"}</button><button className="ghost" type="button" disabled={busy} onClick={() => setEditingTransaction(null)}>取消</button></div>
+      </form></section> : null}
+      {supplement ? <section className="record-section" aria-labelledby="supplement-heading"><h3 id="supplement-heading">补存历史凭证</h3><p>{supplement.label}</p><form className="inline-form" onSubmit={(event) => void submitSupplement(event)}><Field label="原始凭证"><input name="file" type="file" accept={supplement.type === "SNAPSHOT" ? ".jpg,.jpeg,.png" : ".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv"} required disabled={busy} /></Field><button className="secondary" disabled={busy} type="submit">上传到本条记录</button><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement(null)}>取消</button></form></section> : null}
+    </Panel>
+    <Panel id="balance-import" title="导入季度结余" subtitle="上传原始账单识别并人工确认，或填写结余并附上图片凭证。">
+      <div className="tabs" role="group" aria-label="结余导入方式"><button type="button" aria-pressed={importMode === "auto"} className={importMode === "auto" ? "active" : ""} disabled={busy} onClick={() => setImportMode("auto")}>原件识别导入</button><button type="button" aria-pressed={importMode === "manual"} className={importMode === "manual" ? "active" : ""} disabled={busy} onClick={() => setImportMode("manual")}>手动填写并附图</button></div>
+      {importMode === "auto" ? showImporter ? <Suspense fallback={<Loading />}><ImportsPage notify={notify} embedded onConfirmed={() => { void refresh(); void accounts.reload(); void clients.reload(); }} /></Suspense> : <div className="import-entry"><p>上传原件后，逐项核对客户、账户、日期、币种和结余金额，再确认保存。</p><button className="primary" type="button" onClick={() => setShowImporter(true)}>开始导入季度结余</button></div> : <form className="form-grid" onSubmit={(event) => void submitSnapshot(event)}>
+        {accountSelect("snapshot", busy)}<Field label="结余日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
+        <Field label="结余金额 (HKD)"><input name="balance" type="number" min="0" step="0.01" required disabled={busy || !filters.clientId} /></Field>
+        <Field label="备注"><textarea name="remark" rows={2} disabled={busy || !filters.clientId} /></Field>
+        <Field label="图片凭证（必填，可选多张）" hint="每份附件为一张 JPG 或 PNG 图片。"><input name="files" type="file" multiple accept=".jpg,.jpeg,.png" required disabled={busy || !filters.clientId} /></Field>
+        <button className="primary" type="submit" disabled={busy || !filters.clientId}>{snapshotAction.pending ? "保存中…" : "保存结余与凭证"}</button>
+      </form>}
+    </Panel>
+    <Panel id="cash-create" title="导入供款加款取款" subtitle="资金生效日期填写实际转账到账日；记录与凭证核对后一起提交。">
+      <form className="form-grid" onSubmit={(event) => void submitTransaction(event)}>
+        {accountSelect("transaction", busy)}<Field label="资金生效日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
+        <TransactionType value={transactionType} onChange={setTransactionType} disabled={busy || !filters.clientId} />
+        <Field label="金额 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={busy || !filters.clientId} /></Field>
+        {remarkField(transactionType, busy || !filters.clientId)}
+        <Field label="原始凭证（必填，可选多份）"><input name="files" type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required disabled={busy || !filters.clientId} /></Field>
+        <button className="primary" type="submit" disabled={busy || !filters.clientId}>{transactionAction.pending ? "保存中…" : "保存记录与凭证"}</button>
+      </form>
+    </Panel>
+    {previewDocuments.length ? <DocumentPreviewDialog key={previewDocuments[0].path} document={previewDocuments[0]} documents={previewDocuments} onClose={() => setPreviewDocuments([])} /> : null}
+  </>;
 }

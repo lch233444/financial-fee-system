@@ -18,7 +18,9 @@ def test_confirmation_requires_original_source_before_any_business_write(tmp_pat
     with TestClient(app, headers=WRITE_HEADERS) as client:
         source = get_settings().data_root / "statement_imports" / f"confirm-source-{damage}.png"
         Image.new("RGB", (12 + [None, "missing", "changed", "outside"].index(damage), 12), "white").save(source)
-        expected_hash = sha256(source.read_bytes()).hexdigest()
+        controlled_source = source
+        original_bytes = source.read_bytes()
+        expected_hash = sha256(original_bytes).hexdigest()
         if damage == "outside":
             outside = tmp_path / "outside.png"
             outside.write_bytes(source.read_bytes())
@@ -32,21 +34,30 @@ def test_confirmation_requires_original_source_before_any_business_write(tmp_pat
             db.commit()
             import_id = item.id
             before = [db.scalar(select(func.count()).select_from(model)) for model in (Client, SubAccount, BalanceSnapshot, AuditEvent)]
-        if damage == "missing":
-            source.unlink()
-        elif damage == "changed":
-            Image.new("RGB", (15, 15), "black").save(source)
-        response = client.post(f"/api/statement-imports/{import_id}/confirm", json={
-            "client_name": f"Synthetic source {damage}", "account_number": f"SRC-{damage}",
-            "scheme_name": "Synthetic", "as_of_date": "2026-06-30", "total_balance": "123.45"})
-        if damage is None:
-            assert response.status_code == 200, response.text
-            with SessionLocal() as db:
-                assert db.get(StatementImport, import_id).status == "CONFIRMED"
-        else:
-            assert response.status_code == 409, response.text
-            assert "原件" in response.json()["detail"]
-            with SessionLocal() as db:
-                item = db.get(StatementImport, import_id)
-                assert item.status == "NEEDS_REVIEW" and item.confirmed_snapshot_id is None
-                assert [db.scalar(select(func.count()).select_from(model)) for model in (Client, SubAccount, BalanceSnapshot, AuditEvent)] == before
+        try:
+            if damage == "missing":
+                source.unlink()
+            elif damage == "changed":
+                Image.new("RGB", (15, 15), "black").save(source)
+            response = client.post(f"/api/statement-imports/{import_id}/confirm", json={
+                "client_name": f"Synthetic source {damage}", "account_number": f"SRC-{damage}",
+                "scheme_name": "Synthetic", "as_of_date": "2026-06-30", "total_balance": "123.45"})
+            if damage is None:
+                assert response.status_code == 200, response.text
+                with SessionLocal() as db:
+                    assert db.get(StatementImport, import_id).status == "CONFIRMED"
+            else:
+                assert response.status_code == 409, response.text
+                assert "原件" in response.json()["detail"]
+                with SessionLocal() as db:
+                    item = db.get(StatementImport, import_id)
+                    assert item.status == "NEEDS_REVIEW" and item.confirmed_snapshot_id is None
+                    assert [db.scalar(select(func.count()).select_from(model)) for model in (Client, SubAccount, BalanceSnapshot, AuditEvent)] == before
+        finally:
+            # The suite shares one synthetic database, so damaged sources must not
+            # leak into later full-data backup tests.
+            if damage is not None:
+                controlled_source.write_bytes(original_bytes)
+                with SessionLocal() as db:
+                    db.get(StatementImport, import_id).stored_path = str(controlled_source)
+                    db.commit()

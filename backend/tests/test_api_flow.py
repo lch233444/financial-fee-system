@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,10 @@ WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 
 
 def _attach(client: TestClient, entity_type: str, entity_id: int) -> None:
+    if entity_type == "SNAPSHOT":
+        proof_id = upload_evidence(client, entity_type, entity_id)
+        return next(row for row in client.get("/api/attachments", params={"entity_type": entity_type, "entity_id": entity_id}).json() if row["id"] == proof_id)
+
     response = client.post(
         "/api/attachments",
         data={"entity_type": entity_type, "entity_id": str(entity_id)},
@@ -31,7 +36,7 @@ def _upload_unclaimed_proof(client: TestClient, marker: str) -> int:
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
     response = client.post(
         "/api/balance-snapshots",
-        json={
+        json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account_id,
             "as_of_date": as_of_date,
             "total_balance": balance,
@@ -100,7 +105,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
         account_id = data["account"]["id"]
         client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")],
                 "account_id": account_id,
                 "transaction_date": "2026-08-01",
                 "transaction_type": "CONTRIBUTION",
@@ -110,7 +115,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
         )
         contribution = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": account_id,
                 "transaction_date": "2026-08-15",
                 "transaction_type": "CONTRIBUTION",

@@ -12,7 +12,7 @@ CODE_TRIGGER_SQL = {
 }
 
 
-def company_scope_schema_is_current(connection) -> bool:
+def company_scope_schema_is_current(connection, *, codes_removed: bool = False) -> bool:
     execute = getattr(connection, "exec_driver_sql", None) or connection.execute
     for table in ("fcs", "fee_plans"):
         columns = {row[1]: row for row in execute(f'PRAGMA table_info("{table}")')}
@@ -24,7 +24,12 @@ def company_scope_schema_is_current(connection) -> bool:
             return False
     triggers = dict(execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").fetchall())
     normalize = lambda sql: " ".join(sql.lower().split())
-    if any(normalize(triggers.get(name, "")) != normalize(sql) for name, sql in CODE_TRIGGER_SQL.items()):
+    code_columns = ["code" in {row[1] for row in execute(f'PRAGMA table_info("{table}")')}
+                    for table in ("fcs", "fee_plans")]
+    if not codes_removed:
+        if not all(code_columns) or any(normalize(triggers.get(name, "")) != normalize(sql) for name, sql in CODE_TRIGGER_SQL.items()):
+            return False
+    elif any(code_columns) or set(CODE_TRIGGER_SQL) & set(triggers):
         return False
     finalize = normalize(triggers.get("trg_settlement_validate_finalize", ""))
     issue = normalize(triggers.get("trg_invoice_validate_issue", ""))

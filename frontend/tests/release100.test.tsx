@@ -41,7 +41,7 @@ test("首次HWM自动采用系统期初快照，修改原因和独立确认缺�
   expect(writes).toHaveLength(0);
   fireEvent.change(screen.getByLabelText("AUTO100 首次HWM修改原因"), { target: { value: "复核首次计费基准" } });
   fireEvent.click(screen.getByRole("button", { name: "确认首次HWM修改" }));
-  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("期初快照 #1"));
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("期初结余 #1"));
   fireEvent.change(hwm, { target: { value: "1150" } });
   expect((screen.getByRole("button", { name: "确认首次HWM修改" }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "计算并保存Draft" }));

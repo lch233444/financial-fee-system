@@ -33,7 +33,7 @@ test("Excel按计划与年季客户联合筛选，切换清空旧勾选，提交
   fireEvent.click(panel.getByRole("button", { name: "导出所选内部Excel" }));
   await waitFor(() => expect(download).toHaveBeenLastCalledWith("/api/exports/excel?settlement_ids=1,2,3", expect.any(String), { method: "POST" }));
   fireEvent.focus(panel.getByRole("combobox", { name: "导出收费计划" }));
-  fireEvent.click(await screen.findByRole("option", { name: "计划30 · P30 · #30" }));
+  fireEvent.click(await screen.findByRole("option", { name: "计划30" }));
   expect(panel.getAllByRole("checkbox")).toHaveLength(3);
   expect((panel.getByRole("button", { name: "导出所选内部Excel" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.focus(panel.getByRole("combobox", { name: "导出客户" }));

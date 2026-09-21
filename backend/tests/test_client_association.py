@@ -28,7 +28,7 @@ def post(api, path, payload):
 
 def statement(name, number, scheme, day="2026-03-31", balance="1000.00"):
     payload = dict(client_name=name, account_number=number, scheme_name=scheme,
-                   as_of_date=day, total_balance=balance, holdings=[])
+                   as_of_date=day, total_balance=balance)
     buffer = BytesIO()
     metadata = PngInfo()
     metadata.add_text("sample", uuid4().hex)

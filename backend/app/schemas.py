@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
@@ -72,13 +71,7 @@ class CompanyCreate(BaseModel):
 class FCCreate(BaseModel):
     company_id: int | None = Field(default=None, json_schema_extra={"deprecated": True}, description="旧调用兼容字段，不参与业务归属校验")
     name: str = Field(min_length=1, max_length=160)
-    code: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9]+$")
     remark: str | None = None
-
-    @field_validator("code")
-    @classmethod
-    def normalize_code(cls, value: str) -> str:
-        return value.strip().upper()
 
 
 class PlatformCreate(BaseModel):
@@ -96,7 +89,6 @@ class PlatformCreate(BaseModel):
 class FeePlanCreate(BaseModel):
     company_id: int | None = Field(default=None, json_schema_extra={"deprecated": True}, description="旧调用兼容字段，不参与业务归属校验")
     name: str = Field(min_length=1, max_length=200)
-    code: str = Field(min_length=1, max_length=40)
     fee_rate_percent: Decimal = Field(default=Decimal("20"), ge=0, le=100)
     calculation_method: str = "HIGH_WATER_MARK"
 
@@ -161,9 +153,10 @@ class AccountUpdate(BaseModel):
 class TransactionCreate(BaseModel):
     account_id: int
     transaction_date: date
-    transaction_type: Literal["CONTRIBUTION", "WITHDRAWAL"]
+    transaction_type: Literal["CONTRIBUTION", "MONTHLY_CONTRIBUTION", "WITHDRAWAL"]
     amount: Decimal = Field(gt=0)
     remark: str | None = None
+    attachment_ids: list[int] = Field(min_length=1, max_length=50)
 
     @field_validator("amount")
     @classmethod
@@ -173,9 +166,10 @@ class TransactionCreate(BaseModel):
 
 class TransactionUpdate(BaseModel):
     transaction_date: date
-    transaction_type: Literal["CONTRIBUTION", "WITHDRAWAL"]
+    transaction_type: Literal["CONTRIBUTION", "MONTHLY_CONTRIBUTION", "WITHDRAWAL"]
     amount: Decimal = Field(gt=0)
     remark: str | None = None
+    attachment_ids: list[int] | None = Field(default=None, min_length=1, max_length=50)
     correction_reason: str = Field(min_length=2, max_length=500)
 
     @field_validator("amount")
@@ -193,7 +187,7 @@ class BalanceSnapshotCreate(BaseModel):
     account_id: int
     as_of_date: date
     total_balance: Decimal = Field(ge=0)
-    eligible_for_closing: bool = False
+    attachment_ids: list[int] = Field(min_length=1, max_length=50)
     remark: str | None = None
 
     @field_validator("total_balance")
@@ -368,63 +362,6 @@ class InvoiceCorrectionComplete(BaseModel):
         return self
 
 
-class StatementHoldingInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    fund_name: str | None = Field(default=None, max_length=300)
-    market_value: str | None = None
-    investment_gain_loss: str | None = None
-    portfolio_percent: str | None = None
-    units: str | None = None
-    unit_price: str | None = None
-    mandatory_contributions: str | None = None
-    voluntary_contributions: str | None = None
-    balance_as_of: str | None = None
-
-    @field_validator(
-        "market_value",
-        "investment_gain_loss",
-        "mandatory_contributions",
-        "voluntary_contributions",
-    )
-    @classmethod
-    def validate_money_string(cls, value: str | None) -> str | None:
-        if value is not None and not re.fullmatch(r"-?\d+\.\d{2}", value):
-            raise ValueError("金额必须是不含逗号和货币符号的两位小数字符串")
-        return value
-
-    @field_validator("units", "unit_price")
-    @classmethod
-    def validate_decimal_string(cls, value: str | None) -> str | None:
-        if value is not None and not re.fullmatch(r"\d+(?:\.\d{1,8})?", value):
-            raise ValueError("单位数及单位价格必须是最多八位小数的非负数字符串")
-        return value
-
-    @field_validator("portfolio_percent")
-    @classmethod
-    def validate_percent_string(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.removesuffix("%").strip()
-        try:
-            number = Decimal(normalized)
-        except InvalidOperation as exc:
-            raise ValueError("持仓比例必须是数字字符串") from exc
-        if number < 0 or number > 100:
-            raise ValueError("持仓比例必须介于0至100")
-        return value
-
-    @field_validator("balance_as_of")
-    @classmethod
-    def validate_balance_date(cls, value: str | None) -> str | None:
-        if value is not None:
-            try:
-                date.fromisoformat(value)
-            except ValueError as exc:
-                raise ValueError("持仓日期必须使用YYYY-MM-DD") from exc
-        return value
-
-
 class StatementDeleteRequest(BaseModel):
     reason: str = Field(min_length=2, max_length=500)
 
@@ -451,8 +388,6 @@ class StatementConfirmRequest(BaseModel):
     # model's balance-page classification after a separate, explicit review.
     # The legacy field name remains for saved-client and audit compatibility.
     luna_document_type_reviewed: bool | None = None
-    holdings: list[StatementHoldingInput] | None = Field(default=None, max_length=200)
-    holdings_difference_reason: str | None = Field(default=None, min_length=2, max_length=500)
 
     @field_validator("client_name")
     @classmethod
@@ -461,11 +396,6 @@ class StatementConfirmRequest(BaseModel):
         if not value:
             raise ValueError("Client Name不能为空")
         return value
-
-    @field_validator("holdings_difference_reason")
-    @classmethod
-    def validate_holdings_difference_reason(cls, value: str | None) -> str | None:
-        return _require_meaningful_reason(value) if value is not None else None
 
     @field_validator("total_balance")
     @classmethod

@@ -33,6 +33,7 @@ from ..money import money_string, to_cents
 from ..services.calculation import is_quarter_end
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
 from ..services.client_identity import normalized_client_name
+from ..services.record_evidence import claim_evidence, transaction_attachments, unclaimed_evidence
 from ..schemas import (
     AccountCreate,
     AccountUpdate,
@@ -90,6 +91,27 @@ def _transaction_audit_values(item: TransactionRecord) -> dict:
         "amount_cents": item.amount_cents,
         "remark": item.remark,
     }
+
+
+def _topup_prefix(account: SubAccount, transaction_date: date, amount_cents: int) -> str:
+    return f"到账日期：{transaction_date.isoformat()}\n户口：{account.account_number}\n金额：HKD {money_string(amount_cents)}\n备注："
+
+
+def _transaction_remark(payload, account: SubAccount) -> str | None:
+    if payload.transaction_type != "CONTRIBUTION":
+        return payload.remark
+    note = (payload.remark or "").strip()
+    if not 2 <= len(note) <= 500:
+        raise HTTPException(422, "加款备注须为2至500字符，并说明本次加款")
+    remark = _topup_prefix(account, payload.transaction_date, to_cents(payload.amount)) + note
+    if len(remark) > 500:
+        raise HTTPException(422, "加款备注连同到账日期、户口及金额最多500字符，请缩短备注")
+    return remark
+
+
+def _remark_note(item: TransactionRecord) -> str | None:
+    prefix = _topup_prefix(item.account, item.transaction_date, item.amount_cents)
+    return item.remark[len(prefix):] if item.remark and item.remark.startswith(prefix) else item.remark
 
 
 def _next_entity_id(db: Session, model: type) -> int:
@@ -288,7 +310,7 @@ def _delete_master_data(
 
     item_id = item.id
     item_name = item.name
-    item_code = item.code
+    item_code = getattr(item, "code", None)
     try:
         result = db.execute(delete(type(item)).where(type(item).id == item_id))
         if result.rowcount != 1:
@@ -303,7 +325,7 @@ def _delete_master_data(
                     "deleted_entity_type": entity_type,
                     "deleted_entity_id": item_id,
                     "name": item_name,
-                    "code": item_code,
+                    **({"code": item_code} if item_code is not None else {}),
                 },
             )
         )
@@ -384,7 +406,6 @@ def list_fcs(db: Session = Depends(get_db)) -> list[dict]:
             "company_id": item.company_id,
             "company_name": item.company.name if item.company else None,
             "name": item.name,
-            "code": item.code,
             "remark": item.remark,
             "active": item.active,
         }
@@ -398,7 +419,7 @@ def create_fc(payload: FCCreate, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Company不存在")
     item = FC(**payload.model_dump())
     db.add(item)
-    _commit(db, "新建FC缩写必须全系统唯一（包括已有档案）")
+    _commit(db, "FC资料不正确")
     db.refresh(item)
     return {"id": item.id, **payload.model_dump()}
 
@@ -493,7 +514,6 @@ def list_fee_plans(db: Session = Depends(get_db)) -> list[dict]:
             "company_id": item.company_id,
             "company_name": item.company.name if item.company else None,
             "name": item.name,
-            "code": item.code,
             "fee_rate_percent": item.fee_rate_bps / 100,
             "calculation_method": item.calculation_method,
             "active": item.active,
@@ -507,11 +527,10 @@ def create_fee_plan(payload: FeePlanCreate, db: Session = Depends(get_db)) -> di
     if payload.company_id is not None and not db.get(Company, payload.company_id):
         raise HTTPException(status_code=404, detail="Company不存在")
     data = payload.model_dump(exclude={"fee_rate_percent"})
-    data["code"] = data["code"].strip().upper()
     fee_rate_bps = int((payload.fee_rate_percent * 100).to_integral_exact())
     item = FeePlan(**data, fee_rate_bps=fee_rate_bps)
     db.add(item)
-    _commit(db, "新建Fee Plan Code必须全系统唯一（包括已有档案）")
+    _commit(db, "Fee Plan资料不正确")
     db.refresh(item)
     return {
         "id": item.id,
@@ -831,7 +850,6 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
         raise HTTPException(status_code=400, detail="账户结束日期不能早于开始日期")
 
     end_date_changed = "end_date" in changes and end_date != item.end_date
-    snapshot_changes: list[tuple[BalanceSnapshot, bool, bool]] = []
     if end_date_changed:
         if end_date is not None:
             conflicting_lines = db.scalars(
@@ -856,62 +874,17 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
                     status_code=409,
                     detail=f"结束日期早于未作废Settlement的账户Closing Date：{joined_periods}",
                 )
-        snapshots = db.scalars(
-            select(BalanceSnapshot).where(BalanceSnapshot.account_id == item.id)
+        # A changed exit date cannot invalidate any non-void settlement's
+        # date-based Closing source; legacy eligibility flags stay untouched.
+        referenced_lines = db.scalars(
+            select(SettlementAccountLine).join(QuarterlySettlement).where(
+                SettlementAccountLine.account_id == item.id,
+                QuarterlySettlement.status != "VOID",
+            )
         ).all()
-        for snapshot in snapshots:
-            date_is_eligible = (
-                is_quarter_end(snapshot.as_of_date) or snapshot.as_of_date == end_date
-            )
-            if snapshot.source_type == "STATEMENT_IMPORT":
-                updated_eligibility = date_is_eligible
-            else:
-                # A false manual flag may be an explicit finance opt-out. Never
-                # promote it automatically; only revoke a true flag that is no
-                # longer a quarter-end or the account's actual end date.
-                updated_eligibility = snapshot.eligible_for_closing and date_is_eligible
-            if updated_eligibility != snapshot.eligible_for_closing:
-                snapshot_changes.append(
-                    (snapshot, snapshot.eligible_for_closing, updated_eligibility)
-                )
-
-        changed_snapshot_ids = {
-            snapshot.id for snapshot, _old, _updated in snapshot_changes
-        }
-        if changed_snapshot_ids:
-            referenced_lines = db.scalars(
-                select(SettlementAccountLine).where(
-                    or_(
-                        SettlementAccountLine.beginning_snapshot_id.in_(changed_snapshot_ids),
-                        SettlementAccountLine.closing_snapshot_id.in_(changed_snapshot_ids),
-                    )
-                )
-            ).all()
-            referenced_snapshot_ids = sorted(
-                {
-                    snapshot_id
-                    for line in referenced_lines
-                    for snapshot_id in (line.beginning_snapshot_id, line.closing_snapshot_id)
-                    if snapshot_id in changed_snapshot_ids
-                }
-            )
-            if referenced_snapshot_ids:
-                joined_ids = "、".join(
-                    f"#{snapshot_id}" for snapshot_id in referenced_snapshot_ids
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"结束日期会改变已被Settlement引用的Snapshot Closing资格：{joined_ids}",
-                )
-
-        for snapshot, _old_eligibility, updated_eligibility in snapshot_changes:
-            snapshot.eligible_for_closing = updated_eligibility
-            if snapshot.source_type == "STATEMENT_IMPORT":
-                snapshot.remark = (
-                    "季末/退出日Closing候选"
-                    if updated_eligibility
-                    else "非季末余额快照，不可直接作为Closing"
-                )
+        if any(not is_quarter_end(line.closing_date) and line.closing_date != end_date
+               for line in referenced_lines):
+            raise HTTPException(409, "结束日期会改变未作废Settlement的实际退出日Closing，请先更正结算")
 
         db.add(
             AuditEvent(
@@ -921,14 +894,6 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
                 details_json={
                     "old_end_date": item.end_date.isoformat() if item.end_date else None,
                     "new_end_date": end_date.isoformat() if end_date else None,
-                    "snapshot_eligibility_changes": [
-                        {
-                            "snapshot_id": snapshot.id,
-                            "old_eligible_for_closing": old_eligibility,
-                            "new_eligible_for_closing": updated_eligibility,
-                        }
-                        for snapshot, old_eligibility, updated_eligibility in snapshot_changes
-                    ],
                 },
             )
         )
@@ -950,13 +915,13 @@ def delete_account(account_id: int, db: Session = Depends(get_db)) -> dict:
         label
         for label, query in (
             (
-                "资金流水",
+                "资金记录",
                 select(TransactionRecord.id)
                 .where(TransactionRecord.account_id == account_id)
                 .limit(1),
             ),
             (
-                "余额快照",
+                "历史结余",
                 select(BalanceSnapshot.id)
                 .where(BalanceSnapshot.account_id == account_id)
                 .limit(1),
@@ -1042,12 +1007,8 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
             account_id=item.account_id,
             transaction_date=item.transaction_date,
         )
-        attachment_count = db.scalar(
-            select(func.count(Attachment.id)).where(
-                Attachment.entity_type == "TRANSACTION", Attachment.entity_id == item.id
-            )
-        ) or 0
-        evidence_count = int(attachment_count) + (1 if item.attachment_id is not None else 0)
+        proofs = transaction_attachments(db, item)
+        evidence_count = sum(not proof.superseded for proof in proofs)
         result.append({
             "id": item.id,
             "account_id": item.account_id,
@@ -1063,6 +1024,9 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
             "transaction_type": item.transaction_type,
             "amount": money_string(item.amount_cents),
             "remark": item.remark,
+            "remark_note": _remark_note(item),
+            "attachment_ids": [proof.id for proof in proofs if not proof.superseded],
+            "superseded_attachment_ids": [proof.id for proof in proofs if proof.superseded],
             "evidence_count": evidence_count,
             "evidence_complete": evidence_count > 0,
             "correction_allowed": locked_settlement_id is None,
@@ -1073,6 +1037,7 @@ def list_transactions(account_id: int | None = None, db: Session = Depends(get_d
 
 @router.post("/transactions", status_code=201)
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)) -> dict:
+    _begin_immediate(db)
     account = db.get(SubAccount, payload.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Sub Account不存在")
@@ -1086,20 +1051,31 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
             status_code=409,
             detail=f"交易日期已落入Finalized Settlement #{locked_settlement_id}，请先按顺序作废下游结算后再调整",
         )
+    proofs = unclaimed_evidence(db, payload.attachment_ids, "TRANSACTION")
     item = TransactionRecord(
         account_id=payload.account_id,
         transaction_date=payload.transaction_date,
         transaction_type=payload.transaction_type,
         amount_cents=to_cents(payload.amount),
-        remark=payload.remark,
+        remark=_transaction_remark(payload, account),
     )
     db.add(item)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "交易日期已落入Finalized Settlement，不能补录") from exc
+    claim_evidence(proofs, item.id)
+    db.add(AuditEvent(action="TRANSACTION_CREATED", entity_type="TRANSACTION", entity_id=item.id,
+                      details_json={"attachment_ids": payload.attachment_ids}))
     _commit(db, "交易日期已落入Finalized Settlement，不能补录")
     db.refresh(item)
     return {
         "id": item.id,
         **payload.model_dump(exclude={"amount"}, mode="json"),
         "amount": money_string(item.amount_cents),
+        "remark": item.remark,
+        "remark_note": _remark_note(item),
     }
 
 
@@ -1113,12 +1089,12 @@ def update_transaction(
     item = db.get(TransactionRecord, transaction_id)
     if item is None:
         db.rollback()
-        raise HTTPException(status_code=404, detail="资金流水不存在")
+        raise HTTPException(status_code=404, detail="资金记录不存在")
 
     account = db.get(SubAccount, item.account_id)
     if account is None:
         db.rollback()
-        raise HTTPException(status_code=409, detail="资金流水关联的Sub Account不存在")
+        raise HTTPException(status_code=409, detail="资金记录关联的Sub Account不存在")
     if account.start_date and payload.transaction_date < account.start_date:
         db.rollback()
         raise HTTPException(status_code=400, detail="资金生效日期不能早于账户开始管理日期")
@@ -1132,7 +1108,7 @@ def update_transaction(
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail=f"该资金流水已被Finalized Settlement #{current_lock}使用，不能直接更正；请先按顺序作废下游结算",
+            detail=f"该资金记录已被Finalized Settlement #{current_lock}使用，不能直接更正；请先按顺序作废下游结算",
         )
     target_lock = transaction_locked_settlement_id(
         db,
@@ -1146,22 +1122,28 @@ def update_transaction(
             detail=f"更正后的日期落入Finalized Settlement #{target_lock}，不能直接更正；请先按顺序作废下游结算",
         )
 
+    proofs = unclaimed_evidence(db, payload.attachment_ids, "TRANSACTION") if payload.attachment_ids is not None else None
+    old_proofs = [proof for proof in transaction_attachments(db, item) if not proof.superseded]
     before = _transaction_audit_values(item)
     after = {
         "account_id": item.account_id,
         "transaction_date": payload.transaction_date.isoformat(),
         "transaction_type": payload.transaction_type,
         "amount_cents": to_cents(payload.amount),
-        "remark": payload.remark,
+        "remark": _transaction_remark(payload, account),
     }
-    if before == after:
+    if before == after and proofs is None:
         db.rollback()
-        raise HTTPException(status_code=400, detail="更正后的资金流水与原记录相同")
+        raise HTTPException(status_code=400, detail="更正后的资金记录与原记录相同")
 
     item.transaction_date = payload.transaction_date
     item.transaction_type = payload.transaction_type
     item.amount_cents = after["amount_cents"]
-    item.remark = payload.remark
+    item.remark = after["remark"]
+    if proofs is not None:
+        for proof in old_proofs:
+            proof.superseded = True
+        claim_evidence(proofs, item.id)
     db.add(
         AuditEvent(
             action="TRANSACTION_CORRECTED",
@@ -1171,19 +1153,16 @@ def update_transaction(
                 "reason": payload.correction_reason,
                 "before": before,
                 "after": after,
+                "before_attachment_ids": [proof.id for proof in old_proofs],
+                "after_attachment_ids": [proof.id for proof in proofs] if proofs is not None else [proof.id for proof in old_proofs],
             },
         )
     )
-    _commit(db, "资金流水已进入Finalized结算期间，不能更正")
+    _commit(db, "资金记录已进入Finalized结算期间，不能更正")
     db.refresh(item)
 
-    attachment_count = db.scalar(
-        select(func.count(Attachment.id)).where(
-            Attachment.entity_type == "TRANSACTION",
-            Attachment.entity_id == item.id,
-        )
-    ) or 0
-    evidence_count = int(attachment_count) + (1 if item.attachment_id is not None else 0)
+    all_proofs = transaction_attachments(db, item)
+    evidence_count = sum(not proof.superseded for proof in all_proofs)
     return {
         "id": item.id,
         "account_id": item.account_id,
@@ -1199,6 +1178,9 @@ def update_transaction(
         "transaction_type": item.transaction_type,
         "amount": money_string(item.amount_cents),
         "remark": item.remark,
+        "remark_note": _remark_note(item),
+        "attachment_ids": [proof.id for proof in all_proofs if not proof.superseded],
+        "superseded_attachment_ids": [proof.id for proof in all_proofs if proof.superseded],
         "evidence_count": evidence_count,
         "evidence_complete": evidence_count > 0,
         "correction_allowed": True,
@@ -1217,7 +1199,8 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
         account = item.account
         attachment_count = db.scalar(
             select(func.count(Attachment.id)).where(
-                Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == item.id
+                Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == item.id,
+                Attachment.superseded.is_(False),
             )
         ) or 0
         evidence_count = int(attachment_count) + (1 if item.statement_import_id is not None else 0)
@@ -1238,7 +1221,6 @@ def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(
             "source_type": item.source_type,
             "statement_import_id": item.statement_import_id,
             "holdings": item.holdings_json or [],
-            "eligible_for_closing": item.eligible_for_closing,
             "remark": item.remark,
             "evidence_count": evidence_count,
             "evidence_complete": evidence_count > 0,
@@ -1252,25 +1234,29 @@ def create_balance_snapshot(payload: BalanceSnapshotCreate, db: Session = Depend
     account = db.get(SubAccount, payload.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Sub Account不存在")
-    closing_eligible = is_quarter_end(payload.as_of_date) or account.end_date == payload.as_of_date
-    if payload.eligible_for_closing and not closing_eligible:
-        raise HTTPException(status_code=400, detail="非季末且非实际退出日的余额只能保存为普通快照")
+    proofs = unclaimed_evidence(db, payload.attachment_ids, "SNAPSHOT")
     item = BalanceSnapshot(
         id=_next_entity_id(db, BalanceSnapshot),
         account_id=payload.account_id,
         as_of_date=payload.as_of_date,
         total_balance_cents=to_cents(payload.total_balance),
-        eligible_for_closing=payload.eligible_for_closing and closing_eligible,
         source_type="MANUAL",
         remark=payload.remark,
     )
     db.add(item)
-    _commit(db, "该账户在同一天已经有余额快照")
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "该账户在同一天已经有历史结余") from exc
+    claim_evidence(proofs, item.id)
+    db.add(AuditEvent(action="SNAPSHOT_CREATED", entity_type="SNAPSHOT", entity_id=item.id,
+                      details_json={"attachment_ids": payload.attachment_ids}))
+    _commit(db, "该账户在同一天已经有历史结余")
     db.refresh(item)
     return {
         "id": item.id,
-        **payload.model_dump(exclude={"total_balance", "eligible_for_closing"}, mode="json"),
+        **payload.model_dump(exclude={"total_balance"}, mode="json"),
         "total_balance": money_string(item.total_balance_cents),
-        "eligible_for_closing": item.eligible_for_closing,
         "currency": "HKD",
     }

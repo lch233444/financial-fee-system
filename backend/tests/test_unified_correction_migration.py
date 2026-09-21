@@ -1,3 +1,4 @@
+from historical_schema_fixtures import copy_synthetic_rows, project_removed_meeting_fields
 import sqlite3
 
 from alembic import command
@@ -31,22 +32,12 @@ def test_migration_preserves_open_corrections_and_all_existing_financial_fields(
     settings = _settings(tmp_path, 'previous', monkeypatch)
     config = _alembic_config(settings)
     command.upgrade(config, PREVIOUS)
-    old_triggers = _trigger_sql(settings.database_path)
-    with sqlite3.connect(database_module.settings.database_path) as source, sqlite3.connect(settings.database_path) as copy:
-        source.backup(copy)
-        names = ('trg_invoice_correction_validate_insert', 'trg_invoice_correction_validate_update',
-                 'trg_settlement_validate_finalize', 'trg_settlement_validate_void')
-        for name in names:
-            copy.execute(f'DROP TRIGGER "{name}"')
-        for column in CORRECTION_COLUMNS:
-            copy.execute(f'ALTER TABLE invoice_corrections DROP COLUMN "{column}"')
-        for name in names:
-            copy.execute(old_triggers[name])
-        copy.execute('UPDATE alembic_version SET version_num=?', (PREVIOUS,))
+    copy_synthetic_rows(database_module.settings.database_path, settings.database_path)
     before = _business_rows(settings.database_path)
     command.upgrade(config, 'head')
     after = _business_rows(settings.database_path)
     after['invoice_corrections'] = [row[:-2] for row in after['invoice_corrections']]
+    project_removed_meeting_fields(before, after)
     assert after == before
     with sqlite3.connect(settings.database_path) as sql:
         assert correction_schema_is_current(sql)

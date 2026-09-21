@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,19 +18,13 @@ WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
     item = client.post(
         "/api/balance-snapshots",
-        json={
+        json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account_id,
             "as_of_date": as_of_date,
             "total_balance": balance,
             "eligible_for_closing": closing,
         },
     ).json()
-    uploaded = client.post(
-        "/api/attachments",
-        data={"entity_type": "SNAPSHOT", "entity_id": str(item["id"])},
-        files={"file": (f"snapshot-{item['id']}.pdf", b"%PDF-1.4\ntest\n%%EOF", "application/pdf")},
-    )
-    assert uploaded.status_code == 201, uploaded.text
     return item
 
 
@@ -119,27 +114,17 @@ def _settlement(client: TestClient, data: dict, quarter: int, beginning: str, cl
 def test_non_quarter_snapshot_cannot_be_closing_candidate() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "A1")
-        rejected = client.post(
-            "/api/balance-snapshots",
-            json={
-                "account_id": data["account"]["id"],
-                "as_of_date": "2026-05-20",
-                "total_balance": "9736.57",
-                "eligible_for_closing": True,
-            },
-        )
+        beginning = _snapshot(client, data["account"]["id"], "2026-04-01", "1000", closing=False)
+        accepted = _snapshot(client, data["account"]["id"], "2026-05-20", "9736.57", closing=False)
+        assert "eligible_for_closing" not in accepted
+        rejected = client.post("/api/settlements/calculate", json={
+            "client_id": data["client"]["id"], "platform_id": data["platform"]["id"],
+            "fee_plan_id": data["plan"]["id"], "year": 2026, "quarter": 2,
+            "account_lines": [{"account_id": data["account"]["id"], "beginning_snapshot_id": beginning["id"],
+                               "closing_snapshot_id": accepted["id"], "closing_date": "2026-05-20"}],
+        })
         assert rejected.status_code == 400
-        accepted = client.post(
-            "/api/balance-snapshots",
-            json={
-                "account_id": data["account"]["id"],
-                "as_of_date": "2026-05-20",
-                "total_balance": "9736.57",
-                "eligible_for_closing": False,
-            },
-        )
-        assert accepted.status_code == 201
-        assert accepted.json()["eligible_for_closing"] is False
+        assert "实际退出日" in rejected.text
 
 
 def test_zero_denominator_blocks_finalization() -> None:
@@ -159,7 +144,7 @@ def test_first_calendar_quarter_uses_previous_quarter_end_and_includes_first_day
         closing = _snapshot(client, account_id, "2026-06-30", "1200.00", closing=True)
         transaction_response = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": account_id,
                 "transaction_date": "2026-04-01",
                 "transaction_type": "CONTRIBUTION",
@@ -212,7 +197,7 @@ def test_first_calendar_quarter_uses_previous_quarter_end_and_includes_first_day
         finalized = client.post(f"/api/settlements/{settlement['id']}/finalize")
         assert finalized.status_code == 200, finalized.text
 
-        with pytest.raises(IntegrityError, match="attachment_used_by_finalized_settlement"):
+        with pytest.raises(IntegrityError, match="financial_evidence_history_immutable"):
             with engine.begin() as connection:
                 connection.execute(
                     text("DELETE FROM attachments WHERE id = :attachment_id"),
@@ -229,7 +214,7 @@ def test_inherited_quarter_boundary_includes_first_day_flow() -> None:
 
         transaction_response = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-04-01",
                 "transaction_type": "CONTRIBUTION",
@@ -268,7 +253,7 @@ def test_unfinalized_transaction_correction_preserves_evidence_and_updates_quart
         account_id = data["account"]["id"]
         transaction_response = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")],
                 "account_id": account_id,
                 "transaction_date": "2026-03-31",
                 "transaction_type": "CONTRIBUTION",
@@ -309,7 +294,7 @@ def test_unfinalized_transaction_correction_preserves_evidence_and_updates_quart
             "transaction_date": "2026-04-14",
             "transaction_type": "CONTRIBUTION",
             "amount": "2192.42",
-            "remark": "按资金实际生效日期更正",
+            "remark_note": "按资金实际生效日期更正",
             "evidence_complete": True,
             "correction_allowed": True,
             "locked_settlement_id": None,
@@ -329,7 +314,7 @@ def test_unfinalized_transaction_correction_preserves_evidence_and_updates_quart
             },
         )
         assert duplicate.status_code == 400
-        assert duplicate.json()["detail"] == "更正后的资金流水与原记录相同"
+        assert duplicate.json()["detail"] == "更正后的资金记录与原记录相同"
 
         beginning = _snapshot(client, account_id, "2026-03-31", "299621.36", closing=True)
         closing = _snapshot(client, account_id, "2026-06-30", "326123.51", closing=True)
@@ -378,15 +363,17 @@ def test_unfinalized_transaction_correction_preserves_evidence_and_updates_quart
                     "transaction_date": "2026-03-31",
                     "transaction_type": "CONTRIBUTION",
                     "amount_cents": 219200,
-                    "remark": "待更正",
+                    "remark": transaction_response.json()["remark"],
                 },
                 "after": {
                     "account_id": account_id,
                     "transaction_date": "2026-04-14",
                     "transaction_type": "CONTRIBUTION",
                     "amount_cents": 219242,
-                    "remark": "按资金实际生效日期更正",
+                    "remark": corrected_payload["remark"],
                 },
+                "before_attachment_ids": corrected_payload["attachment_ids"],
+                "after_attachment_ids": corrected_payload["attachment_ids"],
             }
 
 
@@ -396,7 +383,7 @@ def test_transaction_correction_rejects_finalized_source_or_target_period() -> N
         account_id = data["account"]["id"]
         locked_transaction = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": account_id,
                 "transaction_date": "2026-02-15",
                 "transaction_type": "CONTRIBUTION",
@@ -436,7 +423,7 @@ def test_transaction_correction_rejects_finalized_source_or_target_period() -> N
 
         open_transaction = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": account_id,
                 "transaction_date": "2026-04-15",
                 "transaction_type": "CONTRIBUTION",

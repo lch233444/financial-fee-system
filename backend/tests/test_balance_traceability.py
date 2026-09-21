@@ -9,9 +9,10 @@ from sqlalchemy import select, text
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, StatementImport, SubAccount
+from app.models import AuditEvent, BalanceSnapshot, StatementImport, SubAccount
 from app.services.entity_ids import allocate_entity_id
 from app.services.storage import store_bytes
+from evidence_fixtures import synthetic_image, upload_evidence
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
@@ -24,7 +25,7 @@ def _post(client: TestClient, path: str, payload: dict) -> dict:
 
 
 def _create_statement_record(*, token: str, extracted: dict) -> tuple[int, bytes]:
-    source_bytes = b"\x89PNG\r\n\x1a\n" + f"synthetic-statement-{token}".encode()
+    source_bytes = synthetic_image()
     stored_path, digest = store_bytes(
         data=source_bytes,
         original_name=f"synthetic-{token}.png",
@@ -49,21 +50,6 @@ def _create_statement_record(*, token: str, extracted: dict) -> tuple[int, bytes
         db.commit()
         db.refresh(statement)
         return statement.id, source_bytes
-
-
-def _attach_snapshot(client: TestClient, snapshot_id: int) -> None:
-    response = client.post(
-        "/api/attachments",
-        data={"entity_type": "SNAPSHOT", "entity_id": str(snapshot_id)},
-        files={
-            "file": (
-                f"snapshot-{snapshot_id}.pdf",
-                b"%PDF-1.4\nsynthetic proof\n%%EOF",
-                "application/pdf",
-            )
-        },
-    )
-    assert response.status_code == 201, response.text
 
 
 def _active_settlement_case(client: TestClient, label: str) -> dict:
@@ -123,7 +109,7 @@ def _active_settlement_case(client: TestClient, label: str) -> dict:
             "account_id": account["id"],
             "as_of_date": "2026-07-01",
             "total_balance": "1000.00",
-            "eligible_for_closing": False,
+            "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
         },
     )
     closing = _post(
@@ -133,7 +119,7 @@ def _active_settlement_case(client: TestClient, label: str) -> dict:
             "account_id": account["id"],
             "as_of_date": "2026-09-30",
             "total_balance": "1200.00",
-            "eligible_for_closing": True,
+            "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
         },
     )
     settlement_payload = {
@@ -172,16 +158,6 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
     scheme_a = f"Trace Scheme A {short}"
     scheme_b = f"Trace Scheme B {short}"
     holding = {"fund_name": "Synthetic Fund", "market_value": "1234.56"}
-    stored_holding = {
-        **holding,
-        "investment_gain_loss": None,
-        "portfolio_percent": None,
-        "units": None,
-        "unit_price": None,
-        "mandatory_contributions": None,
-        "voluntary_contributions": None,
-        "balance_as_of": None,
-    }
 
     with TestClient(app, headers=WRITE_HEADERS) as client:
         company = _post(
@@ -303,7 +279,6 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
             "id": snapshot_id,
             "as_of_date": "2026-09-30",
             "total_balance": "1234.56",
-            "eligible_for_closing": True,
         }
 
         import_record = client.get(f"/api/statement-imports/{statement_id}")
@@ -311,6 +286,8 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
         assert import_record.json()["confirmed_account_id"] == account_a["id"]
         assert import_record.json()["confirmed_snapshot_id"] == snapshot_id
         assert "account_platform_id" not in import_record.json()["reviewed"]
+        assert "holdings" not in import_record.json()["reviewed"]
+        assert import_record.json()["extracted"]["holdings"] == [holding]
         source_file = client.get(f"/api/statement-imports/{statement_id}/file")
         assert source_file.status_code == 200, source_file.text
         assert source_file.content == source_bytes
@@ -342,9 +319,8 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
             "currency": "HKD",
             "source_type": "STATEMENT_IMPORT",
             "statement_import_id": statement_id,
-            "holdings": [stored_holding],
-            "eligible_for_closing": True,
-            "remark": "季末/退出日Closing候选",
+            "holdings": [],
+            "remark": "由账单人工确认的历史结余",
             "evidence_count": 1,
             "evidence_complete": True,
         }
@@ -356,7 +332,7 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
                 "account_id": account_b["id"],
                 "as_of_date": "2026-09-30",
                 "total_balance": "900.00",
-                "eligible_for_closing": True,
+                "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             },
         )
         _post(
@@ -366,6 +342,8 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
                 "account_id": account_a["id"],
                 "transaction_date": "2026-08-15",
                 "transaction_type": "CONTRIBUTION",
+                "remark": "合成测试加款",
+                "attachment_ids": [upload_evidence(client, "TRANSACTION")],
                 "amount": "100.00",
             },
         )
@@ -376,6 +354,8 @@ def test_statement_confirmation_and_cross_platform_account_traceability() -> Non
                 "account_id": account_b["id"],
                 "transaction_date": "2026-08-16",
                 "transaction_type": "WITHDRAWAL",
+                "remark": "合成测试提款",
+                "attachment_ids": [upload_evidence(client, "TRANSACTION")],
                 "amount": "50.00",
             },
         )
@@ -474,7 +454,7 @@ def test_settlement_finalize_rechecks_active_state_after_calculate(
         assert still_draft.json()["status"] == "DRAFT"
 
 
-def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
+def test_imported_exit_snapshot_uses_actual_exit_date_without_rewriting_legacy_flag() -> None:
     token = uuid4().hex
     short = token[:8].upper()
     client_name = f"Exit Client {short}"
@@ -531,7 +511,7 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
         assert confirmed.status_code == 200, confirmed.text
         confirmed_body = confirmed.json()
         assert confirmed_body["created_draft"] is True
-        assert confirmed_body["snapshot"]["eligible_for_closing"] is False
+        assert "eligible_for_closing" not in confirmed_body["snapshot"]
         account_id = confirmed_body["account_id"]
         snapshot_id = confirmed_body["snapshot"]["id"]
 
@@ -569,8 +549,8 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
         imported_snapshot = next(
             item for item in requalified.json() if item["id"] == snapshot_id
         )
-        assert imported_snapshot["eligible_for_closing"] is True
-        assert imported_snapshot["remark"] == "季末/退出日Closing候选"
+        assert "eligible_for_closing" not in imported_snapshot
+        assert imported_snapshot["remark"] == "由账单人工确认的历史结余"
 
         with SessionLocal() as db:
             audit = db.scalar(
@@ -583,16 +563,10 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
                 .order_by(AuditEvent.id.desc())
             )
             assert audit is not None
+            assert db.get(BalanceSnapshot, snapshot_id).eligible_for_closing is False
             assert audit.details_json == {
                 "old_end_date": None,
                 "new_end_date": exit_date,
-                "snapshot_eligibility_changes": [
-                    {
-                        "snapshot_id": snapshot_id,
-                        "old_eligible_for_closing": False,
-                        "new_eligible_for_closing": True,
-                    }
-                ],
             }
 
         beginning = _post(
@@ -602,10 +576,9 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
                 "account_id": account_id,
                 "as_of_date": "2026-07-01",
                 "total_balance": "1000.00",
-                "eligible_for_closing": False,
+                "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             },
         )
-        _attach_snapshot(client, beginning["id"])
         settlement = client.post(
             "/api/settlements/calculate",
             json={
@@ -634,7 +607,7 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
             f"/api/accounts/{account_id}", json={"end_date": "2026-09-01"}
         )
         assert blocked_end_date_change.status_code == 409
-        assert f"#{snapshot_id}" in blocked_end_date_change.json()["detail"]
+        assert "实际退出日Closing" in blocked_end_date_change.json()["detail"]
         current_account = next(
             item for item in client.get("/api/accounts").json() if item["id"] == account_id
         )
@@ -644,7 +617,7 @@ def test_imported_exit_snapshot_requalifies_then_enters_settlement() -> None:
             for item in client.get(f"/api/balance-snapshots?account_id={account_id}").json()
             if item["id"] == snapshot_id
         )
-        assert current_snapshot["eligible_for_closing"] is True
+        assert "eligible_for_closing" not in current_snapshot
 
         finalized = client.post(f"/api/settlements/{settlement.json()['id']}/finalize")
         assert finalized.status_code == 200, finalized.text
@@ -690,7 +663,7 @@ def test_active_account_requires_start_date_and_legacy_missing_date_cannot_settl
                 "account_id": draft["id"],
                 "as_of_date": "2026-07-01",
                 "total_balance": "1000.00",
-                "eligible_for_closing": False,
+                "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             },
         )
         closing = _post(
@@ -700,7 +673,7 @@ def test_active_account_requires_start_date_and_legacy_missing_date_cannot_settl
                 "account_id": draft["id"],
                 "as_of_date": "2026-09-30",
                 "total_balance": "1200.00",
-                "eligible_for_closing": True,
+                "attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             },
         )
         rejected_settlement = client.post(
@@ -729,8 +702,6 @@ def test_finalize_rejects_legacy_active_account_missing_start_date() -> None:
     token = uuid4().hex[:8].upper()
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _active_settlement_case(client, f"FINALSTART{token}")
-        _attach_snapshot(client, data["beginning"]["id"])
-        _attach_snapshot(client, data["closing"]["id"])
 
         calculated = client.post(
             "/api/settlements/calculate", json=data["settlement_payload"]
@@ -757,8 +728,6 @@ def test_end_date_cannot_precede_non_void_settlement_closing() -> None:
     token = uuid4().hex[:8].upper()
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _active_settlement_case(client, f"END{token}")
-        _attach_snapshot(client, data["beginning"]["id"])
-        _attach_snapshot(client, data["closing"]["id"])
 
         calculated = client.post(
             "/api/settlements/calculate", json=data["settlement_payload"]
@@ -789,4 +758,4 @@ def test_end_date_cannot_precede_non_void_settlement_closing() -> None:
             ).json()
             if item["id"] == data["closing"]["id"]
         )
-        assert current_closing["eligible_for_closing"] is True
+        assert "eligible_for_closing" not in current_closing

@@ -60,8 +60,8 @@ test("账单按六项条件联合筛选，混合计划按任一来源匹配且�
   await screen.findByRole("button", { name: "查看MIXED-001" });
   fireEvent.change(screen.getByLabelText("账单年度"), { target: { value: "2026" } });
   fireEvent.change(screen.getByLabelText("账单季度"), { target: { value: "1" } });
-  await choose("账单客户", "客户甲 · 客户#1");
-  await choose("账单收费计划", "计划20 · P20 · #10");
+  await choose("账单客户", "客户甲");
+  await choose("账单收费计划", "计划20");
   await choose("账单收款公司", "实际收款公司乙 · #2");
   await choose("账单FC", "同名FC · #1");
   fireEvent.click(screen.getByRole("button", { name: "已付款", exact: true }));
@@ -131,7 +131,7 @@ test("选择账单并不显示账户，必须搜索选定对应客户；清空�
   const input = screen.getByRole("combobox", { name: "查看账单账户的客户" });
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "客户甲" } });
   expect(screen.queryByText("ACCOUNT-SECRET")).toBeNull();
-  fireEvent.click(screen.getByRole("option", { name: "客户甲 · 客户#1" }));
+  fireEvent.click(screen.getByRole("option", { name: "客户甲" }));
   expect(screen.getByText("ACCOUNT-SECRET")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "清空查看账单账户的客户" }));
   expect(screen.queryByText("ACCOUNT-SECRET")).toBeNull();

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence, legacy_snapshot
 
 from app.services.backup import CURRENT_DATABASE_REVISION
 
@@ -94,6 +95,10 @@ def _master(client: TestClient, suffix: str) -> dict:
 def _attach(
     client: TestClient, entity_type: str, entity_id: int, *, marker: bytes = b"proof"
 ) -> dict:
+    if entity_type == "SNAPSHOT":
+        proof_id = upload_evidence(client, entity_type, entity_id)
+        return next(row for row in client.get("/api/attachments", params={"entity_type": entity_type, "entity_id": entity_id}).json() if row["id"] == proof_id)
+
     response = client.post(
         "/api/attachments",
         data={"entity_type": entity_type, "entity_id": str(entity_id)},
@@ -118,9 +123,11 @@ def _snapshot(
     closing: bool,
     evidence: bool = True,
 ) -> dict:
+    if not evidence:
+        return legacy_snapshot(account_id, as_of_date, balance)
     response = client.post(
         "/api/balance-snapshots",
-        json={
+        json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account_id,
             "as_of_date": as_of_date,
             "total_balance": balance,
@@ -129,8 +136,6 @@ def _snapshot(
     )
     assert response.status_code == 201, response.text
     snapshot = response.json()
-    if evidence:
-        _attach(client, "SNAPSHOT", snapshot["id"])
     return snapshot
 
 
@@ -178,7 +183,7 @@ def test_finalize_recalculates_current_transactions_and_requires_explicit_recalc
         assert settlement["service_fee"] == "40.00"
         transaction_response = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-15",
                 "transaction_type": "CONTRIBUTION",
@@ -381,7 +386,7 @@ def test_valid_generic_transaction_attachment_can_replace_damaged_direct_referen
         closing = _snapshot(client, data["account"]["id"], "2026-03-31", "1210.00", closing=True)
         transaction_response = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-15",
                 "transaction_type": "CONTRIBUTION",
@@ -416,7 +421,7 @@ def test_finalized_parent_children_inputs_are_immutable_but_void_allows_source_c
         closing = _snapshot(client, data["account"]["id"], "2026-03-31", "1210.00", closing=True)
         transaction = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-15",
                 "transaction_type": "CONTRIBUTION",
@@ -465,34 +470,17 @@ def test_finalized_parent_children_inputs_are_immutable_but_void_allows_source_c
         )
         assert voided.status_code == 200, voided.text
         with sqlite3.connect(database_path) as connection:
-            connection.execute(
-                "UPDATE transactions SET amount_cents = amount_cents + 1 WHERE id = ?",
-                (transaction["id"],),
-            )
-            connection.execute(
-                "UPDATE balance_snapshots SET total_balance_cents = total_balance_cents + 1 WHERE id = ?",
-                (closing["id"],),
-            )
-            connection.execute(
-                "UPDATE attachments SET sha256 = ? WHERE id = ?",
-                ("b" * 64, transaction_proof["id"]),
-            )
-            connection.execute(
-                "UPDATE attachments SET entity_id = NULL WHERE id = ?",
-                (snapshot_proof_id,),
-            )
+            connection.execute("UPDATE transactions SET amount_cents=amount_cents+1 WHERE id=?", (transaction["id"],))
+            connection.execute("UPDATE balance_snapshots SET total_balance_cents=total_balance_cents+1 WHERE id=?", (closing["id"],))
             connection.commit()
+            # Original financial evidence remains immutable even after Void.
+            for sql, parameters in guarded_statements[6:10]:
+                with pytest.raises(sqlite3.IntegrityError, match="financial_evidence_history_immutable"):
+                    connection.execute(sql, parameters)
         for sql, parameters in guarded_statements[:3]:
             with sqlite3.connect(database_path) as connection:
                 with pytest.raises(sqlite3.IntegrityError):
                     connection.execute(sql, parameters)
-        with sqlite3.connect(database_path) as connection:
-            connection.execute(
-                "UPDATE attachments SET sha256 = ? WHERE id = ?",
-                (original_transaction_proof_sha, transaction_proof["id"]),
-            )
-            connection.commit()
-
 
 def test_direct_status_bypasses_require_metadata_reason_and_draft_insert() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:

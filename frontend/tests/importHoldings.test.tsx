@@ -7,7 +7,7 @@ const holdings = [
   { fund_name: "SYNTHETIC FUND B", market_value: "400.00" },
 ];
 
-function mockImports() {
+function mockImports({ balanceConflict = false, embedded = false, recognitionFailed = false } = {}) {
   const extracted = {
     document_type: "empf_account_page", client_name: "测试客户", account_number: "TEST-ONLY",
     scheme_name: "测试计划", as_of_date: "2026-06-30", total_balance: "1000.00", holdings: [],
@@ -16,8 +16,10 @@ function mockImports() {
     id, original_name: `合成账单${id}.png`, mime_type: "image/png", status: "NEEDS_REVIEW",
     extracted, confidence: {}, warnings: [],
     ai_recognition: {
-      status: "CONFLICT", values: { ...extracted, holdings },
+      status: recognitionFailed ? "FAILED" : "CONFLICT", values: { ...extracted, holdings, ...(balanceConflict ? { total_balance: "1100.00" } : {}) },
       uncorroborated: [{ field: "holdings", ocr_value: [], ai_value: holdings }],
+      recognition_requires_human_review: true,
+      validation_failures: ["total_equals_sum_of_holding_market_values"],
     },
   }));
   const submitted: Record<string, unknown>[] = [];
@@ -29,51 +31,64 @@ function mockImports() {
     return new Response(JSON.stringify(url === "/api/statement-imports" ? records
       : url === "/api/ai-assistant/status" ? { status: "unavailable" } : []));
   }));
-  render(<ImportsPage notify={vi.fn()} />);
+  render(<ImportsPage notify={vi.fn()} embedded={embedded} />);
   return submitted;
 }
 
 async function openFirst() {
   fireEvent.click(await screen.findByRole("button", { name: /合成账单1/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /我已人工核对完整清单/ }));
-  return screen.getByRole("button", { name: /生成余额快照/ }) as HTMLButtonElement;
+  return screen.getByRole("button", { name: /生成历史结余/ }) as HTMLButtonElement;
 }
 
-test("OCR为空时不自动采用AI，统一勾选不能保存空明细；主动选择后保存两项", async () => {
+test("历史持仓差异不阻断新确认，提交仅保存结余及身份资料", async () => {
   const submitted = mockImports();
   const save = await openFirst();
   expect(screen.getByText("本地OCR最高置信度：0%")).toBeTruthy();
   expect(screen.queryByText(/Infinity/)).toBeNull();
-  expect(save.disabled).toBe(true);
-  expect(screen.getByText(/将保存：0项/)).toBeTruthy();
-  fireEvent.submit(save.closest("form")!);
-  expect(submitted).toHaveLength(0);
-  fireEvent.click(screen.getByRole("button", { name: "采用Sol持仓（2项）" }));
   expect(save.disabled).toBe(false);
-  expect(screen.getByText(/将保存：2项/)).toBeTruthy();
+  expect(screen.queryByText(/持仓/)).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /我已人工核对完整清单/ })).toBeNull();
   fireEvent.click(save);
   await waitFor(() => expect(submitted).toHaveLength(1));
-  expect(submitted[0].holdings).toEqual(holdings);
-  expect(submitted[0].holdings_difference_reason).toBeNull();
+  expect(submitted[0]).not.toHaveProperty("holdings");
+  expect(submitted[0]).not.toHaveProperty("holdings_difference_reason");
+  expect(submitted[0]).not.toHaveProperty("eligible_for_closing");
+  expect(submitted[0]).toMatchObject({ total_balance: "1000.00", as_of_date: "2026-06-30" });
+  expect(screen.getAllByText("2026年06月30日").length).toBeGreaterThan(0);
 });
 
-test("保留较少明细须单独填写原因，切换来源或文件清空原因", async () => {
-  const submitted = mockImports();
+test("余额差异仍须独立人工确认，切换文件会清空确认", async () => {
+  const submitted = mockImports({ balanceConflict: true });
   const save = await openFirst();
-  const reason = () => screen.getByRole("textbox", { name: /持仓差异原因/ }) as HTMLTextAreaElement;
-  fireEvent.change(reason(), { target: { value: "   " } });
-  expect(save.disabled).toBe(true);
-  fireEvent.change(reason(), { target: { value: "原件无基金明细，AI误识别" } });
+  fireEvent.click(save);
+  expect(submitted).toHaveLength(0);
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已人工核对完整清单中的1项/ }));
   fireEvent.click(save);
   await waitFor(() => expect(submitted).toHaveLength(1));
   await screen.findByText("测试停在提交边界");
-  expect(submitted[0].holdings).toEqual([]);
-  expect(submitted[0].holdings_difference_reason).toBe("原件无基金明细，AI误识别");
-  fireEvent.click(screen.getByRole("button", { name: "采用Sol持仓（2项）" }));
-  fireEvent.click(screen.getByRole("button", { name: "采用本地持仓（0项）" }));
-  expect(reason().value).toBe("");
-  fireEvent.change(reason(), { target: { value: "仅用于第一份原件" } });
+  expect(submitted[0].ai_conflicts_reviewed).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: /合成账单2/ }));
-  expect(reason().value).toBe("");
-  expect((screen.getByRole("button", { name: /生成余额快照/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("checkbox", { name: /我已人工核对完整清单/ }) as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: /生成历史结余/ }));
+  expect(submitted).toHaveLength(1);
+});
+
+test("嵌入模式保留上传及复核流程并隐藏独立页导航", async () => {
+  mockImports({ embedded: true });
+  await openFirst();
+  expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  expect(screen.queryByRole("navigation")).toBeNull();
+  expect(screen.getByRole("button", { name: "上传并本地识别" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "导入季度结余" })).toBeTruthy();
+});
+
+test("识别失败后仍能明确人工复核并提交本地候选", async () => {
+  const submitted = mockImports({ recognitionFailed: true });
+  const save = await openFirst();
+  fireEvent.click(save);
+  expect(submitted).toHaveLength(0);
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已人工核对完整清单/ }));
+  fireEvent.click(save);
+  await waitFor(() => expect(submitted).toHaveLength(1));
+  expect(submitted[0].ai_conflicts_reviewed).toBe(true);
 });

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -37,7 +38,7 @@ def _change_end_date(account_id, end_date):
         connection.execute("UPDATE sub_accounts SET end_date=? WHERE id=?", (end_date, account_id))
 
 
-def test_end_date_update_serializes_concurrent_exit_snapshot_creation(monkeypatch):
+def test_end_date_update_serializes_snapshot_creation_without_eligibility_flags(monkeypatch):
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "ENDSERIAL")
         account_id = data["account"]["id"]
@@ -53,7 +54,7 @@ def test_end_date_update_serializes_concurrent_exit_snapshot_creation(monkeypatc
 
         def create_snapshot():
             try:
-                return client.post("/api/balance-snapshots", json={
+                return client.post("/api/balance-snapshots", json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
                     "account_id": account_id, "as_of_date": "2026-02-28",
                     "total_balance": "1200", "eligible_for_closing": True,
                 })
@@ -74,9 +75,9 @@ def test_end_date_update_serializes_concurrent_exit_snapshot_creation(monkeypatc
             updated = update.result(timeout=10)
             created = snapshot.result(timeout=10)
         assert updated.status_code == 200, updated.text
-        assert created.status_code == 400, created.text
-        assert "实际退出日" in created.json()["detail"]
-        assert client.get("/api/balance-snapshots", params={"account_id": account_id}).json() == []
+        assert created.status_code == 201, created.text
+        assert "eligible_for_closing" not in created.json()
+        assert len(client.get("/api/balance-snapshots", params={"account_id": account_id}).json()) == 1
 
 
 @pytest.mark.parametrize("end_date", [None, "2026-03-15"])

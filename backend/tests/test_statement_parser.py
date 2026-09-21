@@ -25,12 +25,11 @@ def test_empf_text_mapping_keeps_lifetime_values_separate() -> None:
     assert parsed.lifetime_net_contributions == "9735.04"
     assert parsed.lifetime_gain_loss == "1.53"
     assert parsed.as_of_date.isoformat() == "2026-05-20"
-    assert parsed.holdings[0]["mandatory_contributions"] == "0.00"
-    assert parsed.holdings[0]["voluntary_contributions"] == "0.00"
+    assert "holdings" not in parsed.extracted_dict()
     assert any("不会自动写入" in warning for warning in parsed.warnings)
 
 
-def test_manulife_full_text_fallback_extracts_summary_and_fund_rows() -> None:
+def test_manulife_full_text_fallback_extracts_summary_without_fund_rows() -> None:
     text = """
     Special Voluntary Contribution Account
     Member Account No.: 12345678 | Name: TEST MEMBER
@@ -60,10 +59,7 @@ def test_manulife_full_text_fallback_extracts_summary_and_fund_rows() -> None:
     assert parsed.lifetime_gain_loss == "200000.00"
     assert parsed.trustee == "Manulife Provident Funds Trust Company Limited"
     assert parsed.as_of_date.isoformat() == "2025-12-31"
-    assert [holding["market_value"] for holding in parsed.holdings] == [
-        "900000.00",
-        "300000.00",
-    ]
+    assert "holdings" not in parsed.extracted_dict()
     assert {check["status"] for check in parsed.validation_checks} == {"PASSED"}
     assert not any("持仓市值合计" in warning for warning in parsed.warnings)
 
@@ -91,4 +87,4 @@ def test_document_classifier_routes_contribution_documents_away_from_balance() -
     assert parsed.client_name == "SAMPLE MEMBER"
     assert parsed.document_details["employer_name"] == "SAMPLE LIMITED"
     assert parsed.total_balance is None
-    assert any("已阻止生成余额快照" in warning for warning in parsed.warnings)
+    assert any("已阻止生成历史结余" in warning for warning in parsed.warnings)

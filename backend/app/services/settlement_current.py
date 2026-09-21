@@ -324,8 +324,6 @@ def calculate_current_settlement(
             raise SettlementCurrentStateError(400, "Closing Snapshot日期必须等于该账户Closing Date")
         if line_closing_date != natural_end and line_closing_date != account.end_date:
             raise SettlementCurrentStateError(400, "Closing Date必须是所选季末或Sub Account当前实际退出日")
-        if not closing_snapshot.eligible_for_closing:
-            raise SettlementCurrentStateError(400, "该余额快照不是季末或退出日，不能作为Closing")
 
         previous_line = previous_finalized_line(
             db, account_id=spec.account_id, year=year, quarter=quarter
@@ -392,7 +390,7 @@ def calculate_current_settlement(
         contribution_cents = db.scalar(
             select(func.coalesce(func.sum(TransactionRecord.amount_cents), 0)).where(
                 *cash_flow_conditions(spec.account_id, beginning_snapshot.as_of_date, line_closing_date),
-                TransactionRecord.transaction_type == "CONTRIBUTION",
+                TransactionRecord.transaction_type.in_(("CONTRIBUTION", "MONTHLY_CONTRIBUTION")),
             )
         ) or 0
         withdrawal_cents = db.scalar(

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -45,7 +46,7 @@ def _next_monthly_number(month: str) -> str:
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, amount: str, *, closing: bool) -> dict:
     response = client.post(
         "/api/balance-snapshots",
-        json={
+        json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account_id,
             "as_of_date": as_of_date,
             "total_balance": amount,
@@ -54,12 +55,6 @@ def _snapshot(client: TestClient, account_id: int, as_of_date: str, amount: str,
     )
     assert response.status_code == 201, response.text
     snapshot = response.json()
-    evidence = client.post(
-        "/api/attachments",
-        data={"entity_type": "SNAPSHOT", "entity_id": str(snapshot["id"])},
-        files={"file": (f"snapshot-{snapshot['id']}.pdf", b"%PDF-1.4\nevidence\n%%EOF", "application/pdf")},
-    )
-    assert evidence.status_code == 201, evidence.text
     return snapshot
 
 
@@ -306,7 +301,7 @@ def test_unsafe_full_name_issuing_recovery_removes_hashed_partial_files() -> Non
         data = _group(client, "RECNAME829", platform_count=1, company_name=company_name)
         _finalized_settlement(client, data, 0, year=2026, quarter=2)
         draft = _draft(client, data, year=2026, quarter=2).json()
-        invoice_number = f"{company_name}-{data['fc']['code']}-20260705-1"
+        invoice_number = f"{company_name}-LEGACYFC-20260705-1"
         with SessionLocal() as db:
             invoice = db.get(Invoice, draft["id"])
             invoice.invoice_number = invoice_number
@@ -356,7 +351,7 @@ def test_issuing_recovery_completes_unique_hashed_archive_pair() -> None:
         data = _group(client, "HASHREC829", platform_count=1, company_name=company_name)
         _finalized_settlement(client, data, 0, year=2026, quarter=2)
         draft = _draft(client, data, year=2026, quarter=2).json()
-        invoice_number = f"{company_name}-{data['fc']['code']}-20260705-1"
+        invoice_number = f"{company_name}-LEGACYFC-20260705-1"
         with SessionLocal() as db:
             invoice = db.get(Invoice, draft["id"])
             invoice.invoice_number = invoice_number

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 import hashlib
 import json
@@ -501,8 +502,8 @@ def test_account_and_client_delete_report_every_business_and_file_reference() ->
         assert account_response.status_code == 409
         account_detail = account_response.json()["detail"]
         for label in (
-            "资金流水",
-            "余额快照",
+            "资金记录",
+            "历史结余",
             "已确认账单导入",
             "Settlement账户明细",
             "附件记录",
@@ -1897,7 +1898,7 @@ def test_controlled_deletion_never_reuses_client_account_statement_or_snapshot_i
         assert manual_account.status_code == 201, manual_account.text
         manual_snapshot = http.post(
             "/api/balance-snapshots",
-            json={
+            json={"attachment_ids": [upload_evidence(http, "SNAPSHOT")],
                 "account_id": manual_account.json()["id"],
                 "as_of_date": "2026-05-21",
                 "total_balance": "101.00",

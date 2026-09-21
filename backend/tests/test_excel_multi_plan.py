@@ -61,7 +61,7 @@ def test_mixed_plan_export_matches_each_locked_account_and_issued_invoice():
                 assert _fee(sheet.cell(row, col).value) == _fee(line[key]), (row, key)
             assert sheet.cell(row, 24).value.date().isoformat() == issued["issue_date"]
             assert sheet.cell(row, 25).value.date().isoformat() == issued["due_date"]
-            assert sheet.cell(row, 26).value == f"{plan['name']} ({plan['code']})"
+            assert sheet.cell(row, 26).value == plan["name"]
             assert _fee(sheet.cell(row, 27).value) == _fee(result["fee_rate"])
             assert sheet.cell(row, 27).number_format == "0.00%"
             assert sheet.cell(row, 26).alignment.wrap_text

@@ -197,7 +197,7 @@ def test_legacy_unstamped_database_gains_ai_columns_without_losing_records(
     legacy_engine.dispose()
 
 
-def test_unstamped_partial_0_2_14_shape_stops_before_false_stamp(
+def test_unstamped_partial_current_shape_stops_before_false_stamp(
     tmp_path, monkeypatch
 ) -> None:
     data_root = tmp_path / "current-shape-data"
@@ -211,7 +211,7 @@ def test_unstamped_partial_0_2_14_shape_stops_before_false_stamp(
     monkeypatch.setattr(database_module, "settings", settings)
     monkeypatch.setattr(config_module, "get_settings", lambda: settings)
 
-    with pytest.raises(RuntimeError, match="不完整的Settlement版本"):
+    with pytest.raises(RuntimeError, match="财务会议保护不完整"):
         database_module.init_db()
 
     with legacy_engine.connect() as connection:

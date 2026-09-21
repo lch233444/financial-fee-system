@@ -3,14 +3,17 @@ import { Download, X } from "lucide-react";
 import { fetchBlob } from "./api";
 import { ErrorBanner, Loading } from "./components";
 
-export type PreviewDocument = { path: string; title: string; filename?: string };
+export type PreviewDocument = { path: string; title: string; filename?: string; label?: string };
 
-export default function DocumentPreviewDialog({ document: source, onClose }: {
-  document: PreviewDocument; onClose: () => void;
+export default function DocumentPreviewDialog({ document: initialSource, documents, onClose }: {
+  document: PreviewDocument; documents?: PreviewDocument[]; onClose: () => void;
 }) {
+  const [selectedPath, setSelectedPath] = useState(initialSource.path);
+  const source = documents?.find((item) => item.path === selectedPath) || initialSource;
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const [preview, setPreview] = useState<{ url: string; type: string } | null>(null);
+  const [loadedPreview, setPreview] = useState<{ path: string; url: string; type: string } | null>(null);
+  const preview = loadedPreview?.path === source.path ? loadedPreview : null;
   const [error, setError] = useState("");
   useEffect(() => {
     const element = dialog.current!;
@@ -26,7 +29,7 @@ export default function DocumentPreviewDialog({ document: source, onClose }: {
     fetchBlob(source.path, { signal: abort.signal }).then((blob) => {
       if (abort.signal.aborted) return;
       url = URL.createObjectURL(blob);
-      setPreview({ url, type: blob.type });
+      setPreview({ path: source.path, url, type: blob.type });
     }).catch((err: Error) => { if (!abort.signal.aborted) setError(err.message); });
     return () => { abort.abort(); if (url) URL.revokeObjectURL(url); };
   }, [source.path]);
@@ -38,6 +41,7 @@ export default function DocumentPreviewDialog({ document: source, onClose }: {
         <button className="ghost icon-button" type="button" aria-label="关闭预览" onClick={onClose}><X size={20} /></button>
       </div>
     </header>
+    {documents && documents.length > 1 ? <nav className="proof-document-list" aria-label="原始凭证列表">{documents.map((item, index) => <button className="ghost" type="button" key={item.path} aria-pressed={item.path === source.path} onClick={() => setSelectedPath(item.path)}>{item.label || item.filename || `凭证 ${index + 1}`}</button>)}</nav> : null}
     {error ? <ErrorBanner message={error} /> : !preview ? <Loading /> : <div className="payment-proof-preview">
       {/^image\/(png|jpeg)$/.test(preview.type) ? <img src={preview.url} alt={source.title} />
         : preview.type === "application/pdf" ? <object data={`${preview.url}#toolbar=0`} type="application/pdf" aria-label={`${source.title} PDF`}><p>浏览器暂不能显示此PDF。{source.filename ? "请使用下载按钮查看。" : "请使用支持PDF预览的浏览器查看。"}</p></object>

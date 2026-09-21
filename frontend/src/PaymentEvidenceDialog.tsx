@@ -1,3 +1,4 @@
+import { formatDate } from "./types";
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { fetchBlob } from "./api";
@@ -48,7 +49,7 @@ export default function PaymentEvidenceDialog({ invoice, corrections, onClose }:
       <button className="ghost icon-button" type="button" aria-label="关闭付款凭证" onClick={onClose}><X size={20} /></button></header>
     <div className="invoice-balance"><span>账单应付 <Money value={invoice.amount} /></span><span>计入本单现金 <Money value={invoice.paid_amount} /></span><span>公司承担差额 <Money value={invoice.adjustment_amount} /></span></div>
     <div className="table-wrap" tabIndex={0} role="region" aria-label="付款及原始凭证"><table><thead><tr><th>收款日期 / 方式</th><th>原收款来源</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>
-      {invoice.payments.map((payment) => <tr key={payment.id}><td>{payment.payment_date}<small className="cell-note">{payment.method}</small></td>
+      {invoice.payments.map((payment) => <tr key={payment.id}><td>{formatDate(payment.payment_date)}<small className="cell-note">{payment.method}</small></td>
         <td>Payment #{payment.id}<small className="cell-note">原账单 #{payment.original_invoice_id ?? invoice.id} · 原现金 <Money value={payment.original_amount ?? payment.amount} /></small></td>
         <td><Money value={payment.amount} />{payment.remark ? <small className="cell-note">{payment.remark}</small> : null}</td>
         <td><button className="secondary" type="button" aria-pressed={proofId === payment.proof_attachment_id} onClick={() => setProofId(payment.proof_attachment_id)}>查看付款凭证 #{payment.id}</button></td></tr>)}
@@ -58,7 +59,7 @@ export default function PaymentEvidenceDialog({ invoice, corrections, onClose }:
     {related.map((item) => <details key={item.id}><summary>更正 #{item.id} · {item.status === "COMPLETED" ? "已完成" : "处理中"} · 原单 {item.original_invoice.invoice_number || `#${item.original_invoice.id}`} → {item.replacement_invoice?.invoice_number || "等待替代单"}</summary>
       <p>{item.reason}</p>
       {item.allocations.map((entry) => <p key={entry.id}>Payment #{entry.payment_id} · {entry.entry_type === "APPLY" ? "转入" : "冲回"}账单 #{entry.invoice_id} · <Money value={entry.amount} /></p>)}
-      {item.refunds.map((refund) => <p key={refund.id}>Payment #{refund.payment_id} · {refund.refund_date}退款 <Money value={refund.amount} /> · {refund.reason} <button className="ghost" type="button" onClick={() => setProofId(refund.proof_attachment_id)}>查看退款凭证 #{refund.id}</button></p>)}
+      {item.refunds.map((refund) => <p key={refund.id}>Payment #{refund.payment_id} · {formatDate(refund.refund_date)}退款 <Money value={refund.amount} /> · {refund.reason} <button className="ghost" type="button" onClick={() => setProofId(refund.proof_attachment_id)}>查看退款凭证 #{refund.id}</button></p>)}
     </details>)}
     {proofId != null ? <ProofPreview key={proofId} id={proofId} /> : null}
   </dialog>;

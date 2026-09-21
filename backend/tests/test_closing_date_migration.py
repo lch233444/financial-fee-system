@@ -1,3 +1,5 @@
+from historical_schema_fixtures import copy_synthetic_rows, project_removed_meeting_fields
+from app.services.backup import CURRENT_DATABASE_REVISION
 import sqlite3
 
 from alembic import command
@@ -29,7 +31,7 @@ def test_closing_guard_ddl_failure_is_atomic_and_retryable(tmp_path, monkeypatch
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("a916c0e2b102",)
     command.upgrade(config, "head")
     with sqlite3.connect(settings.database_path) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("b917c0a31003",)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (CURRENT_DATABASE_REVISION,)
 
 
 def test_closing_guard_migration_preserves_even_historical_noncurrent_finalized_dates(tmp_path, monkeypatch):
@@ -51,15 +53,12 @@ def test_closing_guard_migration_preserves_even_historical_noncurrent_finalized_
     settings = _settings(tmp_path, "closing-history", monkeypatch)
     config = _alembic_config(settings)
     command.upgrade(config, "a916c0e2b102")
-    previous = _trigger_sql(settings.database_path)
-    with sqlite3.connect(database_module.settings.database_path) as source, sqlite3.connect(settings.database_path) as target:
-        source.backup(target)
-        target.execute("DROP TRIGGER trg_settlement_validate_finalize")
-        target.execute(previous["trg_settlement_validate_finalize"])
-        target.execute("UPDATE alembic_version SET version_num='a916c0e2b102'")
+    copy_synthetic_rows(database_module.settings.database_path, settings.database_path)
     before = _business_rows(settings.database_path)
     command.upgrade(config, "head")
-    assert _business_rows(settings.database_path) == before
+    after = _business_rows(settings.database_path)
+    project_removed_meeting_fields(before, after)
+    assert after == before
     _validate_sqlite_database(settings.database_path)
     with sqlite3.connect(settings.database_path) as connection:
         assert closing_date_schema_is_current(connection)

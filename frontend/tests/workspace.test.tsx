@@ -8,7 +8,7 @@ import { ErrorBanner, Panel, SectionNav } from "../src/components";
 
 test("客户查询分页及状态筛选重置页码，与新增确认入口分开", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/clients"
-    ? Array.from({ length: 24 }, (_, i) => ({ id: i + 1, name: `客户${String(i + 1).padStart(2, "0")}`, status: i === 23 ? "DRAFT" : "ACTIVE" })) : []))));
+    ? Array.from({ length: 24 }, (_, i) => ({ id: i + 1, name: `客户${String(i + 1).padStart(2, "0")}`, status: i === 23 ? "CLOSED" : "ACTIVE" })) : path === "/api/accounts" ? Array.from({ length: 24 }, (_, i) => ({ id: i + 1, client_id: i + 1, status: "ACTIVE", start_date: "2026-01-01" })) : []))));
   render(<ClientsPage notify={vi.fn()} />);
   const directory = screen.getByRole("region", { name: "客户与账户清单" });
   await within(directory).findByText("客户01");
@@ -16,10 +16,10 @@ test("客户查询分页及状态筛选重置页码，与新增确认入口分�
   expect(screen.queryByRole("textbox", { name: "Client Name", exact: true })).toBeNull();
   fireEvent.click(within(directory).getByRole("button", { name: "下一页" }));
   expect(within(directory).getByText("客户11")).toBeTruthy();
-  fireEvent.change(screen.getByRole("combobox", { name: "客户状态" }), { target: { value: "DRAFT" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "客户状态" }), { target: { value: "CLOSED" } });
   expect(within(directory).getByText("客户24")).toBeTruthy();
   expect(within(directory).queryByRole("button", { name: "下一页" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
   expect(screen.queryByRole("region", { name: "客户与账户清单" })).toBeNull();
   expect(screen.getByRole("textbox", { name: "Client Name", exact: true })).toBeTruthy();
 

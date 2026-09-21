@@ -1,5 +1,7 @@
+import { formatDate } from "./types";
+import { todayIso } from "./hooks";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Building2, Calculator, ChevronRight, Database, FileScan, Gauge, Info, Landmark, Menu, ReceiptText, ShieldCheck, UsersRound, WalletCards, X } from "lucide-react";
+import { Building2, Calculator, ChevronRight, Database, Gauge, Info, Landmark, Menu, ReceiptText, ShieldCheck, UsersRound, WalletCards, X } from "lucide-react";
 import { api } from "./api";
 import { Loading } from "./components";
 import PageBoundary from "./PageBoundary";
@@ -8,17 +10,15 @@ import { useBrowserSession } from "./useBrowserSession";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const SetupPage = lazy(() => import("./pages/SetupPage"));
 const ClientsPage = lazy(() => import("./pages/ClientsPage"));
-const ImportsPage = lazy(() => import("./pages/ImportsPage"));
 const TransactionsPage = lazy(() => import("./pages/TransactionsPage"));
 const SettlementsPage = lazy(() => import("./pages/SettlementsPage"));
 const InvoicesPage = lazy(() => import("./pages/InvoicesPage"));
 const SystemPage = lazy(() => import("./pages/SystemPage"));
 
-type Page = "dashboard" | "setup" | "clients" | "imports" | "transactions" | "settlements" | "invoices" | "payments" | "system";
+type Page = "dashboard" | "setup" | "clients" | "transactions" | "settlements" | "invoices" | "payments" | "system";
 const navigation = [
   { id: "dashboard", label: "经营概览", sub: "Overview", icon: Gauge, group: "工作台" },
   { id: "clients", label: "客户与账户", sub: "Clients & accounts", icon: UsersRound, group: "账单制作" },
-  { id: "imports", label: "余额快照导入", sub: "Statement review", icon: FileScan, group: "账单制作" },
   { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "账单制作" },
   { id: "settlements", label: "账单计算", sub: "Fee calculation", icon: Calculator, group: "账单制作" },
   { id: "invoices", label: "账单出具", sub: "Invoice issuance", icon: ReceiptText, group: "账单制作" },
@@ -28,13 +28,16 @@ const navigation = [
 ] as const;
 
 function locationPage(): Page {
-  const id = window.location.hash.slice(2).split("/")[0];
+  const id = window.location.hash.slice(2).split(/[/?]/)[0];
+  if (id === "imports") return "transactions";
   return navigation.some((item) => item.id === id) ? id as Page : "dashboard";
 }
 
 export default function App() {
   useBrowserSession();
   const [page, setPage] = useState<Page>(locationPage);
+  const [route, setRoute] = useState(window.location.hash);
+  const routeParams = new URLSearchParams(route.split("?")[1] || "");
   const hasNavigated = useRef(Boolean(window.location.hash));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -55,6 +58,7 @@ export default function App() {
     const changed = () => {
       hasNavigated.current = true;
       setPage(locationPage());
+      setRoute(window.location.hash);
       focusAfterClose.current = "content";
       setSidebarOpen(false);
       window.scrollTo({ top: 0, behavior: "auto" });
@@ -126,8 +130,7 @@ export default function App() {
   const pages = {
     dashboard: <DashboardPage />,
     setup: <SetupPage notify={setToast} />,
-    clients: <ClientsPage notify={setToast} />,
-    imports: <ImportsPage notify={setToast} />,
+    clients: <ClientsPage notify={setToast} initialYear={routeParams.get("year") || undefined} initialQuarter={routeParams.get("quarter") || undefined} />,
     transactions: <TransactionsPage notify={setToast} />,
     settlements: <SettlementsPage notify={setToast} />,
     invoices: <InvoicesPage mode="issue" notify={setToast} />,
@@ -147,7 +150,7 @@ export default function App() {
     </aside>
     {sidebarOpen ? <button className="sidebar-backdrop" tabIndex={-1} onClick={() => setSidebarOpen(false)} aria-label="关闭菜单" /> : null}
     <main inert={sidebarOpen}>
-      <header className="topbar"><button ref={menuButton} className="menu-button icon-button" aria-label="打开导航" aria-controls="app-navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu /></button><div className="breadcrumb"><span>{current.group}</span><ChevronRight size={14} aria-hidden="true" /><strong>{current.label}</strong></div><time>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(new Date())}</time></header>
+      <header className="topbar"><button ref={menuButton} className="menu-button icon-button" aria-label="打开导航" aria-controls="app-navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu /></button><div className="breadcrumb"><span>{current.group}</span><ChevronRight size={14} aria-hidden="true" /><strong>{current.label}</strong></div><time>{formatDate(todayIso())} {new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(new Date())}</time></header>
       <div id="workspace" ref={content} tabIndex={-1} className={`content page-${page}`}><PageBoundary key={page}><Suspense fallback={<Loading />}>{pages[page]}</Suspense></PageBoundary></div>
       <footer className="workspace-footer"><span>Financial Fee · 本机运行</span><span>港币 HKD · 逐账户独立核算</span></footer>
     </main>

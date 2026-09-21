@@ -41,7 +41,7 @@ def _attachment_problem(
 ) -> str | None:
     if attachment is None:
         return "凭证记录不存在"
-    if attachment.entity_type != entity_type or attachment.entity_id != entity_id:
+    if attachment.entity_type != entity_type or attachment.entity_id != entity_id or attachment.superseded:
         return "凭证记录与财务记录不匹配"
     return _file_integrity_problem(
         stored_path=attachment.stored_path,
@@ -62,7 +62,7 @@ def snapshot_evidence_problem(db: Session, snapshot: BalanceSnapshot) -> str | N
             statement.confirmed_account_id != snapshot.account_id
             or statement.confirmed_snapshot_id != snapshot.id
         ):
-            return "原始账单与余额快照的确认关系不一致"
+            return "原始账单与历史结余的确认关系不一致"
         return _file_integrity_problem(
             stored_path=statement.stored_path,
             root=get_settings().data_root / "statement_imports",
@@ -74,10 +74,11 @@ def snapshot_evidence_problem(db: Session, snapshot: BalanceSnapshot) -> str | N
         select(Attachment).where(
             Attachment.entity_type == "SNAPSHOT",
             Attachment.entity_id == snapshot.id,
+            Attachment.superseded.is_(False),
         )
     ).all()
     if not attachments:
-        return "缺少余额快照凭证"
+        return "缺少历史结余凭证"
     problems = [
         _attachment_problem(attachment, entity_type="SNAPSHOT", entity_id=snapshot.id)
         for attachment in attachments
@@ -92,17 +93,20 @@ def transaction_evidence_problem(db: Session, transaction: TransactionRecord) ->
         select(Attachment).where(
             Attachment.entity_type == "TRANSACTION",
             Attachment.entity_id == transaction.id,
+            Attachment.superseded.is_(False),
         )
     ).all()
     attachments: list[Attachment | None] = []
     if transaction.attachment_id is not None:
-        attachments.append(db.get(Attachment, transaction.attachment_id))
+        legacy = db.get(Attachment, transaction.attachment_id)
+        if legacy is None or not legacy.superseded:
+            attachments.append(legacy)
     known_ids = {attachment.id for attachment in attachments if attachment is not None}
     attachments.extend(
         attachment for attachment in generic_attachments if attachment.id not in known_ids
     )
     if not attachments:
-        return "缺少资金流水凭证"
+        return "缺少资金记录凭证"
     problems = [
         _attachment_problem(attachment, entity_type="TRANSACTION", entity_id=transaction.id)
         for attachment in attachments

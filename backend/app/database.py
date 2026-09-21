@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Index, MetaData, create_engine, event, inspect, text
+from sqlalchemy import Column, Index, MetaData, String, UniqueConstraint, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import application_root, get_settings
@@ -60,6 +60,22 @@ def init_db() -> None:
     alembic_config.set_main_option("script_location", str(script_path).replace("%", "%%"))
     alembic_config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
     existing_tables = set(inspect(engine).get_table_names())
+    if existing_tables and "alembic_version" not in existing_tables and "attachments" in existing_tables:
+        attachment_columns = {column["name"] for column in inspect(engine).get_columns("attachments")}
+        if "superseded" in attachment_columns:
+            from .services.backup import validate_database_structure
+            from .services.finance_meeting_contract import MEETING_REVISION
+            # Stamp only inside the transaction that validates the complete
+            # current schema. A partial unversioned shape remains untouched.
+            with engine.begin() as connection:
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
+                connection.exec_driver_sql("INSERT INTO alembic_version VALUES (?)", (MEETING_REVISION,))
+                try:
+                    validate_database_structure(connection.connection.driver_connection)
+                except ValueError as exc:
+                    raise RuntimeError("未版本化数据库的财务会议保护不完整；已停止启动") from exc
+            existing_tables.add("alembic_version")
     if existing_tables and "alembic_version" not in existing_tables:
         # Only this audited legacy-bootstrap path may reach 0.2.14 with
         # current metadata having pre-created the otherwise missing parent
@@ -86,7 +102,11 @@ def init_db() -> None:
         for field in ("hwm_source_type", "hwm_override_reason", "hwm_override_confirmed"):
             bootstrap_lines._columns.remove(bootstrap_lines.c[field])
         for master_name in ("fcs", "fee_plans"):
-            bootstrap_metadata.tables[master_name].c.company_id.nullable = False
+            master_table = bootstrap_metadata.tables[master_name]
+            master_table.c.company_id.nullable = False
+            master_table.append_column(Column("code", String(20 if master_name == "fcs" else 40), nullable=False))
+            master_table.append_constraint(UniqueConstraint("company_id", "code", name="uq_fc_company_code" if master_name == "fcs" else "uq_fee_plan_company_code"))
+        bootstrap_metadata.tables["attachments"]._columns.remove(bootstrap_metadata.tables["attachments"].c.superseded)
         bootstrap_invoice = bootstrap_metadata.tables["invoices"]
         # Missing legacy tables must also get the pre-0.2.27 invoice index.
         # The real migration installs the client-quarter index after its preflight.
@@ -553,6 +573,7 @@ def init_db() -> None:
                                                 if not closing_date_trigger_sql_is_current(trigger_sql):
                                                     raise RuntimeError("未版本化数据库的Closing日期保护不完整；已停止启动")
                                                 command.stamp(alembic_config, CLOSING_DATE_REVISION)
+                                                command.upgrade(alembic_config, "head")
                                             else:
                                                 command.stamp(alembic_config, CORRECTION_REVISION)
                                                 command.upgrade(alembic_config, "head")
@@ -712,7 +733,7 @@ def init_db() -> None:
             raise RuntimeError("数据库客户季度合并保护不完整；系统已停止启动")
     from .services.company_scope_contract import company_scope_schema_is_current
     with engine.connect() as scope_connection:
-        if not company_scope_schema_is_current(scope_connection):
+        if not company_scope_schema_is_current(scope_connection, codes_removed=True):
             raise RuntimeError("数据库公司解绑保护不完整；系统已停止启动")
     from .services.release_100_contract import release_100_schema_is_current
     with engine.connect() as release_connection:

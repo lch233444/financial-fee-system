@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -63,6 +64,9 @@ def _create(client: TestClient, path: str, payload: dict) -> dict:
 
 
 def _linked_proof(client: TestClient, entity_type: str, entity_id: int, marker: str) -> int:
+    if entity_type == "SNAPSHOT":
+        return upload_evidence(client, entity_type, entity_id)
+
     response = client.post(
         "/api/attachments",
         data={"entity_type": entity_type, "entity_id": str(entity_id)},
@@ -141,7 +145,7 @@ def _case(client: TestClient, label: str) -> dict:
     beginning = _create(
         client,
         "/api/balance-snapshots",
-        {
+        {"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account["id"],
             "as_of_date": "2026-01-01",
             "total_balance": "1000.00",
@@ -151,7 +155,7 @@ def _case(client: TestClient, label: str) -> dict:
     closing = _create(
         client,
         "/api/balance-snapshots",
-        {
+        {"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account["id"],
             "as_of_date": "2026-03-31",
             "total_balance": "1600.00",

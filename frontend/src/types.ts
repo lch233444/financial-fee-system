@@ -8,7 +8,7 @@ export type Company = {
   payment_terms_days: number;
 };
 
-export type FC = { id: number; company_id: number | null; company_name: string | null; name: string; code: string };
+export type FC = { id: number; company_id: number | null; company_name: string | null; name: string };
 export type Platform = { id: number; name: string; code: string; trustee: string | null };
 export type MasterStatus = "DRAFT" | "ACTIVE" | "CLOSED";
 export type FeePlan = {
@@ -16,7 +16,6 @@ export type FeePlan = {
   company_id: number | null;
   company_name: string | null;
   name: string;
-  code: string;
   fee_rate_percent: number;
 };
 export type Client = {
@@ -46,14 +45,53 @@ export type Account = {
   remark: string | null;
   status: MasterStatus;
 };
-export function accountIdentityLabel(account: Account) {
+export function accountIdentityDetail(account: Pick<Account, "platform_name" | "account_number" | "scheme_name" | "fee_plan_name">) {
+  const platform = account.platform_name?.trim();
+  const scheme = account.scheme_name?.trim();
   return [
-    account.client_name,
-    account.platform_name || "待确认Platform",
+    platform || "待确认Platform",
     account.account_number,
-    account.scheme_name?.trim() || null,
+    scheme && scheme !== platform ? scheme : null,
     account.fee_plan_name ? `收费计划 ${account.fee_plan_name}` : "未分配收费计划",
   ].filter(Boolean).join(" · ");
+}
+export function accountIdentityLabel(account: Account) {
+  return `${account.client_name} · ${accountIdentityDetail(account)}`;
+}
+
+export type ClientIdentity = Pick<Client, "id" | "name"> & Partial<Pick<Client, "fc_name" | "contact">>;
+
+/** Distinguish same-name choices without putting internal IDs in customer lists. */
+export function clientIdentityLabel(client: ClientIdentity, clients: readonly ClientIdentity[], accounts: readonly Account[] = []) {
+  const comparable = (value: string) => value.trim().normalize("NFKC").toLocaleLowerCase();
+  const sameName = clients.filter((item) => comparable(item.name) === comparable(client.name));
+  if (sameName.length < 2) return client.name;
+  const details = (item: ClientIdentity) => [item.name, item.fc_name?.trim() ? `FC ${item.fc_name.trim()}` : null, item.contact?.trim()].filter(Boolean).join(" · ");
+  const basicLabel = details(client);
+  const sameDetails = sameName.filter((item) => comparable(details(item)) === comparable(basicLabel));
+  if (sameDetails.length < 2) return basicLabel;
+  const withAccount = (item: ClientIdentity) => {
+    const ownedAccounts = accounts.filter((account) => account.client_id === item.id).sort((a, b) => a.id - b.id);
+    return [details(item), ownedAccounts.length ? `${accountIdentityDetail(ownedAccounts[0])}${ownedAccounts.length > 1 ? ` 等${ownedAccounts.length}个账户` : ""}` : null].filter(Boolean).join(" · ");
+  };
+  const accountLabel = withAccount(client);
+  return sameDetails.filter((item) => comparable(withAccount(item)) === comparable(accountLabel)).length < 2
+    ? accountLabel : `${accountLabel} · 档案 #${client.id}`;
+}
+
+/** Date-only API values are calendar dates, never timezone-shift them. */
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T|$)/.exec(value);
+  return match ? `${match[1]}年${match[2]}月${match[3]}日` : value;
+}
+
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${parsed.getFullYear()}年${pad(parsed.getMonth() + 1)}月${pad(parsed.getDate())}日 ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
 }
 export type BalanceSnapshot = {
   id: number;
@@ -71,8 +109,6 @@ export type BalanceSnapshot = {
   currency: string;
   source_type: string;
   statement_import_id: number | null;
-  holdings: Array<Record<string, unknown>>;
-  eligible_for_closing: boolean;
   remark: string | null;
   evidence_complete: boolean;
   evidence_count?: number;

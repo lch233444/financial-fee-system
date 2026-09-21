@@ -282,8 +282,8 @@ def _missing_evidence(db: Session, item: QuarterlySettlement) -> list[str]:
         beginning = db.get(BalanceSnapshot, line.beginning_snapshot_id) if line.beginning_snapshot_id else None
         closing = db.get(BalanceSnapshot, line.closing_snapshot_id) if line.closing_snapshot_id else None
         label = line.account.account_number if line.account else f"#{line.account_id}"
-        beginning_problem = "余额快照不存在" if not beginning else snapshot_evidence_problem(db, beginning)
-        closing_problem = "余额快照不存在" if not closing else snapshot_evidence_problem(db, closing)
+        beginning_problem = "历史结余不存在" if not beginning else snapshot_evidence_problem(db, beginning)
+        closing_problem = "历史结余不存在" if not closing else snapshot_evidence_problem(db, closing)
         if beginning_problem:
             missing.append(f"{label} Beginning Snapshot（{beginning_problem}）")
         if closing_problem:

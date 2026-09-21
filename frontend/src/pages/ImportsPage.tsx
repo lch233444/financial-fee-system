@@ -19,18 +19,7 @@ import {
 import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, Pagination, SectionNav } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import type { Account, AiAssistantStatus, BalanceSnapshot, Client, StatementImport } from "../types";
-import { accountIdentityLabel, SOL_MODEL_ID } from "../types";
-
-type Holding = {
-  fund_name?: string;
-  market_value?: string;
-  investment_gain_loss?: string;
-  portfolio_percent?: string;
-  units?: string;
-  unit_price?: string;
-};
-
-type HoldingsSource = "ocr" | "sol";
+import { accountIdentityLabel, clientIdentityLabel, formatDate, SOL_MODEL_ID } from "../types";
 
 type ReviewKey = "client_name" | "account_number" | "scheme_name" | "trustee" | "as_of_date" | "total_balance";
 
@@ -135,36 +124,29 @@ function fieldHasConflict(record: StatementImport | null, field: ComparisonField
     || !valuesAgree(field.key, record?.extracted?.[field.key], aiValues[field.key]);
 }
 
-const holdingFieldLabels: Record<string, string> = {
-  fund_name: "Fund Name",
-  market_value: "Market Value",
-  investment_gain_loss: "Investment Gain/Loss",
-  portfolio_percent: "Portfolio %",
-  units: "Units",
-  unit_price: "Unit Price",
-  mandatory_contributions: "Mandatory Contributions",
-  voluntary_contributions: "Voluntary Contributions",
-  balance_as_of: "Balance As-of",
-};
-
 const validationLabels: Record<string, string> = {
   total_equals_lifetime_net_plus_gain_loss: "总余额 = 累计净供款 + 累计投资盈亏",
-  total_equals_sum_of_holding_market_values: "总余额 = 持仓市值合计",
 };
 
 function reviewFieldLabel(field: string) {
   const topLevel = comparisonFields.find((item) => item.key === field);
   if (topLevel) return topLevel.label;
-  if (field === "holdings.length") return "持仓项目数量";
-  const holding = field.match(/^holdings\[(\d+)]\.(.+)$/);
-  if (holding) return `持仓 #${Number(holding[1]) + 1} · ${holdingFieldLabels[holding[2]] || holding[2]}`;
   return field;
 }
 
-function issueDisplayValue(raw: unknown) {
+function issueDisplayValue(raw: unknown, field?: string) {
+  if (field === "as_of_date" && raw) return formatDate(String(raw));
   if (raw == null || raw === "") return "未识别";
   if (typeof raw === "object") return JSON.stringify(raw);
   return String(raw);
+}
+
+function retiredReviewField(field: string) {
+  return /^(?:ai_)?holdings(?:\b|[.[])/i.test(field) || field === "total_equals_sum_of_holding_market_values";
+}
+
+function visibleWarnings(warnings?: string[]) {
+  return (warnings || []).filter((warning) => !/持仓|holdings|季末|Closing资格/i.test(warning));
 }
 
 function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
@@ -174,6 +156,7 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
   const aiValues = recognition.values || recognition.extracted || {};
 
   function addField(field: string, reason: string, ocrValue: unknown, aiValue: unknown, detail?: string) {
+    if (retiredReviewField(field)) return;
     const id = `field:${field}`;
     const current = issues.get(id);
     if (current) {
@@ -213,6 +196,7 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
   }
 
   for (const checkName of recognition.validation_failures || []) {
+    if (retiredReviewField(checkName)) continue;
     const check = recognition.validation_checks?.find((item) => item.check === checkName);
     const id = `validation:${checkName}`;
     issues.set(id, {
@@ -226,7 +210,9 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
     });
   }
 
-  if (recognition.recognition_requires_human_review && !issues.size) {
+  const hasRetiredIssues = [...(recognition.conflicts || []), ...(recognition.uncorroborated || [])].some((item) => retiredReviewField(item.field))
+    || [...(recognition.validation_failures || []), ...rawUncertain].some(retiredReviewField);
+  if (!issues.size && ((recognition.recognition_requires_human_review && !hasRetiredIssues) || recognition.status?.toUpperCase() === "FAILED")) {
     issues.set("recognition:manual", {
       id: "recognition:manual",
       field: "recognition",
@@ -239,16 +225,6 @@ function buildReviewIssues(record: StatementImport | null): ReviewIssue[] {
   return [...issues.values()];
 }
 
-function HoldingsSourceTable({ title, holdings, selected }: { title: string; holdings: Holding[]; selected: boolean }) {
-  return <div className={`holding-source-card ${selected ? "selected" : ""}`}>
-    <div className="holding-source-card-heading">
-      <div><strong>{title}</strong><span>{holdings.length}项持仓</span></div>
-      {selected ? <b><CheckCircle2 size={13} />当前入账来源</b> : null}
-    </div>
-    {holdings.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Fund</th><th>Market Value</th><th>Gain/Loss</th><th>Units</th><th>Unit Price</th></tr></thead><tbody>{holdings.map((holding, index) => <tr key={`${holding.fund_name}-${index}`}><td>{holding.fund_name || "-"}</td><td>{holding.market_value || "-"}</td><td>{holding.investment_gain_loss || "-"}</td><td>{holding.units || "-"}</td><td>{holding.unit_price || "-"}</td></tr>)}</tbody></table></div> : <div className="holding-source-empty">该来源没有识别到持仓项目</div>}
-  </div>;
-}
-
 function DocumentRoutingNotice({ record }: { record: StatementImport }) {
   const documentType = value(record, "document_type") || "unknown";
   const solType = aiValue(record, "document_type");
@@ -257,14 +233,19 @@ function DocumentRoutingNotice({ record }: { record: StatementImport }) {
     <TriangleAlert size={30} />
     <div>
       <strong>{documentTypeLabels[documentType] || documentTypeLabels.unknown}</strong>
-      <p>这不是账户余额页面，系统已禁止生成余额快照。请保留原始凭证，并在“资金与余额”模块人工复核后登记交易。</p>
+      <p>这不是账户余额页面，系统已禁止生成历史结余。请保留原始凭证，并在“资金与余额”模块人工复核后登记交易。</p>
       {solType ? <span>Sol分类：{documentTypeLabels[solType] || solType}</span> : null}
     </div>
     {Object.keys(details).length ? <div className="document-routing-details">{Object.entries(details).map(([key, raw]) => <span key={key}><small>{key}</small><b>{String(raw)}</b></span>)}</div> : null}
   </div>;
 }
 
-export default function ImportsPage({ notify }: { notify: (message: string) => void }) {
+export default function ImportsPage({ notify, embedded = false, onConfirmed, title = "导入季度结余" }: {
+  notify: (message: string) => void;
+  embedded?: boolean;
+  onConfirmed?: () => void;
+  title?: string;
+}) {
   const imports = useApiList<StatementImport>("/api/statement-imports");
   const accounts = useApiList<Account>("/api/accounts");
   const clients = useApiList<Client>("/api/clients");
@@ -284,21 +265,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const [solDocumentTypeReviewed, setSolDocumentTypeReviewed] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const deleteBusyRef = useRef(false);
-  const [holdingsSource, setHoldingsSource] = useState<HoldingsSource>("ocr");
-  const [holdingsDifferenceReason, setHoldingsDifferenceReason] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectedClientId, setSelectedClientId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
-  const holdings = (selected?.extracted?.holdings as Holding[] | undefined) || [];
-  const aiHoldings = ((selected?.ai_recognition?.values?.holdings ?? selected?.ai_recognition?.extracted?.holdings) as Holding[] | undefined) || [];
-  const selectedHoldings = holdingsSource === "sol" ? aiHoldings : holdings;
-  const holdingsReduced = selectedHoldings.length < Math.max(holdings.length, aiHoldings.length);
-  const holdingsReasonValid = holdingsDifferenceReason.trim().length >= 2 && holdingsDifferenceReason.trim().length <= 500;
   const recognized = recognitionSucceeded(selected);
   const comparisonRows = recognized ? comparisonFields.map((field) => ({ field, conflict: fieldHasConflict(selected, field) })) : [];
   const reviewIssues = buildReviewIssues(selected);
   const reviewIssueCount = reviewIssues.length;
-  const aiNeedsReview = reviewIssueCount > 0 || selected?.ai_recognition?.status?.toUpperCase() !== "AGREED";
+  const aiNeedsReview = reviewIssueCount > 0;
   const assistantReady = assistant?.status === "ready";
   const localDocumentType = value(selected, "document_type") || "unknown";
   const solDocumentType = aiValue(selected, "document_type");
@@ -312,7 +286,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
   const matchingClients = clients.data.filter((item) => normalizedName(item.name) === normalizedName(reviewValues.client_name));
   const needsClientSelection = !selectedClientId && !selectedExistingAccount && matchingClients.length > 0
     && !accounts.data.some((item) => item.account_number === reviewValues.account_number);
-  const confirmedHoldings = (confirmedSnapshot?.holdings as Holding[] | undefined) || [];
   const statementWriteBusy = uploading || recognizing || reviewing || deletingId !== null;
 
   useEffect(() => {
@@ -339,8 +312,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setReviewValues(initialReviewValues(selected));
     setConflictsAcknowledged(false);
     setSolDocumentTypeReviewed(false);
-    setHoldingsSource("ocr");
-    setHoldingsDifferenceReason("");
     setSelectedAccountId("");
     setSelectedClientId("");
   }, [selected?.id]);
@@ -354,11 +325,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     setSelectedAccountId("");
   }, [reviewValues.account_number, reviewValues.scheme_name]);
 
-  function chooseHoldings(source: HoldingsSource) {
-    setHoldingsSource(source);
-    setHoldingsDifferenceReason("");
-  }
-
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (recognizing || reviewing || deletingId !== null) return;
@@ -370,7 +336,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       await imports.reload();
       setSelected(result);
       setReviewValues(initialReviewValues(result));
-      chooseHoldings("ocr");
       if (result.upload_recovery_pending) {
         setLocalError("账单记录已安全处理，但上传对账标记仍待系统清理；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录");
         notify(result.duplicate
@@ -395,7 +360,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       setSelected(result);
       setReviewValues(initialReviewValues(result));
       setConflictsAcknowledged(false);
-      chooseHoldings("ocr");
       await imports.reload();
       notify(result.ai_recognition ? "本地OCR已重新执行；将继续与原Sol结果比较，不会再次调用模型" : "本地OCR已重新执行，可运行一次Sol辅助识别");
     } catch (err) {
@@ -413,7 +377,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
     try {
       const result = await recognizeStatementWithAi(selected.id);
       setSelected(result);
-      chooseHoldings("ocr");
       await imports.reload();
       const reviewIssueTotal = buildReviewIssues(result).length;
       notify(reviewIssueTotal ? `Sol识别完成，有${reviewIssueTotal}项需人工复核` : "Sol与本地OCR结果一致，请财务最终复核");
@@ -444,7 +407,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       }
       if (!window.confirm(
         `最终确认撤销并删除已入账记录 #${record.id}？\n\n` +
-        "系统将删除这次入账生成且未被后续业务引用的Balance Snapshot、持仓明细、原始文件及OCR/Sol结果，但不会删除Client或Sub Account。只有尚未用于Settlement且没有其他受保护引用时才允许删除；审计记录会保留，此操作不可撤销。",
+        "系统将删除这次入账生成且未被后续业务引用的历史结余、原始文件及OCR/Sol结果，但不会删除Client或Sub Account。只有尚未用于Settlement且没有其他受保护引用时才允许删除；审计记录会保留，此操作不可撤销。",
       )) return;
     } else if (!window.confirm(
       `确定删除导入记录 #${record.id}？原始文件及OCR/Sol结果也会删除，审计记录会保留，此操作不可撤销。`,
@@ -480,7 +443,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         notify("导入记录已删除，但清单刷新失败");
       } else {
         notify(confirmed
-          ? "误入账记录、未使用Snapshot、持仓及原件已删除；Client和Sub Account未删除"
+          ? "误入账记录、未使用历史结余及原件已删除；Client和Sub Account未删除"
           : result.source_file_deleted
             ? "未确认导入记录及其原始文件已删除"
             : "未确认导入记录及OCR/Sol结果已删除；原始文件原本不存在");
@@ -504,10 +467,6 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
       setLocalError("已发现同名客户，请先选择客户归属，再新增他的子账户。");
       return;
     }
-    if (holdingsReduced && !holdingsReasonValid) {
-      setLocalError("所选持仓数量少于识别候选。请核对原件并选择完整明细；若较少的明细才正确，必须填写持仓差异原因。");
-      return;
-    }
     if (reviewIssueCount > 0 && !conflictsAcknowledged) {
       setLocalError("Sol与本地OCR存在冲突，请完成逐项核对并勾选人工确认声明。");
       return;
@@ -524,7 +483,7 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         account_id: number;
         created_draft: boolean;
         created_client: boolean;
-        snapshot: { id: number; as_of_date: string; total_balance: string; eligible_for_closing: boolean };
+        snapshot: { id: number; as_of_date: string; total_balance: string };
       }>(`/api/statement-imports/${selected.id}/confirm`, {
         client_name: reviewValues.client_name,
         client_id: selectedClientId ? Number(selectedClientId) : null,
@@ -535,15 +494,14 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
         total_balance: reviewValues.total_balance,
         account_id: selectedExistingAccount?.id ?? null,
         account_platform_id: selectedExistingAccount?.platform_id ?? null,
-        holdings: selectedHoldings,
-        holdings_difference_reason: holdingsReduced ? holdingsDifferenceReason.trim() : null,
         ai_conflicts_reviewed: reviewIssueCount > 0 && conflictsAcknowledged,
         luna_document_type_reviewed: usesSolBalanceClassification && solDocumentTypeReviewed,
       });
       setSelected(result.statement_import);
       await Promise.all([imports.reload(), clients.reload(), accounts.reload(), snapshots.reload()]);
+      onConfirmed?.();
       notify(result.created_client ? "已入账并创建客户及子账户草稿"
-        : result.created_draft ? "已为已有客户新增子账户草稿，余额快照已入账" : "余额快照已正式入账");
+        : result.created_draft ? "已为已有客户新增子账户草稿，历史结余已入账" : "历史结余已正式入账");
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "确认入账失败");
     } finally {
@@ -553,17 +511,17 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
 
   return (
     <>
-      <PageHeader
-        title="余额快照导入"
+      {!embedded ? <PageHeader
+        title={title}
         subtitle="本地OCR + Sol独立识别 · 冲突直接交由财务确认"
-      />
+      /> : null}
       {(localError || imports.error || clients.error || accounts.error || snapshots.error) ? <ErrorBanner message={localError || imports.error || clients.error || accounts.error || snapshots.error} /> : null}
 
-      <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} />
-      <Panel id="statement-upload" title="上传eMPF文件" subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
+      {!embedded ? <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} /> : null}
+      <Panel id="statement-upload" title={embedded ? title : "上传eMPF文件"} subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
           <UploadCloud size={32} />
-          <div><strong>选择客人账单、余额页面或供款凭证</strong><span>先在本机分类并执行OCR；非余额文件不会生成余额快照</span></div>
+          <div><strong>选择客人账单、余额页面或供款凭证</strong><span>先在本机分类并执行OCR；非余额文件不会生成历史结余</span></div>
           <input aria-label="选择账单文件" name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required />
           <button className="primary" type="submit" disabled={statementWriteBusy}>{uploading ? "正在执行本地OCR..." : "上传并本地识别"}</button>
         </form>
@@ -602,9 +560,9 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
           {selected ? <><div className="document-open"><a className="text-link" href={`/api/statement-imports/${selected.id}/file`} target="_blank" rel="noreferrer">打开原件 ↗</a><small>预览未显示时，可直接打开文件查看。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <iframe className="document-preview" src={`/api/statement-imports/${selected.id}/file`} title="原始账单预览" sandbox="" />}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
         </Panel>
 
-        <Panel id="statement-review" title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接写入余额或流水">
+        <Panel id="statement-review" title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接保存历史结余或资金记录">
           {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-receipt">
-            <header><CheckCircle2 /><div><strong>该账单已经复核并生成余额快照</strong><span>原始账单、人工确认值、账户和Snapshot均已关联保留</span></div>{confirmedAccount ? <StatusBadge value={confirmedAccount.status} /> : null}</header>
+            <header><CheckCircle2 /><div><strong>该账单已经复核并生成历史结余</strong><span>原始账单、人工确认值、账户和历史结余均已关联保留</span></div>{confirmedAccount ? <StatusBadge value={confirmedAccount.status} /> : null}</header>
             <div className="confirmed-trace-grid">
               <span><small>Client</small><b>{confirmedAccount?.client_name || confirmedValue(selected, "client_name") || "账户资料加载中"}</b></span>
               <span><small>Platform</small><b>{confirmedAccount?.platform_name || "待确认Platform"}</b></span>
@@ -612,26 +570,20 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               <span><small>Scheme</small><b>{confirmedAccount?.scheme_name || confirmedValue(selected, "scheme_name") || "-"}</b></span>
               <span><small>Trustee（MPF计划受托机构）</small><b>{confirmedValue(selected, "trustee") || "-"}</b></span>
               <span><small>Fee Plan</small><b>{confirmedAccount?.fee_plan_name || "待补全Fee Plan"}</b></span>
-              <span><small>Snapshot日期</small><b>{confirmedSnapshot?.as_of_date || confirmedValue(selected, "as_of_date") || "加载中"}</b></span>
-              <span><small>Snapshot金额</small><b>HKD {confirmedSnapshot?.total_balance || confirmedValue(selected, "total_balance") || "-"}</b></span>
-              <span><small>Closing资格</small><b>{confirmedSnapshot ? (confirmedSnapshot.eligible_for_closing ? "可作为季末/退出日Closing" : "普通快照，不可作为Closing") : "加载中"}</b></span>
+              <span><small>结余日期</small><b>{formatDate(confirmedSnapshot?.as_of_date || confirmedValue(selected, "as_of_date"))}</b></span>
+              <span><small>结余金额</small><b>HKD {confirmedSnapshot?.total_balance || confirmedValue(selected, "total_balance") || "-"}</b></span>
             </div>
-            {confirmedSnapshot && !confirmedHoldings.length && (holdings.length || aiHoldings.length) && !selected.reviewed?.holdings_difference_reason ? <div className="warning-list" role="alert"><p>历史持仓遗漏：识别候选中有明细，但该快照保存了0项，且没有单独的差异原因。请核对原件与子账户资料；已结算或签发的记录不能直接覆盖。</p></div> : null}
-            {confirmedHoldings.length ? <div className="holdings-source-review confirmed-holdings"><HoldingsSourceTable title="已确认入账持仓（凭证记录）" holdings={confirmedHoldings} selected /></div> : <small className="confirmed-audit-reference">该Snapshot保存了0项基金持仓。收费单位是已登记的Sub Account，各自使用余额、流水、收费计划及HWM计算。</small>}
-            {selected.reviewed?.holdings_difference_reason ? <p className="confirmed-audit-reference">持仓差异原因：{String(selected.reviewed.holdings_difference_reason)}</p> : null}
             <p className="confirmed-next-step">{!confirmedAccount || !confirmedSnapshot
-              ? "正在加载已关联的账户与Snapshot资料。"
+              ? "正在加载已关联的账户与历史结余资料。"
               : confirmedAccount.status === "DRAFT"
               ? "下一步：到“客户与账户”补全Client的FC及Sub Account的Fee Plan、管理日期并激活；完成前不会进入正式季度结算。"
-              : confirmedSnapshot.eligible_for_closing
-                ? "下一步：该Snapshot已在“资金与余额”可查；到“季度结算”选择同一Client、Platform、Fee Plan及账户期间，人工计算并Finalize。系统不会自动结算。"
-                : "该Snapshot已在“资金与余额”可查；因不是季末或实际退出日，只作余额记录，不会出现在Closing选项。"}</p>
-            {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：Snapshot #{selected.confirmed_snapshot_id}</small> : null}
+              : "该历史结余已在“资金与余额”可查，可在账单计算时按实际期间选择。系统不会自动结算。"}</p>
+            {selected.confirmed_snapshot_id ? <small className="confirmed-audit-reference">审计引用：历史结余 #{selected.confirmed_snapshot_id}</small> : null}
           </div> : !canReviewAsBalancePage ? <DocumentRoutingNotice record={selected} /> : <form className="form-grid" onSubmit={(event) => void confirm(event)}>
-            {usesSolBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={solDocumentTypeReviewed} onChange={(event) => setSolDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Sol的文档类型进入人工复核，Sol不会自动生成余额快照。</small></span></label> : null}
+            {usesSolBalanceClassification ? <label className="conflict-acknowledgement document-type-acknowledgement"><input type="checkbox" checked={solDocumentTypeReviewed} onChange={(event) => setSolDocumentTypeReviewed(event.target.checked)} /><span><strong>我已查看原件，确认这是eMPF账户余额页面</strong><small>本地OCR未能分类；勾选后采用Sol的文档类型进入人工复核，Sol不会自动生成历史结余。</small></span></label> : null}
             <div className="review-toolbar"><span>本地OCR最高置信度：{Math.round(Math.max(0, ...Object.values(selected.confidence || {})) * 100)}%</span><button type="button" className="ghost" disabled={Boolean(selected.ai_recognition) || statementWriteBusy} onClick={() => void reparse()}><RefreshCw size={15} />{selected.ai_recognition ? "本地OCR已锁定" : reviewing ? "处理中..." : "重新执行本地OCR"}</button></div>
-            {selected.warnings?.length ? <div className="warning-list">{selected.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
-            {selected.ai_recognition?.warnings?.length ? <div className="warning-list ai-warning-list">{selected.ai_recognition.warnings.map((warning, index) => <p key={index}>Sol：{warning}</p>)}</div> : null}
+            {visibleWarnings(selected.warnings).length ? <div className="warning-list">{visibleWarnings(selected.warnings).map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}
+            {visibleWarnings(selected.ai_recognition?.warnings).length ? <div className="warning-list ai-warning-list">{visibleWarnings(selected.ai_recognition?.warnings).map((warning, index) => <p key={index}>Sol：{warning}</p>)}</div> : null}
             {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Sol识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不会切换其他模型，请直接人工复核。</span></div> : null}
 
             {recognized ? <div className="ai-comparison">
@@ -647,21 +599,20 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
                   const bothMissing = !local && !sol;
                   return <div className={`ai-comparison-row ${conflict ? "conflict" : "match"}`} key={field.key}>
                     <strong>{field.label}</strong>
-                    <span title={local}>{local || "未识别"}</span>
-                    <span title={sol}>{sol || "未识别"}</span>
+                    <span>{field.key === "as_of_date" && local ? formatDate(local) : local || "未识别"}</span>
+                    <span>{field.key === "as_of_date" && sol ? formatDate(sol) : sol || "未识别"}</span>
                     <div>{conflict ? <><b><TriangleAlert size={13} />冲突</b>{field.editable ? <span className="comparison-actions"><button type="button" onClick={() => chooseValue(field.editable!, "local")}>采用本地</button><button type="button" onClick={() => chooseValue(field.editable!, "ai")}>采用Sol</button></span> : null}</> : <b className={bothMissing ? "missing" : "agree"}>{bothMissing ? "均未识别" : "一致"}</b>}</div>
                   </div>;
                 })}
               </div>
-              {holdings.length || aiHoldings.length ? <p className="holdings-comparison">基金持仓：本地OCR {holdings.length} 项 · Sol {aiHoldings.length} 项。各收费子账户须在“客户与账户”独立登记和分配计划；识别基金不会自动建立收费子账户。</p> : null}
               {reviewIssueCount ? <div className="ai-review-register">
-                <div className="ai-review-register-heading"><strong>完整人工复核清单</strong><span>{reviewIssueCount}项 · 包含持仓路径与数学校验</span></div>
+                <div className="ai-review-register-heading"><strong>完整人工复核清单</strong><span>{reviewIssueCount}项 · 逐项核对识别差异</span></div>
                 <div className="ai-review-register-row header"><span>字段 / 检查</span><span>本地OCR</span><span>Sol</span><span>复核原因</span></div>
                 {reviewIssues.map((issue) => {
-                  const ocrText = issueDisplayValue(issue.ocrValue);
-                  const aiText = issueDisplayValue(issue.aiValue);
+                  const ocrText = issueDisplayValue(issue.ocrValue, issue.field);
+                  const aiText = issueDisplayValue(issue.aiValue, issue.field);
                   return <div className="ai-review-register-row" key={issue.id}>
-                    <div><strong>{issue.label}</strong><small>{issue.field}</small></div>
+                    <div><strong>{issue.label}</strong></div>
                     <span title={ocrText}>{ocrText}</span>
                     <span title={aiText}>{aiText}</span>
                     <div><b>{issue.reasons.join(" / ")}</b>{issue.detail ? <small>{issue.detail}</small> : null}</div>
@@ -674,10 +625,10 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
               <SearchableSelect label="选择已有客户" name="client_id" value={selectedClientId}
                 disabled={statementWriteBusy || clients.loading || Boolean(clients.error)}
                 onChange={(id) => { setSelectedClientId(id); setSelectedAccountId(""); }}
-                placeholder="新客户 / 尚未选择已有客户" searchPlaceholder="搜索客户姓名、公司或FC…"
+                placeholder="新客户 / 尚未选择已有客户" searchPlaceholder="搜索客户姓名、FC、联系方式或账户…"
                 options={clients.data.filter((item) => item.status !== "CLOSED").map((item) => ({ value: String(item.id),
-                  label: [item.name, item.fc_name || "待补全FC", `客户#${item.id}`, `${accounts.data.filter((account) => account.client_id === item.id).length}个子账户`].join(" · ") }))} />
-              {selectedClient ? <small>本次账户归属：{selectedClient.name} · 客户#{selectedClient.id}。新账户沿用该客户档案，收费计划仍按子账户分配。</small>
+                  label: clientIdentityLabel(item, clients.data, accounts.data) }))} />
+              {selectedClient ? <small>本次账户归属：{clientIdentityLabel(selectedClient, clients.data, accounts.data)}。新账户沿用该客户档案，收费计划仍按子账户分配。</small>
                 : needsClientSelection ? <small role="alert">发现{matchingClients.length}个同名客户档案，请先选择已有客户，再为他新增子账户。若确为不同的人，请先在“客户与账户”建立独立档案。</small> : null}
             </Field>
             <Field group label="匹配已有Sub Account" hint="账户已经登记时选择原账户；属于已有客户的新账户，选择上方客户后保留此项为空。"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId}
@@ -692,26 +643,8 @@ export default function ImportsPage({ notify }: { notify: (message: string) => v
             <Field label="As-of Date" hint={confidence(selected, "as_of_date")}><input name="as_of_date" type="date" required value={reviewValues.as_of_date} onChange={(event) => setReviewValues((current) => ({ ...current, as_of_date: event.target.value }))} /></Field>
             <Field label="Total Balance (HKD)" hint={confidence(selected, "total_balance")}><input name="total_balance" type="number" min="0" step="0.01" required value={reviewValues.total_balance} onChange={(event) => setReviewValues((current) => ({ ...current, total_balance: event.target.value }))} /></Field>
             <div className="readonly-grid"><span><small>累计净供款（仅参考）</small><b>{value(selected, "lifetime_net_contributions") || "未识别"}</b></span><span><small>累计投资盈亏（仅参考）</small><b>{value(selected, "lifetime_gain_loss") || "未识别"}</b></span></div>
-            {holdings.length || selected.ai_recognition ? <div className="holdings-source-review">
-              <div className="holdings-source-toolbar">
-                <div><strong>选择正式保存的持仓来源</strong><span>请对照原件选择；Sol结果需主动采用后才会保存。</span></div>
-                <div className="holdings-source-buttons" role="group" aria-label="持仓入账来源">
-                  <button type="button" aria-pressed={holdingsSource === "ocr"} className={holdingsSource === "ocr" ? "active" : ""} onClick={() => chooseHoldings("ocr")}><CheckCircle2 size={13} />采用本地持仓（{holdings.length}项）</button>
-                  {selected.ai_recognition ? <button type="button" aria-pressed={holdingsSource === "sol"} className={holdingsSource === "sol" ? "active" : ""} onClick={() => chooseHoldings("sol")}><Sparkles size={13} />采用Sol持仓（{aiHoldings.length}项）</button> : null}
-                </div>
-              </div>
-              <p role="status">将保存：{selectedHoldings.length}项基金持仓 · 来源：{holdingsSource === "sol" ? "Sol（人工选择）" : "本地OCR"}</p>
-              {holdingsReduced ? <div className="warning-list">
-                <p>所选来源只有{selectedHoldings.length}项，另一来源有更多明细。请先核对原件，避免漏存；统一差异勾选不能代替此项处理。</p>
-                <Field label="持仓差异原因" hint="仅当较少的明细才正确时填写，例如另一来源重复或误识别；2至500字，随入账记录保留。"><textarea name="holdings_difference_reason" value={holdingsDifferenceReason} minLength={2} maxLength={500} required aria-invalid={!holdingsReasonValid} onChange={(event) => setHoldingsDifferenceReason(event.target.value)} /></Field>
-              </div> : null}
-              <div className={selected.ai_recognition ? "holdings-source-grid" : "holdings-source-grid single"}>
-                <HoldingsSourceTable title="本地OCR持仓" holdings={holdings} selected={holdingsSource === "ocr"} />
-                {selected.ai_recognition ? <HoldingsSourceTable title="Sol持仓" holdings={aiHoldings} selected={holdingsSource === "sol"} /> : null}
-              </div>
-            </div> : null}
-            {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含顶层字段、持仓路径、单边识别、关键字段不确定/缺失及数学校验；系统没有调用更高模型。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={statementWriteBusy || clients.loading || accounts.loading || Boolean(clients.error || accounts.error) || needsClientSelection || (holdingsReduced && !holdingsReasonValid) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成余额快照" : "确认并生成余额快照"}</button>
+            {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含账户资料、单边识别、关键字段不确定或缺失及余额校验。</small></span></label> : null}
+            <button className="primary" type="submit" disabled={statementWriteBusy || clients.loading || accounts.loading || Boolean(clients.error || accounts.error) || needsClientSelection || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成历史结余" : "确认并生成历史结余"}</button>
           </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
         </Panel>
       </div>

@@ -1,3 +1,4 @@
+import { clientIdentityLabel, formatDate } from "./types";
 import { useMemo, useState } from "react";
 import SearchableSelect from "./SearchableSelect";
 import { EmptyState, Field, Money, Panel, Pagination } from "./components";
@@ -28,7 +29,8 @@ export default function GeneratedBills({ invoices }: { invoices: Invoice[] }) {
   const [status, setStatus] = useState("");
   const issued = useMemo(() => invoices.filter((item) => item.invoice_number && (item.lifecycle_status === "ISSUED" || item.lifecycle_status === "VOID")), [invoices]);
   const years = [...new Set(issued.map((item) => item.year))].sort((a, b) => b - a);
-  const clients = [...new Map(issued.map((item) => [item.client_id, { value: String(item.client_id), label: `${item.client_name} · #${item.client_id}` }])).values()];
+  const invoiceClients = [...new Map(issued.map((item) => [item.client_id, { id: item.client_id, name: item.client_name || "待核对客户", fc_name: item.fc_name }])).values()];
+  const clients = invoiceClients.map((client) => ({ value: String(client.id), label: clientIdentityLabel(client, invoiceClients) }));
   const filtered = issued.filter((item) => (!year || item.year === Number(year)) && (!quarter || item.quarter === Number(quarter))
     && (!clientId || item.client_id === Number(clientId)) && (!status || item.lifecycle_status === status));
   const pages = usePagination(filtered, `${year}:${quarter}:${clientId}:${status}`);
@@ -40,7 +42,7 @@ export default function GeneratedBills({ invoices }: { invoices: Invoice[] }) {
       <Field label="生成账单状态"><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="ISSUED">账单已生成</option><option value="VOID">账单已作废</option></select></Field>
     </div>
     {filtered.length ? <div className="table-wrap" tabIndex={0} role="region" aria-label="已生成账单"><table><thead><tr><th>账单编号</th><th>客户 / 期间</th><th>出具日期</th><th>应付服务费</th><th>状态</th><th>操作</th></tr></thead><tbody>{pages.rows.map((item) => <tr key={item.id}>
-      <td>{item.invoice_number}</td><td>{item.client_name}<small className="cell-note">{item.year} Q{item.quarter}</small></td><td>{item.issue_date}</td><td><Money value={item.amount} /></td>
+      <td>{item.invoice_number}</td><td>{item.client_name}<small className="cell-note">{item.year} Q{item.quarter}</small></td><td>{formatDate(item.issue_date)}</td><td><Money value={item.amount} /></td>
       <td><span className={`status status-${item.lifecycle_status.toLowerCase()}`}>{item.lifecycle_status === "ISSUED" ? "账单已生成" : "账单已作废"}</span></td>
       <td><a className="text-link" href={`#/invoices/${item.id}`}>查看账单及PDF</a><InvoiceHistoryLinks invoice={item} /></td>
     </tr>)}</tbody></table></div> : <EmptyState title="暂无已生成账单" detail="完成计算并锁定后，在账单出具页面签发缴费单。" />}

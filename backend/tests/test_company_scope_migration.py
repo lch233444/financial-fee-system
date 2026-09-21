@@ -49,12 +49,9 @@ def test_migration_preserves_every_row_including_duplicate_codes_and_frozen_hist
         bill.lifecycle_status, bill.issued_at = 'ISSUED', utcnow()
         bill.pdf_paths_json = {'zh': 'synthetic/original-zh.pdf', 'en': 'synthetic/original-en.pdf'}
         db.flush()
-        proof = Attachment(entity_type='PAYMENT', entity_id=None, original_name='synthetic-proof.pdf',
-                           stored_path='synthetic-proof.pdf', sha256='a' * 64, size_bytes=1)
-        db.add(proof)
-        db.flush()
+        proof_id = db.execute(text("INSERT INTO attachments (entity_type,entity_id,original_name,stored_path,sha256,size_bytes,created_at,updated_at) VALUES ('PAYMENT',NULL,'synthetic-proof.pdf','synthetic-proof.pdf',:hash,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"), {"hash": "a" * 64}).lastrowid
         payment = Payment(invoice_id=bill.id, payment_date=date(2026, 4, 10), amount_cents=12000,
-                          method='BANK_TRANSFER', proof_attachment_id=proof.id, company_difference_cents=0)
+                          method='BANK_TRANSFER', proof_attachment_id=proof_id, company_difference_cents=0)
         db.add(payment)
         db.flush()
         # The payment insert trigger appends the original APPLY allocation.
@@ -108,7 +105,7 @@ def test_migration_failure_restores_tables_indexes_triggers_and_version(tmp_path
 @pytest.mark.parametrize('tamper', [False, True])
 def test_unstamped_company_scope_requires_complete_schema_and_backup_guards(tmp_path, monkeypatch, tamper):
     settings = _settings(tmp_path, 'company-unstamped', monkeypatch)
-    command.upgrade(_alembic_config(settings), 'head')
+    command.upgrade(_alembic_config(settings), COMPANY_SCOPE_REVISION)
     if tamper:
         with closing(sqlite3.connect(settings.database_path)) as sql, sql:
             name = next(iter(CODE_TRIGGER_SQL))

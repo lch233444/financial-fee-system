@@ -47,14 +47,15 @@ test("流水筛选改变时清除已选账户但保留已输入金额，不能�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<TransactionsPage notify={vi.fn()} />);
   await choose("资金与余额客户", "客户甲");
-  const form = within(screen.getByRole("region", { name: "新增资金流水" }));
-  const account = form.getByRole("combobox", { name: "Sub Account", exact: true });
-  expect(within(account).queryByRole("option", { name: /B-15/ })).toBeNull();
-  fireEvent.change(account, { target: { value: "2" } });
-  fireEvent.change(form.getByLabelText("Amount (HKD)"), { target: { value: "321.09" } });
+  const form = within(screen.getByRole("region", { name: "导入供款加款取款", exact: true }));
+  const account = form.getByRole("combobox", { name: "资金记录账户", exact: true });
+  fireEvent.focus(account);
+  expect(within(screen.getByRole("listbox")).queryByRole("option", { name: /B-15/ })).toBeNull();
+  fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: /A-10/ }));
+  fireEvent.change(form.getByLabelText("金额 (HKD)"), { target: { value: "321.09" } });
   await choose("资金与余额客户", "客户乙");
-  expect((form.getByRole("combobox", { name: "Sub Account", exact: true }) as HTMLSelectElement).value).toBe("");
-  expect((form.getByLabelText("Amount (HKD)") as HTMLInputElement).value).toBe("321.09");
+  expect((form.getByRole("combobox", { name: "资金记录账户", exact: true }) as HTMLInputElement).value).toBe("");
+  expect((form.getByLabelText("金额 (HKD)") as HTMLInputElement).value).toBe("321.09");
 });
 
 test("同客户两计划只出现一个缴费单候选，总额准确且提示未纳入账户", async () => {

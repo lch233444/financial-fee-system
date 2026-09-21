@@ -1,4 +1,5 @@
 from __future__ import annotations
+from evidence_fixtures import upload_evidence
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -24,7 +25,7 @@ WRITE_HEADERS = {"X-Financial-System-Request": "1"}
 def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str, *, closing: bool) -> dict:
     response = client.post(
         "/api/balance-snapshots",
-        json={
+        json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
             "account_id": account_id,
             "as_of_date": as_of_date,
             "total_balance": balance,
@@ -33,12 +34,6 @@ def _snapshot(client: TestClient, account_id: int, as_of_date: str, balance: str
     )
     assert response.status_code == 201, response.text
     item = response.json()
-    uploaded = client.post(
-        "/api/attachments",
-        data={"entity_type": "SNAPSHOT", "entity_id": str(item["id"])},
-        files={"file": (f"snapshot-{item['id']}.pdf", b"%PDF-1.4\nreview\n%%EOF", "application/pdf")},
-    )
-    assert uploaded.status_code == 201, uploaded.text
     return item
 
 
@@ -184,7 +179,7 @@ def test_financial_inputs_reject_silent_precision_loss() -> None:
         data = _master(client, "PREC")
         invalid_transaction = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-01",
                 "transaction_type": "CONTRIBUTION",
@@ -194,7 +189,7 @@ def test_financial_inputs_reject_silent_precision_loss() -> None:
         assert invalid_transaction.status_code == 422
         valid_transaction = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-01",
                 "transaction_type": "CONTRIBUTION",
@@ -206,7 +201,7 @@ def test_financial_inputs_reject_silent_precision_loss() -> None:
 
         assert client.post(
             "/api/balance-snapshots",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
                 "account_id": data["account"]["id"],
                 "as_of_date": "2026-03-31",
                 "total_balance": "1.001",
@@ -238,12 +233,12 @@ def test_financial_inputs_reject_silent_precision_loss() -> None:
         assert exact_rate.json()["fee_rate_percent"] == 20.99
 
 
-def test_quarter_end_snapshot_respects_manual_opt_out() -> None:
+def test_quarter_end_snapshot_has_no_manual_eligibility_flag() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         data = _master(client, "SNAP")
         response = client.post(
             "/api/balance-snapshots",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
                 "account_id": data["account"]["id"],
                 "as_of_date": "2026-03-31",
                 "total_balance": "1000.00",
@@ -251,7 +246,7 @@ def test_quarter_end_snapshot_respects_manual_opt_out() -> None:
             },
         )
         assert response.status_code == 201, response.text
-        assert response.json()["eligible_for_closing"] is False
+        assert "eligible_for_closing" not in response.json()
 
 
 def test_finalized_period_blocks_backfill_and_hwm_chain_mutation() -> None:
@@ -260,7 +255,7 @@ def test_finalized_period_blocks_backfill_and_hwm_chain_mutation() -> None:
         first = _finalize(client, _settlement(client, data, year=2026, quarter=1))
         backfill = client.post(
             "/api/transactions",
-            json={
+            json={"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
                 "account_id": data["account"]["id"],
                 "transaction_date": "2026-02-15",
                 "transaction_type": "CONTRIBUTION",

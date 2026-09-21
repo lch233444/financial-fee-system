@@ -5,7 +5,6 @@ import re
 import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from statistics import mean
 
@@ -18,7 +17,7 @@ from ..config import application_root, get_settings, installation_root
 from .ocr_runtime import OcrRuntimeError, check_tesseract, prepare_windows_runtime
 
 
-OCR_PARSER_VERSION = "2.1"
+OCR_PARSER_VERSION = "2.2"
 DOCUMENT_TYPE_LABELS = {
     "empf_account_page": "eMPF账户余额页面",
     "contribution_record": "eMPF供款记录详情",
@@ -41,7 +40,6 @@ class ParsedStatement:
     total_balance: str | None = None
     lifetime_net_contributions: str | None = None
     lifetime_gain_loss: str | None = None
-    holdings: list[dict] = field(default_factory=list)
     confidence: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     raw_text: str = ""
@@ -169,7 +167,7 @@ def _ocr(image: Image.Image, psm: int = 11, *, language: str | None = None) -> t
             if numeric_confidence >= 0:
                 confidences.append(numeric_confidence / 100)
     # TSV already contains both text and confidence. Preserve line boundaries
-    # for holdings instead of recognizing the same image a second time.
+    # instead of recognizing the same image a second time.
     text = "\n".join(" ".join(words) for words in lines.values())
     return text, mean(confidences) if confidences else 0.0
 
@@ -366,114 +364,12 @@ def _transaction_document(text: str, confidence: float, document_type: str) -> P
         "total_balance": 0.0,
     }
     parsed.warnings = [
-        "该文件是供款/交易记录，不是账户余额页面；已阻止生成余额快照。",
+        "该文件是供款/交易记录，不是账户余额页面；已阻止生成历史结余。",
         "请在资金与余额模块按原始凭证人工复核后登记交易。",
     ]
     if confidence < 0.85:
         parsed.warnings.append("文档文字识别置信度低于85%，请核对交易凭证原件")
     return parsed
-
-
-def _fund_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", value.casefold())
-
-
-def _extract_holdings(
-    text: str,
-    total_balance: str | None,
-    lifetime_gain: str | None,
-    as_of_date: date | None,
-) -> list[dict]:
-    flattened = re.sub(r"\s+", " ", text)
-    contribution_section = _first(
-        [r"My\s+Current\s+Holdings\s+by\s+Contribution\s+Type.*?(.*?)(?=My\s+Current\s+Holdings\s+Overview|Investment\s+Mandate|$)"],
-        flattened,
-    ) or ""
-    summary_section = flattened.split("My Current Holdings by Contribution Type", 1)[0]
-    fund_pattern = re.compile(
-        r"((?:Manulife\s+MPF|BCT\s*\(Pro\)\s*MPF)\s+[A-Za-z0-9()&/,'+\-\s]{1,110}?\s+Fund(?:\s*\(DIS\))?)"
-        r"\s+\$?\s*(-?\s*[0-9][0-9,\s]*\.\s*\d{2})",
-        re.IGNORECASE,
-    )
-    by_fund: dict[str, dict] = {}
-    # Tiled OCR preserves table rows much better than a globally flattened
-    # document. Parse complete line items first so adjacent fund names cannot
-    # be joined into one synthetic holding.
-    sources = [line.strip() for line in text.splitlines() if line.strip()]
-    sources.extend((summary_section, contribution_section))
-    for source in sources:
-        for match in fund_pattern.finditer(source):
-            fund_name = re.sub(r"\s+", " ", match.group(1)).strip()
-            if fund_name.casefold().count("manulife mpf") > 1:
-                continue
-            if fund_name.casefold().count("bct (pro) mpf") > 1:
-                continue
-            market_value = _money(match.group(2))
-            if not market_value:
-                continue
-            key = _fund_key(fund_name)
-            by_fund.setdefault(
-                key,
-                {
-                    "fund_name": fund_name,
-                    "market_value": market_value,
-                    "investment_gain_loss": None,
-                    "portfolio_percent": None,
-                    "units": None,
-                    "unit_price": None,
-                    "mandatory_contributions": None,
-                    "voluntary_contributions": None,
-                    "balance_as_of": as_of_date.isoformat() if as_of_date else None,
-                },
-            )
-
-    # The compact BCT one-fund row is reliably ordered and provides the full
-    # holdings detail. Preserve that higher-fidelity extraction.
-    bct_name = _first([r"(BCT\s*\(Pro\)\s*MPF\s*Conservative\s*Fund)"], flattened)
-    if bct_name and total_balance:
-        detail_match = re.search(
-            r"100(?:\.0+)?%\s+([0-9]+(?:\.[0-9]+)?)\s+\$?\s*([0-9]+(?:\.[0-9]+)?)",
-            flattened,
-            re.IGNORECASE,
-        )
-        contribution_match = re.search(
-            r"BCT\s*\(Pro\)\s*MPF\s*Conservative\s*Fund\s+"
-            r"\$?\s*([0-9][0-9,\s]*\.\s*\d{2})\s+"
-            r"\$?\s*([0-9][0-9,\s]*\.\s*\d{2})\s+"
-            r"\$?\s*([0-9][0-9,\s]*\.\s*\d{2})",
-            contribution_section,
-            re.IGNORECASE,
-        )
-        row = by_fund.setdefault(
-            _fund_key(bct_name),
-            {
-                "fund_name": bct_name,
-                "market_value": total_balance,
-                "investment_gain_loss": lifetime_gain,
-                "portfolio_percent": "100.00",
-                "units": None,
-                "unit_price": None,
-                "mandatory_contributions": None,
-                "voluntary_contributions": None,
-                "balance_as_of": as_of_date.isoformat() if as_of_date else None,
-            },
-        )
-        row.update(
-            {
-                "market_value": total_balance,
-                "investment_gain_loss": lifetime_gain,
-                "portfolio_percent": "100.00",
-                "units": detail_match.group(1) if detail_match else None,
-                "unit_price": detail_match.group(2) if detail_match else None,
-                "mandatory_contributions": (
-                    _money(contribution_match.group(2)) if contribution_match else None
-                ),
-                "voluntary_contributions": (
-                    _money(contribution_match.group(3)) if contribution_match else None
-                ),
-            }
-        )
-    return list(by_fund.values())
 
 
 def _extract(
@@ -488,7 +384,6 @@ def _extract(
     total_text, total_confidence = regions.get("total", (text, confidence))
     net_text, _ = regions.get("net", (text, confidence))
     gain_text, _ = regions.get("gain", (text, confidence))
-    holding_text, _ = regions.get("holding", (text, confidence))
     compact = re.sub(r"[ \t]+", " ", text)
     flattened = re.sub(r"\s+", " ", text)
     header_flattened = re.sub(r"\s+", " ", header_text)
@@ -496,7 +391,6 @@ def _extract(
     total_flattened = re.sub(r"\s+", " ", total_text)
     net_flattened = re.sub(r"\s+", " ", net_text)
     gain_flattened = re.sub(r"\s+", " ", gain_text)
-    holding_flattened = re.sub(r"\s+", " ", holding_text)
     money_pattern = r"([0-9][0-9,\s]*\.\s*\d{2})"
     account_number = _first(
         [r"Member\s+Account\s+No\.?\s*[:：]?\s*(\d{5,})", r"會員帳戶號碼\s*[:：]?\s*(\d{5,})"],
@@ -565,7 +459,7 @@ def _extract(
             r"as\s+of\s+(\d{1,2}/\d{1,2}/\d{4})",
             r"Balance\s+as\s+of\s+(\d{1,2}/\d{1,2}/\d{4})",
         ],
-        total_flattened + " " + holding_flattened + " " + flattened,
+        total_flattened + " " + flattened,
     )
     as_of_date = _parse_date(as_of_raw)
 
@@ -577,8 +471,6 @@ def _extract(
         if abs(abs(reconciled_gain) - abs(float(lifetime_gain))) <= 0.02:
             lifetime_gain = f"{reconciled_gain:.2f}"
 
-    holdings = _extract_holdings(text, total_balance, lifetime_gain, as_of_date)
-
     parsed = ParsedStatement(
         document_type="empf_account_page",
         client_name=client_name,
@@ -589,7 +481,6 @@ def _extract(
         total_balance=total_balance,
         lifetime_net_contributions=lifetime_net,
         lifetime_gain_loss=lifetime_gain,
-        holdings=holdings,
         raw_text=compact,
     )
     required = {
@@ -615,13 +506,6 @@ def _extract(
             parsed.warnings.append(f"关键字段{name}置信度低于85%，请人工核对")
     if confidence < 0.85:
         parsed.warnings.append("OCR整体置信度低于85%，请逐项核对")
-    if as_of_date and (as_of_date.month, as_of_date.day) not in {
-        (3, 31),
-        (6, 30),
-        (9, 30),
-        (12, 31),
-    }:
-        parsed.warnings.append("余额日期并非季末；除非该日为实际退出日，否则只能保存为余额快照")
     if lifetime_net and lifetime_gain and total_balance:
         expected = round(float(lifetime_net) + float(lifetime_gain), 2)
         difference = abs(expected - float(total_balance))
@@ -634,27 +518,6 @@ def _extract(
         )
         if difference > 0.02:
             parsed.warnings.append("累计净供款加累计盈亏与总余额不一致，仅作为参考数据保存")
-    holding_values: list[Decimal] = []
-    for holding in holdings:
-        try:
-            holding_values.append(Decimal(str(holding.get("market_value"))))
-        except (InvalidOperation, TypeError, ValueError):
-            holding_values = []
-            break
-    if total_balance and holdings and len(holding_values) == len(holdings):
-        difference = abs(Decimal(total_balance) - sum(holding_values, Decimal("0")))
-        holding_tolerance = Decimal("0.01")
-        parsed.validation_checks.append(
-            {
-                "check": "total_equals_sum_of_holding_market_values",
-                "status": "PASSED" if difference <= holding_tolerance else "FAILED",
-                "difference": f"{difference:.2f}",
-            }
-        )
-        if difference > holding_tolerance:
-            parsed.warnings.append(
-                f"持仓市值合计与总余额相差HKD {difference:.2f}，持仓表必须人工复核"
-            )
     parsed.warnings.append("累计净供款及累计盈亏不会自动写入季度Contribution或Gain/Loss")
     return parsed
 
@@ -694,7 +557,7 @@ def _unsupported_document(text: str, confidence: float) -> ParsedStatement:
         "total_balance": 0.0,
     }
     parsed.warnings = [
-        "无法确认该文件是受支持的账户余额页面或供款记录，已禁止生成余额快照。",
+        "无法确认该文件是受支持的账户余额页面或供款记录，已禁止生成历史结余。",
         "请人工检查原文件类型及关键字段。",
     ]
     if confidence < 0.85:
@@ -754,7 +617,6 @@ def parse_empf_statement(path: Path) -> ParsedStatement:
                 "total": (int(width * 0.02), int(height * 0.08), int(width * 0.38), int(height * 0.32)),
                 "net": (int(width * 0.30), int(height * 0.08), int(width * 0.72), int(height * 0.32)),
                 "gain": (int(width * 0.62), int(height * 0.08), int(width * 0.99), int(height * 0.32)),
-                "holding": (0, int(height * 0.20), width, int(height * 0.88)),
             }
             regions = {
                 name: _ocr(first_page.crop(box), psm=6, language=language)
@@ -765,7 +627,7 @@ def parse_empf_statement(path: Path) -> ParsedStatement:
             parsed.warnings.append("PDF超过20页；扫描OCR只处理前20页，必须人工核对其余页面")
         return parsed
     except OcrRuntimeError as exc:
-        return ParsedStatement(warnings=[str(exc), "关键字段未识别时禁止确认入账；本次未生成余额快照。"])
+        return ParsedStatement(warnings=[str(exc), "关键字段未识别时禁止确认入账；本次未生成历史结余。"])
     except (OSError, RuntimeError, ValueError, UnidentifiedImageError, pytesseract.TesseractError):
         parsed = ParsedStatement()
         parsed.warnings = [

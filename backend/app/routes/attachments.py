@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -21,6 +21,7 @@ from ..models import (
     TransactionRecord,
 )
 from ..services.storage import is_within, sha256_bytes, store_bytes
+from ..services.record_evidence import validate_image
 
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
@@ -33,7 +34,7 @@ ENTITY_MODELS = {
     "PAYMENT": Payment,
     "PAYMENT_REFUND": PaymentRefund,
 }
-UNCLAIMED_PROOF_TYPES = {"PAYMENT", "PAYMENT_REFUND"}
+UNCLAIMED_PROOF_TYPES = {"PAYMENT", "PAYMENT_REFUND", "TRANSACTION", "SNAPSHOT"}
 
 
 def _attachment_dict(item: Attachment) -> dict:
@@ -46,6 +47,7 @@ def _attachment_dict(item: Attachment) -> dict:
         "size_bytes": item.size_bytes,
         "sha256": item.sha256,
         "created_at": item.created_at.isoformat(),
+        "superseded": item.superseded,
     }
 
 
@@ -56,6 +58,13 @@ def list_attachments(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     query = select(Attachment).order_by(Attachment.created_at.desc())
+    if entity_type and entity_type.upper() == "TRANSACTION" and entity_id:
+        transaction = db.get(TransactionRecord, entity_id)
+        query = query.where(or_(
+            (Attachment.entity_type == "TRANSACTION") & (Attachment.entity_id == entity_id),
+            Attachment.id == transaction.attachment_id if transaction and transaction.attachment_id else False,
+        ))
+        return [_attachment_dict(item) for item in db.scalars(query).all()]
     if entity_type:
         query = query.where(Attachment.entity_type == entity_type.upper())
     if entity_id:
@@ -90,6 +99,13 @@ async def upload_attachment(
         raise HTTPException(status_code=400, detail="凭证文件为空")
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="凭证文件不能超过25MB")
+    image_mime = validate_image(data) if normalized_type == "SNAPSHOT" else None
+
+    # Recheck the target under the same write lock as the attachment insert.
+    db.rollback()
+    db.execute(text("BEGIN IMMEDIATE"))
+    if entity_id is not None and not db.get(model, entity_id):
+        raise HTTPException(status_code=404, detail="凭证关联记录不存在")
 
     digest = sha256_bytes(data)
     existing = db.scalar(
@@ -97,6 +113,7 @@ async def upload_attachment(
             Attachment.entity_type == normalized_type,
             Attachment.entity_id == entity_id,
             Attachment.sha256 == digest,
+            Attachment.superseded.is_(False),
         )
     )
     if existing:
@@ -107,7 +124,9 @@ async def upload_attachment(
         data=data,
         original_name=file.filename or f"attachment{suffix}",
         directory=settings.data_root / "attachments" / normalized_type.lower(),
-        prefix=f"{entity_id}_" if entity_id is not None else f"unclaimed_{uuid4().hex}_",
+        # Every upload owns its physical path, including failed concurrent
+        # uploads of identical bytes for the same linked record.
+        prefix=f"{entity_id if entity_id is not None else 'unclaimed'}_{uuid4().hex}_",
     )
     item = Attachment(
         entity_type=normalized_type,
@@ -115,20 +134,27 @@ async def upload_attachment(
         original_name=file.filename or path.name,
         stored_path=str(path),
         sha256=digest,
-        mime_type=file.content_type or mimetypes.guess_type(path.name)[0],
+        mime_type=image_mime or file.content_type or mimetypes.guess_type(path.name)[0],
         size_bytes=len(data),
     )
-    db.add(item)
-    db.flush()
-    db.add(
-        AuditEvent(
-            action="ATTACHMENT_UPLOADED",
-            entity_type=normalized_type,
-            entity_id=entity_id,
-            details_json={"attachment_id": item.id, "sha256": digest},
+    try:
+        db.add(item)
+        db.flush()
+        db.add(
+            AuditEvent(
+                action="ATTACHMENT_UPLOADED",
+                entity_type=normalized_type,
+                entity_id=entity_id,
+                details_json={"attachment_id": item.id, "sha256": digest},
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        # A failed upload must not leave an unindexed file in the data package.
+        if db.scalar(select(Attachment.id).where(Attachment.stored_path == str(path))) is None:
+            path.unlink(missing_ok=True)
+        raise
     db.refresh(item)
     return {**_attachment_dict(item), "duplicate": False}
 

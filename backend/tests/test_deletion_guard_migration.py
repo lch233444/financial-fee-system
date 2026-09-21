@@ -74,7 +74,7 @@ def test_7f_head_upgrades_to_delete_guard_head_with_exact_trigger_contract(
     command.upgrade(config, "head")
 
     triggers = _trigger_sql(settings.database_path)
-    assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS | {"trg_fcs_code_unique_insert", "trg_fee_plans_code_unique_insert", "trg_settlement_hwm_confirm_finalize"}
+    assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS | {"trg_attachment_financial_history_update", "trg_attachment_financial_history_delete", "trg_settlement_hwm_confirm_finalize"}
     assert len(triggers) == 60
     assert all(sql.strip() for sql in triggers.values())
     assert settlement_boundary_trigger_sql_is_current(triggers)

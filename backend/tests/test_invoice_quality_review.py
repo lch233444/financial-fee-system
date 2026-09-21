@@ -71,24 +71,33 @@ def test_company_and_recalculation_accept_late_finalized_plan_but_company_only_r
 def test_recovery_rejects_invalid_pdf_without_issuing_or_replacing_trusted_hash(damage):
     with TestClient(app, headers=WRITE_HEADERS) as client:
         invoice_id, paths = _interrupted_invoice(client, f"QREV-{damage}")
+        original_bytes = {language: path.read_bytes() for language, path in paths.items()}
         with SessionLocal() as db:
             db.add(ExportRecord(export_type="PDF_INVOICE", entity_type="INVOICE", entity_id=invoice_id,
                                 stored_path=str(paths["en"]), sha256=sha256_file(paths["en"]), language="en"))
             db.commit()
         invalid = {"empty": b"", "corrupt": b"%PDF-1.4\nnot a PDF\n%%EOF",
                    "no-pages": _pdf_bytes(pages=0), "changed-after-hash": _pdf_bytes(marker="changed")}[damage]
-        paths["en"].write_bytes(invalid)
-        listed = client.get(f"/api/invoices/{invoice_id}").json()
-        assert listed["issue_recovery"]["files_complete"] is False
-        assert listed["issue_recovery"]["can_complete"] is False
-        rejected = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "COMPLETE"})
-        assert rejected.status_code == 409, rejected.text
-        with SessionLocal() as db:
-            assert db.get(Invoice, invoice_id).lifecycle_status == "ISSUING"
-            assert len(db.scalars(select(ExportRecord).where(ExportRecord.entity_type == "INVOICE", ExportRecord.entity_id == invoice_id)).all()) == 1
-        assert paths["en"].read_bytes() == invalid
-        returned = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "RETURN_TO_DRAFT"})
-        assert returned.status_code == 200, returned.text
+        try:
+            paths["en"].write_bytes(invalid)
+            listed = client.get(f"/api/invoices/{invoice_id}").json()
+            assert listed["issue_recovery"]["files_complete"] is False
+            assert listed["issue_recovery"]["can_complete"] is False
+            rejected = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "COMPLETE"})
+            assert rejected.status_code == 409, rejected.text
+            with SessionLocal() as db:
+                assert db.get(Invoice, invoice_id).lifecycle_status == "ISSUING"
+                assert len(db.scalars(select(ExportRecord).where(ExportRecord.entity_type == "INVOICE", ExportRecord.entity_id == invoice_id)).all()) == 1
+            assert paths["en"].read_bytes() == invalid
+            returned = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "RETURN_TO_DRAFT"})
+            assert returned.status_code == 200, returned.text
+            assert all(not path.exists() for path in paths.values())
+        finally:
+            # These trusted records were injected into ISSUING solely for this
+            # test; normal issuance commits them atomically with ISSUED.
+            # Restore their originals before shared-database backup tests.
+            for language, path in paths.items():
+                path.write_bytes(original_bytes[language])
 
 
 @pytest.mark.parametrize("trusted", [False, True])
@@ -116,6 +125,7 @@ def test_recovery_accepts_readable_bilingual_pdfs_with_matching_known_hash(trust
 def test_recovery_does_not_fall_back_to_legacy_when_both_archive_pairs_exist(damage):
     with TestClient(app, headers=WRITE_HEADERS) as client:
         invoice_id, paths = _interrupted_invoice(client, f"QRDUAL-{damage}")
+        original_bytes = paths["en"].read_bytes()
         with SessionLocal() as db:
             invoice = db.get(Invoice, invoice_id)
             legacy = legacy_invoice_archive_paths(invoice.invoice_number, paths["en"].parent)
@@ -125,16 +135,19 @@ def test_recovery_does_not_fall_back_to_legacy_when_both_archive_pairs_exist(dam
             db.commit()
         for language, path in legacy.items():
             path.write_bytes(_pdf_bytes(marker=f"untracked-legacy-{language}"))
-        paths["en"].write_bytes({"empty": b"", "corrupt": b"not PDF",
-                                "changed-after-hash": _pdf_bytes(marker="changed")}[damage])
-        assert client.get(f"/api/invoices/{invoice_id}").json()["issue_recovery"]["can_complete"] is False
-        rejected = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "COMPLETE"})
-        assert rejected.status_code == 409, rejected.text
-        assert "同时发现" in rejected.json()["detail"]
-        with SessionLocal() as db:
-            assert db.get(Invoice, invoice_id).lifecycle_status == "ISSUING"
-            records = db.scalars(select(ExportRecord).where(ExportRecord.entity_type == "INVOICE", ExportRecord.entity_id == invoice_id)).all()
-            assert [record.sha256 for record in records] == [trusted_hash]
+        try:
+            paths["en"].write_bytes({"empty": b"", "corrupt": b"not PDF",
+                                    "changed-after-hash": _pdf_bytes(marker="changed")}[damage])
+            assert client.get(f"/api/invoices/{invoice_id}").json()["issue_recovery"]["can_complete"] is False
+            rejected = client.post(f"/api/invoices/{invoice_id}/recover-issuing", json={"action": "COMPLETE"})
+            assert rejected.status_code == 409, rejected.text
+            assert "同时发现" in rejected.json()["detail"]
+            with SessionLocal() as db:
+                assert db.get(Invoice, invoice_id).lifecycle_status == "ISSUING"
+                records = db.scalars(select(ExportRecord).where(ExportRecord.entity_type == "INVOICE", ExportRecord.entity_id == invoice_id)).all()
+                assert [record.sha256 for record in records] == [trusted_hash]
+        finally:
+            paths["en"].write_bytes(original_bytes)
 
 
 def test_void_never_issued_draft_pdf_returns_controlled_error():

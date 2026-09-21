@@ -20,46 +20,47 @@ async function choose(label: string, option: string) {
   fireEvent.click(await screen.findByRole("option", { name: option }));
 }
 test("客户查询和待确认账户均先明确选择客户，文字搜索不展开账户，切换清除旧选择", async () => {
-  setup(); render(<ClientsPage notify={vi.fn()} />);
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/accounts" ? [...accounts, ...accounts.map((account) => ({ ...account, id: account.id + 10, account_number: `MANAGED-${account.id}`, status: "ACTIVE" }))] : records[path] ?? []))));
+  render(<ClientsPage notify={vi.fn()} />);
   await screen.findByText("客户1");
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   const input = screen.getByRole("combobox", { name: "查询客户账户" });
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "客户1" } });
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
-  fireEvent.click(screen.getByRole("option", { name: "客户1 · FC · 客户#1" }));
-  expect(screen.getByText("ACCOUNT-1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("option", { name: "客户1" }));
+  expect(screen.getByText("MANAGED-1")).toBeTruthy();
   expect(screen.queryByText("ACCOUNT-2")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空查询客户账户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
   const draft = screen.getByLabelText("选择Draft Sub Account") as HTMLSelectElement;
   expect(draft.disabled).toBe(true);
-  await choose("待确认账户客户", "客户1 · 客户#1");
+  await choose("待确认账户客户", "客户1");
   fireEvent.change(draft, { target: { value: "1" } });
   expect(screen.getByRole("button", { name: "补全并激活Sub Account" })).toBeTruthy();
-  await choose("待确认账户客户", "客户2 · 客户#2");
+  await choose("待确认账户客户", "客户2");
   expect(draft.value).toBe("");
   expect(screen.queryByRole("button", { name: "补全并激活Sub Account" })).toBeNull();
   expect(within(draft).queryByRole("option", { name: /ACCOUNT-1/ })).toBeNull();
 });
-test("资金流水、快照、账户及凭证关联在未选客户时均隐藏，切客清除更正与旧关联", async () => {
+test("资金记录、结余及账户在未选客户时隐藏，切客清除更正与补存凭证表单", async () => {
   setup(); render(<TransactionsPage notify={vi.fn()} />);
   const input = screen.getByRole("combobox", { name: "资金与余额客户" });
   fireEvent.focus(input); await screen.findByRole("option", { name: "客户1" });
   fireEvent.change(input, { target: { value: "客户1" } });
   expect(screen.queryByText(/ACCOUNT-1/)).toBeNull();
   fireEvent.click(screen.getByRole("option", { name: "客户1" }));
-  const ledger = within(screen.getByRole("region", { name: "最近资金流水" }));
+  const ledger = within(screen.getByRole("region", { name: "供款、加款、取款记录表" }));
   fireEvent.click(ledger.getByRole("button", { name: "更正" }));
-  fireEvent.focus(screen.getByRole("combobox", { name: "关联记录" }));
-  fireEvent.click(screen.getByRole("option", { name: /余额快照 #1/ }));
+  fireEvent.click(within(screen.getByRole("region", { name: "历史结余表" })).getByRole("button", { name: "补存凭证" }));
+  expect(screen.getByRole("button", { name: "上传到本条记录" })).toBeTruthy();
   await choose("资金与余额客户", "客户2");
   expect(screen.queryByRole("button", { name: "保存更正" })).toBeNull();
-  expect((screen.getByLabelText("关联记录") as HTMLSelectElement).value).toBe("");
+  expect(screen.queryByRole("button", { name: "上传到本条记录" })).toBeNull();
   expect(screen.queryByText(/ACCOUNT-1/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空资金与余额客户" }));
   expect(screen.queryByText(/ACCOUNT-2/)).toBeNull();
-  expect((screen.getByRole("button", { name: "保存流水" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "保存记录与凭证" }) as HTMLButtonElement).disabled).toBe(true);
 });
 test("历史结算和批量导出保留汇总，未选客户时不显示账户；清空恢复隐藏", async () => {
   setup(); render(<SettlementsPage notify={vi.fn()} />);

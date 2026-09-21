@@ -51,9 +51,9 @@ function fill(form: HTMLElement, values: Record<string, string>) {
 describe("保存成功后立即更新页面", () => {
   test.each([
     { tab: "Company", button: "保存Company", path: "/api/companies", title: "现有Company", values: { name: "新公司", code: "NEW" }, text: "新公司" },
-    { tab: "FC", button: "保存FC", path: "/api/fcs", title: "现有FC", values: { name: "新FC", code: "NEWFC" }, text: "新FC" },
+    { tab: "FC", button: "保存FC", path: "/api/fcs", title: "现有FC", values: { name: "新FC" }, text: "新FC" },
     { tab: "Platform", button: "保存Platform", path: "/api/platforms", title: "现有Platform", values: { name: "新平台", code: "NEWPL" }, text: "新平台" },
-    { tab: "Fee Plan", button: "保存Fee Plan", path: "/api/fee-plans", title: "现有Fee Plan", values: { name: "新计划", code: "NEWPS", rate: "20" }, text: "新计划" },
+    { tab: "Fee Plan", button: "保存Fee Plan", path: "/api/fee-plans", title: "现有Fee Plan", values: { name: "新计划", rate: "20" }, text: "新计划" },
   ])("$tab：异步完成后重置表单并显示新记录", async ({ tab, button, path, title, values, text }) => {
     const db = mockDatabase();
     const notify = vi.fn();
@@ -68,6 +68,10 @@ describe("保存成功后立即更新页面", () => {
     await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe("");
     expect(db.requests).toEqual([path]);
+    if (tab === "FC" || tab === "Fee Plan") {
+      expect(form.querySelector('[name="code"]')).toBeNull();
+      expect(db.records[path][1]).not.toHaveProperty("code");
+    }
     expect(notify).toHaveBeenCalledOnce();
     expect(screen.queryByText(/Cannot read properties/)).toBeNull();
   });
@@ -78,18 +82,17 @@ describe("保存成功后立即更新页面", () => {
   ])("$button：列表和依赖选项同时更新", async ({ button, path, values, text }) => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
-    await screen.findByText("原客户");
-    fireEvent.click(screen.getByRole("button", { name: "新增与确认", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
+    await screen.findByRole("option", { name: "原FC" });
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
-    fireEvent.click(screen.getByRole("button", { name: "查询信息", exact: true }));
-    const panel = screen.getByRole("heading", { name: "客户与账户清单" }).closest("section")!;
+    const panel = screen.getByRole("region", { name: "档案维护" });
+    fireEvent.focus(screen.getByRole("combobox", { name: "维护客户档案" }));
+    fireEvent.click(screen.getByRole("option", { name: path === "/api/accounts" ? "原客户" : "新客户", exact: true }));
     if (path === "/api/accounts") {
-      expect(within(panel).queryByText(text)).toBeNull();
-      fireEvent.focus(screen.getByRole("combobox", { name: "查询客户账户" }));
-      fireEvent.click(screen.getByRole("option", { name: /原客户.*客户#1/ }));
+      expect(within(panel).getByText(text)).toBeTruthy();
     }
     await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
     expect(db.requests).toEqual([path]);
@@ -139,7 +142,7 @@ describe("保存成功后立即更新页面", () => {
     expect(db.records["/api/companies"]).toHaveLength(2);
   });
 
-  test("异步上传凭证后清空选择、更新凭证列表及快照完整性", async () => {
+  test("历史结余按行补存图片后关闭表单并更新查看凭证入口", async () => {
     const db = mockDatabase();
     db.records["/api/accounts"] = [{ id: 1, client_id: 1, client_name: "原客户", platform_id: 1, platform_name: "原平台", account_number: "A1" }];
     db.records["/api/balance-snapshots"] = [{ id: 7, account_id: 1, account_number: "A1", as_of_date: "2026-03-31", total_balance: "1000.00", holdings: [], evidence_complete: false }];
@@ -150,7 +153,7 @@ describe("保存成功后立即更新页面", () => {
       if (input !== "/api/attachments" || options?.method !== "POST") return originalFetch(input, options);
       submitted = options.body as FormData;
       await db.pending.promise;
-      const saved = { id: 3, entity_type: submitted.get("entity_type"), entity_id: Number(submitted.get("entity_id")), original_name: "凭证.pdf", created_at: "2026-09-07T00:00:00Z" };
+      const saved = { id: 3, entity_type: submitted.get("entity_type"), entity_id: Number(submitted.get("entity_id")), original_name: "凭证.png", created_at: "2026-09-07T00:00:00Z" };
       db.records[input].push(saved);
       Object.assign(db.records["/api/balance-snapshots"][0], { evidence_complete: true, evidence_count: 1 });
       return new Response(JSON.stringify(saved), { status: 201 });
@@ -159,17 +162,21 @@ describe("保存成功后立即更新页面", () => {
     render(<TransactionsPage notify={notify} />);
     fireEvent.focus(screen.getByRole("combobox", { name: "资金与余额客户" }));
     fireEvent.click(await screen.findByRole("option", { name: "原客户" }));
-    fireEvent.focus(screen.getByRole("combobox", { name: "关联记录" }));
-    fireEvent.click(await screen.findByRole("option", { name: /2026-03-31/ }));
-    const form = screen.getByRole("button", { name: "上传并关联" }).closest("form")!;
-    fireEvent.change(form.querySelector('[name="file"]')!, { target: { files: [new File(["synthetic"], "凭证.pdf", { type: "application/pdf" })] } });
+    fireEvent.click(within(await screen.findByRole("region", { name: "历史结余表" })).getByRole("button", { name: "补存凭证" }));
+    const form = screen.getByRole("button", { name: "上传到本条记录" }).closest("form")!;
+    const file = new File(["synthetic"], "凭证.png", { type: "image/png" });
+    fireEvent.change(form.querySelector('[name="file"]')!, { target: { files: [file] } });
+    const originalGet = FormData.prototype.get;
+    vi.spyOn(FormData.prototype, "get").mockImplementation(function(this: FormData, name: string) {
+      return name === "file" ? file : originalGet.call(this, name);
+    });
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
-    await screen.findByText("凭证.pdf");
-    await screen.findByText("完整 (1)");
+    await screen.findByRole("button", { name: "查看原始凭证" });
     expect(submitted?.get("entity_type")).toBe("SNAPSHOT");
     expect(submitted?.get("entity_id")).toBe("7");
-    expect((form.querySelector('[name="entity_id"]') as HTMLSelectElement).value).toBe("");
+    expect(screen.queryByRole("button", { name: "上传到本条记录" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "关联记录" })).toBeNull();
     expect(notify).toHaveBeenCalledOnce();
     expect(screen.queryByText(/Cannot read properties/)).toBeNull();
   });

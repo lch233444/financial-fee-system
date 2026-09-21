@@ -49,7 +49,6 @@ AI_VALUES = {
     "total_balance": "9736.57",
     "lifetime_net_contributions": "9735.04",
     "lifetime_gain_loss": "1.53",
-    "holdings": [],
     "uncertain_fields": [],
     "warnings": [],
 }
@@ -57,7 +56,7 @@ AI_VALUES = {
 
 def test_fixed_sol_contract_and_parser_version() -> None:
     assert FIXED_AI_MODEL == "gpt-5.6-sol"
-    assert AI_PARSER_VERSION == "CODEX_APP_SERVER_EMPF_1.2"
+    assert AI_PARSER_VERSION == "CODEX_APP_SERVER_EMPF_1.3"
 
 
 def _write_test_jpeg(path: Path) -> None:
@@ -332,12 +331,11 @@ def test_empf_output_schema_is_strict_and_requires_all_fields() -> None:
         "total_balance",
         "lifetime_net_contributions",
         "lifetime_gain_loss",
-        "holdings",
         "uncertain_fields",
         "warnings",
     }
-    holding_schema = schema["$defs"]["AIHolding"]
-    assert holding_schema["additionalProperties"] is False
+    assert "holdings" not in schema["properties"]
+    assert "AIHolding" not in schema.get("$defs", {})
     assert set(schema["properties"]["document_type"]["enum"]) == {
         "empf_account_page",
         "contribution_record",
@@ -373,7 +371,7 @@ def test_comparison_requires_four_critical_agreements_for_auto_prefill() -> None
     assert result["recognition_requires_human_review"] is True
 
 
-def test_holding_numeric_formats_compare_equal_and_conflicts_disable_prefill() -> None:
+def test_legacy_holding_changes_no_longer_affect_comparison() -> None:
     ocr_holding = {
         "fund_name": "BCT Fund",
         "market_value": "9736.57",
@@ -396,9 +394,9 @@ def test_holding_numeric_formats_compare_equal_and_conflicts_disable_prefill() -
 
     ai["holdings"][0]["unit_price"] = "1.2650"
     result = compare_ocr_and_ai(ocr, ai)
-    assert result["status"] == "CONFLICT"
-    assert result["automatic_prefill_allowed"] is False
-    assert result["conflicts"][0]["field"] == "holdings[0].unit_price"
+    assert result["status"] == "AGREED"
+    assert result["automatic_prefill_allowed"] is True
+    assert result["conflicts"] == []
 
 
 def test_holding_comparison_matches_funds_independent_of_row_order() -> None:
@@ -426,11 +424,10 @@ def test_holding_comparison_matches_funds_independent_of_row_order() -> None:
 
     assert result["status"] == "AGREED"
     assert result["conflicts"] == []
-    assert "holdings[0].market_value" in result["agreements"]
-    assert "holdings[1].market_value" in result["agreements"]
+    assert not any(field.startswith("holdings") for field in result["agreements"])
 
 
-def test_one_sided_holding_value_and_any_uncertainty_are_incomplete() -> None:
+def test_legacy_one_sided_holding_values_and_uncertainty_do_not_block_review() -> None:
     ocr_holding = {
         "fund_name": "BCT Fund",
         "market_value": "9736.57",
@@ -449,16 +446,16 @@ def test_one_sided_holding_value_and_any_uncertainty_are_incomplete() -> None:
     }
 
     result = compare_ocr_and_ai(ocr, ai)
-    assert result["status"] == "INCOMPLETE"
-    assert result["automatic_prefill_allowed"] is False
-    assert result["recognition_requires_human_review"] is True
+    assert result["status"] == "AGREED"
+    assert result["automatic_prefill_allowed"] is True
+    assert result["recognition_requires_human_review"] is False
     assert result["conflict_requires_human_review"] is False
-    assert result["uncorroborated"][0]["field"] == "holdings[0].voluntary_contributions"
+    assert result["uncorroborated"] == []
 
     uncertain = {**ocr, "uncertain_fields": ["holdings[0].fund_name"]}
     result = compare_ocr_and_ai(ocr, uncertain)
-    assert result["status"] == "INCOMPLETE"
-    assert result["recognition_requires_human_review"] is True
+    assert result["status"] == "AGREED"
+    assert result["recognition_requires_human_review"] is False
 
 
 def test_uncertain_critical_and_arithmetic_mismatch_force_manual_review() -> None:
@@ -485,7 +482,6 @@ def test_uncertain_critical_and_arithmetic_mismatch_force_manual_review() -> Non
     assert review["automatic_prefill_allowed"] is False
     assert set(review["validation_failures"]) == {
         "total_equals_lifetime_net_plus_gain_loss",
-        "total_equals_sum_of_holding_market_values",
     }
 
 

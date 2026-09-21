@@ -51,12 +51,10 @@ class Company(TimestampMixin, Base):
 
 class FC(TimestampMixin, Base):
     __tablename__ = "fcs"
-    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_fc_company_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(160))
-    code: Mapped[str] = mapped_column(String(20))
     remark: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -77,12 +75,10 @@ class Platform(TimestampMixin, Base):
 
 class FeePlan(TimestampMixin, Base):
     __tablename__ = "fee_plans"
-    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_fee_plan_company_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    code: Mapped[str] = mapped_column(String(40))
     fee_rate_bps: Mapped[int] = mapped_column(Integer, default=2000)
     calculation_method: Mapped[str] = mapped_column(String(80), default="HIGH_WATER_MARK")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -661,6 +657,7 @@ class Attachment(TimestampMixin, Base):
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     mime_type: Mapped[str | None] = mapped_column(String(120))
     size_bytes: Mapped[int] = mapped_column(Integer)
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
 
 
 class StatementImport(TimestampMixin, Base):

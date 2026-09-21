@@ -1,3 +1,4 @@
+from evidence_fixtures import upload_evidence, legacy_transaction
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from test_payment_corrections import (
 
 
 def _snapshot(client, account_id, day, balance):
-    snapshot = _create(client, "/api/balance-snapshots", {
+    snapshot = _create(client, "/api/balance-snapshots", {"attachment_ids": [upload_evidence(client, "SNAPSHOT")],
         "account_id": account_id, "as_of_date": day, "total_balance": balance,
         "eligible_for_closing": day.endswith(("03-31", "06-30", "09-30", "12-31")),
     })
@@ -39,11 +40,11 @@ def test_first_day_used_cash_requires_intact_physical_evidence(kind):
         data = _case(client, "FIRST")
         account_id = data["account"]["id"]
         closing = _snapshot(client, account_id, "2026-06-30", "1800.00")
-        transaction = _create(client, "/api/transactions", {
+        transaction = _create(client, "/api/transactions", {"attachment_ids": [upload_evidence(client, "TRANSACTION")], "remark": "合成测试记录",
             "account_id": account_id, "transaction_date": "2026-04-01",
             "transaction_type": kind, "amount": "100.00",
         })
-        proof = _linked_proof(client, "TRANSACTION", transaction["id"], "first-day")
+        proof = transaction["attachment_ids"][0]
         draft = _create(client, "/api/settlements/calculate", _period_payload(data, closing=closing, beginning=data["closing"]))
         with SessionLocal() as db:
             path = Path(db.get(Attachment, proof).stored_path)
@@ -64,7 +65,7 @@ def test_same_day_opening_snapshot_does_not_require_excluded_cash_evidence():
         account_id = data["account"]["id"]
         beginning = _snapshot(client, account_id, "2026-04-01", "1600.00")
         closing = _snapshot(client, account_id, "2026-06-30", "1800.00")
-        _create(client, "/api/transactions", {"account_id": account_id, "transaction_date": "2026-04-01", "transaction_type": "CONTRIBUTION", "amount": "100.00"})
+        legacy_transaction(account_id, "2026-04-01", "100.00")
         draft = _create(client, "/api/settlements/calculate", _period_payload(data, closing=closing, beginning=beginning))
         assert draft["contribution"] == "0.00"
         _finalize(client, draft)

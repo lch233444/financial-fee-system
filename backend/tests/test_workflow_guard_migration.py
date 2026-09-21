@@ -29,13 +29,17 @@ HEAD = CURRENT_DATABASE_REVISION
 def _seed_history(settings, *, finalize_q3=True):
     engine = create_engine(settings.database_url)
     # Seed the actual historical schema, not columns introduced by later releases.
-    historical_lines = Table('settlement_account_lines', MetaData(), autoload_with=engine)
+    historical_tables = {model: Table(model.__tablename__, MetaData(), autoload_with=engine)
+                         for model in (SettlementAccountLine, FC, FeePlan, Attachment)}
     with Session(engine) as db:
         def add(model, **values):
-            if model is SettlementAccountLine:
+            if model in historical_tables:
+                historical = historical_tables[model]
+                defaults = {FC: {"active": True}, FeePlan: {"active": True, "fee_rate_bps": 2000, "calculation_method": "HIGH_WATER_MARK"}}
+                values = {**defaults.get(model, {}), **values}
                 values.update(created_at=utcnow(), updated_at=utcnow())
-                stored = {key: value for key, value in values.items() if key in historical_lines.c}
-                result = db.execute(historical_lines.insert().values(**stored))
+                stored = {key: value for key, value in values.items() if key in historical.c}
+                result = db.execute(historical.insert().values(**stored))
                 return SimpleNamespace(id=result.inserted_primary_key[0], **stored)
             row = model(**values)
             if model in (Client, SubAccount, BalanceSnapshot):
@@ -116,6 +120,9 @@ def test_upgrade_preserves_skipped_history_and_locks_every_used_cash_date(tmp_pa
     after = _business_rows(settings.database_path)
     assert after.pop('invoice_monthly_sequences') == []
     after['settlement_account_lines'] = [row[:-3] for row in after['settlement_account_lines']]
+    for table in ('fcs', 'fee_plans'):
+        before[table] = [row[:3] + row[4:] for row in before[table]]
+    after['attachments'] = [row[:-1] for row in after['attachments']]
     assert after == before
     assert len(_trigger_sql(settings.database_path)) == 60
     assert workflow_trigger_sql_is_current(_trigger_sql(settings.database_path))

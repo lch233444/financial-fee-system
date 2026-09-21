@@ -84,18 +84,19 @@ def test_legacy_company_metadata_does_not_restrict_fc_plan_or_payee():
         assert result.json()['company_name'] == b['company']['name']
 
 
-def test_new_codes_are_globally_unique_including_concurrent_creation():
+def test_fc_and_plan_allow_same_names_without_codes_including_concurrent_creation():
     with TestClient(app, headers=WRITE_HEADERS) as api:
         tag = uuid4().hex[:12]
         company = create(api, '/api/companies', {'name': tag, 'code': tag})
         for path in ('/api/fcs', '/api/fee-plans'):
-            body = {'name': 'Concurrent ' + tag, 'code': tag}
+            body = {'name': 'Concurrent ' + tag}
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = [pool.submit(api.post, path, json=values) for values in
                            (body, {**body, 'company_id': company['id']})]
-                assert sorted(result.result().status_code for result in results) == [201, 409]
-            duplicate = api.post(path, json={**body, 'code': tag.lower()})
-            assert duplicate.status_code == 409, duplicate.text
+                assert sorted(result.result().status_code for result in results) == [201, 201]
+            duplicate = api.post(path, json=body)
+            assert duplicate.status_code == 201, duplicate.text
+            assert 'code' not in duplicate.json()
 
 
 def test_customer_still_requires_fc_and_start_date_for_activation():

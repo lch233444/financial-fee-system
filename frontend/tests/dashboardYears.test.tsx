@@ -39,3 +39,11 @@ test("搜索及取消保留所选统计期间，远端年份可选择且季度�
   fireEvent.change(screen.getByLabelText("统计季度"), { target: { value: "2" } });
   await waitFor(() => expect(fetcher).toHaveBeenLastCalledWith("/api/dashboard?year=2200&quarter=2", expect.anything()));
 });
+
+test("在管数字链接保留年度季度并移除原客户总览，全年不附季度", async () => {
+  setup();
+  expect((await screen.findByRole("link", { name: "查看2026年全年在管客户：0位" })).getAttribute("href")).toBe("#/clients?year=2026");
+  expect(screen.queryByRole("heading", { name: "客户总览" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("统计季度"), { target: { value: "2" } });
+  expect((await screen.findByRole("link", { name: "查看2026年第2季度在管客户：0位" })).getAttribute("href")).toBe("#/clients?year=2026&quarter=2");
+});

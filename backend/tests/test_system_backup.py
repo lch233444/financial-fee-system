@@ -458,7 +458,9 @@ def test_data_package_rebases_all_persisted_file_paths_for_another_computer(
         invoice_id = invoice.id
 
     package_path = create_backup(snapshot_year=2026, snapshot_quarter=2)
-    target_settings = Settings(data_root=tmp_path / "receiving-computer-data")
+    # Keep synthetic restore staging below Windows MAX_PATH even when the
+    # shared suite contains long UUID/hash evidence filenames.
+    target_settings = Settings(data_root=tmp_path / "r")
     target_settings.ensure_directories()
     monkeypatch.setattr(backup_service, "get_settings", lambda: target_settings)
 
@@ -537,7 +539,7 @@ def test_backup_round_trip_validates_every_statement_import_source() -> None:
     relative_path = f"statement_imports/{source_path.name}"
     with zipfile.ZipFile(backup_path) as archive:
         assert archive.read(relative_path) == content
-    extracted = backup_path.parent / f"validated-statement-{item.id}-{uuid4().hex}"
+    extracted = backup_path.parent / f"v-{uuid4().hex[:8]}"
     try:
         backup_service.validate_backup(backup_path, extracted)
     finally:

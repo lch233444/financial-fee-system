@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from import_profile_fixtures import confirmation_profile
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
@@ -354,7 +355,7 @@ def test_balance_conflict_still_requires_explicit_finance_acknowledgement_before
 
         confirm_payload = {
             "client_name": "SAMPLE CLIENT",
-            "client_id": _confirmation_client_id(client),
+            "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client),
             "account_number": account_number,
             "scheme_name": scheme_name,
             "trustee": "Bank Consortium Trust Company Limited",
@@ -431,7 +432,7 @@ def test_confirmed_local_holdings_stay_in_source_and_are_not_posted() -> None:
             f"/api/statement-imports/{import_id}/confirm",
             json={
                 "client_name": "SAMPLE CLIENT",
-                "client_id": _confirmation_client_id(client),
+                "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client),
                 "account_number": account_number,
                 "scheme_name": scheme_name,
                 "trustee": "Bank Consortium Trust Company Limited",
@@ -478,7 +479,7 @@ def test_stored_legacy_holdings_do_not_block_confirmation_or_get_rewritten(legac
             db.commit()
         payload = {
             **_ocr_values(), "account_number": f"HIST{uuid4().hex[:12]}",
-            "client_id": _confirmation_client_id(client),
+            "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client),
             "scheme_name": f"Historical {uuid4().hex[:12]}",
         }
         payload.pop("holdings")
@@ -499,7 +500,7 @@ def test_retired_holdings_payload_is_not_validated_or_posted(reason: str | None)
         import_id = _create_statement()
         payload = {
             **_ocr_values(), "account_number": f"MANUAL{uuid4().hex[:12]}",
-            "client_id": _confirmation_client_id(client),
+            "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client),
             "scheme_name": f"Synthetic Manual {uuid4().hex[:12]}",
             "holdings": [{"fund_name": "SHOULD NOT BE STORED"}], "holdings_difference_reason": reason,
         }
@@ -516,7 +517,7 @@ def test_old_confirmed_holdings_and_review_are_preserved_on_read_and_repeat_conf
     with TestClient(app, headers=AI_REQUEST_HEADERS) as client:
         import_id = _create_statement()
         payload = {**_ocr_values(), "account_number": f"OLD{uuid4().hex[:12]}",
-            "client_id": _confirmation_client_id(client), "scheme_name": f"Old {uuid4().hex[:12]}"}
+            "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client), "scheme_name": f"Old {uuid4().hex[:12]}"}
         assert client.post(f"/api/statement-imports/{import_id}/confirm", json=payload).status_code == 200
         historical_holdings = [{"fund_name": "OLD CONFIRMED FUND", "market_value": "9736.57"}]
         with SessionLocal() as db:
@@ -605,7 +606,7 @@ def test_unknown_local_type_can_use_sol_balance_type_only_after_explicit_review(
 
         payload = {
             "client_name": "SAMPLE CLIENT",
-            "client_id": _confirmation_client_id(client),
+            "client_id": _confirmation_client_id(client), "profile": confirmation_profile(client),
             "account_number": account_number,
             "scheme_name": scheme_name,
             "trustee": "Bank Consortium Trust Company Limited",

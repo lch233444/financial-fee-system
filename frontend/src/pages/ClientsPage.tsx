@@ -1,7 +1,7 @@
 import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
-import { api, patchJson, postJson } from "../api";
+import { api, postJson } from "../api";
 import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, SectionNav, Pagination, Loading } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
@@ -20,26 +20,20 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   const [accountClientId, setAccountClientId] = useState("");
   const [view, setView] = useState<"query" | "create">("query");
   const [filters, setFilters] = useState({ ...defaultRecordFilters, year: initialYear, quarter: initialQuarter });
-  const [profileClientId, setProfileClientId] = useState("");
-  const [draftAccountClientId, setDraftAccountClientId] = useState("");
+  const [queryScope, setQueryScope] = useState<"period" | "all">("period");
   const [clientStatus, setClientStatus] = useState("");
-  useEffect(() => { setFilters((current) => ({ ...current, year: initialYear, quarter: initialQuarter })); }, [initialYear, initialQuarter]);
+  useEffect(() => { setQueryScope("period"); setFilters((current) => ({ ...current, year: initialYear, quarter: initialQuarter })); }, [initialYear, initialQuarter]);
   const managedAccounts = accounts.data.filter((account) => accountManagedInPeriod(account, filters.year, filters.quarter));
-  const filteredAccounts = managedAccounts.filter((account) => !filters.feePlanId || account.fee_plan_id === Number(filters.feePlanId));
+  const filteredAccounts = (queryScope === "all" ? accounts.data : managedAccounts).filter((account) => !filters.feePlanId || account.fee_plan_id === Number(filters.feePlanId));
   const managedClientIds = new Set(managedAccounts.map((account) => account.client_id));
   const filteredClientIds = new Set(filteredAccounts.map((account) => account.client_id));
-  const visibleClients = clients.data.filter((item) => filteredClientIds.has(item.id) && (!filters.clientId || item.id === Number(filters.clientId)) && (!filters.fcId || item.fc_id === Number(filters.fcId)) && (!clientStatus || item.status === clientStatus));
-  const clientPages = usePagination(visibleClients, `${JSON.stringify(filters)}:${clientStatus}`, 10);
-  const [draftClientId, setDraftClientId] = useState("");
-  const [draftAccountId, setDraftAccountId] = useState("");
+  const visibleClients = clients.data.filter((item) => (filteredClientIds.has(item.id) || (queryScope === "all" && !filters.feePlanId)) && (!filters.clientId || item.id === Number(filters.clientId)) && (!filters.fcId || item.fc_id === Number(filters.fcId)) && (!clientStatus || item.status === clientStatus));
+  const clientPages = usePagination(visibleClients, `${JSON.stringify(filters)}:${clientStatus}:${queryScope}`, 10);
   const [localError, setLocalError] = useState("");
   const formAction = useFormAction(setLocalError, notify);
   const [deletingKey, setDeletingKey] = useState("");
   const deleteBusyRef = useRef(false);
   const error = localError || clients.error || accounts.error || fcs.error || platforms.error || plans.error;
-  const selectedDraftClient = clients.data.find((item) => item.id === Number(draftClientId));
-  const selectedDraftAccount = accounts.data.find((item) => item.id === Number(draftAccountId) && item.client_id === Number(draftAccountClientId));
-  const selectedDraftAccountClient = clients.data.find((item) => item.id === selectedDraftAccount?.client_id);
   const clientOption = (client: Client) => ({ value: String(client.id), label: clientIdentityLabel(client, clients.data, accounts.data) });
 
   function submitClient(event: FormEvent<HTMLFormElement>) {
@@ -68,34 +62,6 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
     });
   }
 
-  function completeDraftClient(event: FormEvent<HTMLFormElement>) {
-    if (!selectedDraftClient) { event.preventDefault(); return; }
-    return formAction.submit(event, {
-      save: (data) => patchJson(`/api/clients/${selectedDraftClient.id}`, {
-        fc_id: Number(data.get("fc_id")),
-        name: data.get("name"), management_start_date: data.get("start_date"),
-        contact: data.get("contact") || null, remark: data.get("remark") || null, status: "ACTIVE",
-      }),
-      afterSave: () => { setDraftClientId(""); },
-      refresh: () => Promise.all([clients.reload(), accounts.reload()]),
-      message: "待确认Client已补全并激活",
-    });
-  }
-
-  function completeDraftAccount(event: FormEvent<HTMLFormElement>) {
-    if (!selectedDraftAccount) { event.preventDefault(); return; }
-    return formAction.submit(event, {
-      save: (data) => patchJson(`/api/accounts/${selectedDraftAccount.id}`, {
-        platform_id: Number(data.get("platform_id")), fee_plan_id: Number(data.get("fee_plan_id")),
-        scheme_name: data.get("scheme_name") || null, start_date: data.get("start_date") || null,
-        end_date: data.get("end_date") || null, remark: data.get("remark") || null, status: "ACTIVE",
-      }),
-      afterSave: () => setDraftAccountId(""),
-      refresh: accounts.reload,
-      message: "待确认Sub Account已补全并激活",
-    });
-  }
-
   async function deleteProfile(kind: "Client" | "Sub Account", path: string, id: number, label: string) {
     if (deleteBusyRef.current) return;
     const warning = kind === "Client"
@@ -110,16 +76,8 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
     try {
       await api<Record<string, unknown>>(`${path}/${id}`, { method: "DELETE" });
       if (kind === "Client") {
-        if (draftClientId === String(id)) {
-          setDraftClientId("");
-
-        }
         if (accountClientId === String(id)) setAccountClientId("");
         if (filters.clientId === String(id)) setFilters((current) => ({ ...current, clientId: "" }));
-        if (profileClientId === String(id)) setProfileClientId("");
-        if (draftAccountClientId === String(id)) { setDraftAccountClientId(""); setDraftAccountId(""); }
-      } else if (draftAccountId === String(id)) {
-        setDraftAccountId("");
       }
       const refreshResults = await Promise.all([clients.reload(), accounts.reload()]);
       if (refreshResults.some((refreshed) => !refreshed)) {
@@ -159,13 +117,14 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   return (
     <>
       <PageHeader title="客户与账户" subtitle="一个Client可有多个Sub Account；每个账户独立计算HWM，组合层只汇总结果" />
-      <div className="tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); setDraftClientId(""); setDraftAccountClientId(""); setDraftAccountId(""); setProfileClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户（自动导入）</button></div>
-      {view === "create" ? <SectionNav items={[{ id: "client-import", label: "自动导入" }, { id: "client-create", label: "手工新增客户" }, { id: "account-create", label: "新增账户" }, { id: "client-activate", label: "补全待确认资料" }, { id: "profile-maintenance", label: "档案维护" }]} /> : null}
+      <div className="tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户（自动导入）</button></div>
+      {view === "create" ? <SectionNav items={[{ id: "client-import", label: "自动导入" }, { id: "client-create", label: "手工新增客户" }, { id: "account-create", label: "新增账户" }]} /> : null}
       {error ? <ErrorBanner message={error} /> : null}
-      {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle="所选期间实际受管客户；FC及收费计划显示当前档案关系，无收费或尚未出账单也计入。">
-        <RecordFilters value={filters} onChange={setFilters} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} clientLabel="查询客户账户" disabled={Boolean(deletingKey)}>
+      {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；FC及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
+        <Field label="查询范围"><select value={queryScope} disabled={Boolean(deletingKey)} onChange={(event) => { setQueryScope(event.target.value as "period" | "all"); setFilters((current) => ({ ...current, clientId: "" })); }}><option value="period">所选期间在管客户</option><option value="all">全部档案</option></select></Field>
+        <RecordFilters showPeriod={queryScope === "period"} value={filters} onChange={setFilters} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} clientLabel="查询客户账户" disabled={Boolean(deletingKey)}>
           <Field label="客户状态"><select value={clientStatus} disabled={Boolean(deletingKey)} onChange={(event) => setClientStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field>
-          <small role="status">显示 {visibleClients.length} / {managedClientIds.size} 位在管客户</small>
+          <small role="status">显示 {visibleClients.length} / {queryScope === "all" ? clients.data.length : managedClientIds.size} 位{queryScope === "all" ? "客户" : "在管客户"}</small>
         </RecordFilters>
         {clients.loading || accounts.loading ? <Loading /> : visibleClients.length ? (
           <div className="client-list">
@@ -174,12 +133,12 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
               const planNames = [...new Set(rows.map((account) => account.fee_plan_name || "待补全收费计划"))];
               const periods = [...new Set(rows.map((account) => `${formatDate(account.start_date)} 至 ${account.end_date ? formatDate(account.end_date) : "持续管理"}`))];
               return <article className="client-card" key={client.id}>
-                <header><div className="client-card-copy"><strong>{client.name}</strong><span>FC：{client.fc_name || "待确认FC"}</span><span>收费计划：{planNames.join("、")}</span>{periods.map((period) => <span key={period}>管理期间：{period}</span>)}</div><div className="client-card-actions"><StatusBadge value={client.status} /><button type="button" onClick={() => setFilters((current) => ({ ...current, clientId: String(client.id) }))}>查看账户</button></div></header>
+                <header><div className="client-card-copy"><strong>{client.name}</strong><span>FC：{client.fc_name || "待确认FC"}</span><span>收费计划：{planNames.join("、") || "尚无账户"}</span>{periods.map((period) => <span key={period}>管理期间：{period}</span>)}</div><div className="client-card-actions"><StatusBadge value={client.status} /><button type="button" onClick={() => setFilters((current) => ({ ...current, clientId: String(client.id) }))}>查看账户</button>{queryScope === "all" ? deleteButton("Client", "/api/clients", client.id, clientIdentityLabel(client, clients.data, accounts.data)) : null}</div></header>
                 {filters.clientId === String(client.id) ? accountTable(rows) : null}
               </article>;
             })}
           </div>
-        ) : <EmptyState title="所选条件下没有在管客户" detail="客户须有管理期间与所选年季重叠的受管账户；待补全及未开始管理的资料可在新增客户中维护。" />}
+        ) : <EmptyState title={queryScope === "all" ? "所选条件下没有客户档案" : "所选条件下没有在管客户"} detail={queryScope === "all" ? "请调整客户、FC、收费计划或状态筛选。" : "客户须有管理期间与所选年季重叠的受管账户；待补全、未开始管理及无账户客户可切换到全部档案查看。"} />}
         <Pagination {...clientPages} />
       </Panel> : null}
 
@@ -210,54 +169,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
         </Panel>
       </div>
 
-      <div className="split-layout">
-        <Panel id="client-activate" title="补全待确认Client" subtitle="OCR建立的Draft必须补齐归属和开始日期后才能激活">
-          <Field group label="选择Draft Client">
-            <SearchableSelect label="待确认客户" value={draftClientId}
-              onChange={(value) => {
-                setDraftClientId(value);
-              }}
-              options={clients.data.filter((item) => item.status === "DRAFT").map(clientOption)} />
-          </Field>
-          {selectedDraftClient ? (
-            <form className="form-grid" key={selectedDraftClient.id} onSubmit={(event) => void completeDraftClient(event)}>
-              <Field label="FC"><select name="fc_id" defaultValue={selectedDraftClient.fc_id ?? ""} required><option value="" disabled>请选择</option>{fcs.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-              <Field label="Client Name"><input name="name" defaultValue={selectedDraftClient.name} required /></Field>
-              <Field label="Management Start Date"><input name="start_date" type="date" defaultValue={selectedDraftClient.management_start_date ?? ""} required /></Field>
-              <Field label="联系方式"><input name="contact" defaultValue={selectedDraftClient.contact ?? ""} /></Field>
-              <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftClient.remark ?? ""} /></Field>
-              <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中…" : "补全并激活Client"}</button>
-            </form>
-          ) : <small>当前共有 {clients.data.filter((item) => item.status === "DRAFT").length} 个待确认Client。</small>}
-        </Panel>
-
-        <Panel title="补全待确认Sub Account" subtitle="所属Client必须先激活，再补齐Platform和Fee Plan">
-          <Field group label="待确认账户所属客户"><SearchableSelect label="待确认账户客户" value={draftAccountClientId} onChange={(value) => { setDraftAccountClientId(value); setDraftAccountId(""); }} placeholder="搜索并选定客户" options={clients.data.map(clientOption)} /></Field>
-          <Field label="选择Draft Sub Account"><select disabled={!draftAccountClientId} value={draftAccountId} onChange={(event) => setDraftAccountId(event.target.value)}><option value="">请选择</option>{accounts.data.filter((item) => item.status === "DRAFT" && item.client_id === Number(draftAccountClientId)).map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
-          {selectedDraftAccount ? (
-            <form className="form-grid" key={selectedDraftAccount.id} onSubmit={(event) => void completeDraftAccount(event)}>
-              <Field label="Client"><input value={`${selectedDraftAccount.client_name} (${selectedDraftAccountClient?.status ?? "UNKNOWN"})`} disabled /></Field>
-              <Field label="Platform"><select name="platform_id" defaultValue={selectedDraftAccount.platform_id ?? ""} required><option value="" disabled>请选择</option>{platforms.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-              <Field label="Fee Plan"><select name="fee_plan_id" defaultValue={selectedDraftAccount.fee_plan_id ?? ""} required><option value="" disabled>请选择</option>{plans.data.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-              <Field label="Scheme Name"><input name="scheme_name" defaultValue={selectedDraftAccount.scheme_name ?? ""} /></Field>
-              <Field label="开始管理日期"><input name="start_date" type="date" defaultValue={selectedDraftAccount.start_date ?? ""} required /></Field>
-              <Field label="实际结束日期（如适用）" hint="填写账户实际退出管理的日期"><input name="end_date" type="date" defaultValue={selectedDraftAccount.end_date ?? ""} /></Field>
-              <Field label="备注"><textarea name="remark" rows={2} defaultValue={selectedDraftAccount.remark ?? ""} /></Field>
-              <button className="primary" type="submit" disabled={formAction.pending || selectedDraftAccountClient?.status !== "ACTIVE"}>{formAction.pending ? "保存中…" : "补全并激活Sub Account"}</button>
-            </form>
-          ) : <small>当前共有 {accounts.data.filter((item) => item.status === "DRAFT").length} 个待确认Sub Account。</small>}
-        </Panel>
       </div>
-      <Panel id="profile-maintenance" title="档案维护" subtitle="查看待补全、未开始管理及已结束的档案；删除仍须符合无引用条件。">
-        <div className="list-search"><Field group label="选择客户档案"><SearchableSelect label="维护客户档案" value={profileClientId} onChange={setProfileClientId} options={clients.data.map(clientOption)} /></Field></div>
-        {clients.data.filter((client) => String(client.id) === profileClientId).map((client) => <article className="client-card" key={client.id}>
-          <header><div className="client-card-copy"><strong>{client.name}</strong><span>{client.fc_name || "待补全FC"} · 登记管理开始 {client.management_start_date ? formatDate(client.management_start_date) : "待补全"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} />{deleteButton("Client", "/api/clients", client.id, client.name)}</div></header>
-          {accountTable(accounts.data.filter((account) => account.client_id === client.id))}
-        </article>)}
-      </Panel>
-      </div>
-
-
     </>
   );
 }

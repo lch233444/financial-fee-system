@@ -6,6 +6,7 @@ from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from import_profile_fixtures import confirmation_profile
 from fastapi.testclient import TestClient
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
@@ -49,7 +50,9 @@ def statement(name, number, scheme, day="2026-03-31", balance="1000.00"):
 
 def confirm(api, name, number, scheme, **selection):
     import_id, payload = statement(name, number, scheme)
-    return api.post(f"/api/statement-imports/{import_id}/confirm", json={**payload, **selection})
+    owner = next((c for c in api.get("/api/clients").json() if c["id"] == selection.get("client_id")), None)
+    profile = confirmation_profile(api, new_client=not owner or owner["status"] == "DRAFT")
+    return api.post(f"/api/statement-imports/{import_id}/confirm", json={**payload, "profile": profile, **selection})
 
 
 def seed_pair(api):
@@ -104,7 +107,7 @@ def test_new_account_requires_existing_customer_selection_and_keeps_one_customer
         second = confirm(api, name, second_number, "IMPORT ASSOCIATION SCHEME", client_id=owner)
         assert second.status_code == 200, second.text
         assert second.json()["client_id"] == owner
-        assert second.json()["created_draft"] is True and second.json()["created_client"] is False
+        assert second.json()["created_account"] is True and second.json()["created_draft"] is False and second.json()["created_client"] is False
         with SessionLocal() as db:
             assert len(db.scalars(select(Client).where(Client.name == name)).all()) == 1
             assert len(db.scalars(select(SubAccount).where(SubAccount.client_id == owner)).all()) == 2

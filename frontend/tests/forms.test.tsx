@@ -88,8 +88,10 @@ describe("保存成功后立即更新页面", () => {
     fill(form, values);
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
-    const panel = screen.getByRole("region", { name: "档案维护" });
-    fireEvent.focus(screen.getByRole("combobox", { name: "维护客户档案" }));
+    fireEvent.click(screen.getByRole("button", { name: "查询信息" }));
+    fireEvent.change(screen.getByLabelText("查询范围"), { target: { value: "all" } });
+    const panel = screen.getByRole("region", { name: "客户与账户清单" });
+    fireEvent.focus(screen.getByRole("combobox", { name: "查询客户账户" }));
     fireEvent.click(screen.getByRole("option", { name: path === "/api/accounts" ? "原客户" : "新客户", exact: true }));
     if (path === "/api/accounts") {
       expect(within(panel).getByText(text)).toBeTruthy();

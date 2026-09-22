@@ -371,6 +371,19 @@ class StatementDeleteRequest(BaseModel):
         return _require_meaningful_reason(value)
 
 
+class StatementProfileConfirmation(BaseModel):
+    # Null platform means explicitly use the reviewed statement's Scheme.
+    platform_id: int | None = Field(default=None, gt=0)
+    fee_plan_id: int = Field(gt=0)
+    start_date: date
+    end_date: date | None = None
+    fc_id: int | None = Field(default=None, gt=0)
+    management_start_date: date | None = None
+    contact: str | None = None
+    client_remark: str | None = None
+    account_remark: str | None = None
+
+
 class StatementConfirmRequest(BaseModel):
     client_name: str = Field(min_length=1, max_length=200)
     client_id: int | None = Field(default=None, gt=0)
@@ -381,6 +394,7 @@ class StatementConfirmRequest(BaseModel):
     total_balance: Decimal = Field(ge=0)
     account_id: int | None = None
     account_platform_id: int | None = None
+    profile: StatementProfileConfirmation | None = None
     # Required only when a stored AI comparison contains a conflict,
     # uncertainty, failed validation, or uncorroborated value.
     ai_conflicts_reviewed: bool | None = None

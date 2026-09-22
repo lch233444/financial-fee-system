@@ -24,13 +24,15 @@ from ..models import (
     BalanceSnapshot,
     Client,
     ExportRecord,
+    FC,
+    FeePlan,
     Platform,
     SettlementAccountLine,
     StatementImport,
     SubAccount,
 )
 from ..money import money_string, to_cents
-from ..schemas import StatementConfirmRequest, StatementDeleteRequest
+from ..schemas import StatementConfirmRequest, StatementDeleteRequest, StatementProfileConfirmation
 from ..services.codex_app_server import (
     AI_PARSER_VERSION,
     FIXED_AI_MODEL,
@@ -1274,6 +1276,83 @@ def _platform_for_statement(db: Session, scheme_name: str | None, trustee: str |
     return item
 
 
+def _confirm_profiles(
+    db: Session, item: StatementImport, account: SubAccount,
+    profile: StatementProfileConfirmation | None,
+) -> None:
+    client = account.client
+    if account.status != "DRAFT" and client.status != "DRAFT":
+        if profile is not None:
+            raise HTTPException(409, "客户及账户已完成确认，请刷新；导入不能修改现有收费计划或管理日期")
+        return
+    if profile is None:
+        raise HTTPException(400, "请在导入确认中一并补全FC、收费计划和管理日期")
+    if client.status == "CLOSED" or account.status != "DRAFT":
+        raise HTTPException(409, "仅待确认账户及其未关闭客户可在导入时补全")
+    if db.scalar(select(SettlementAccountLine.id).where(SettlementAccountLine.account_id == account.id)):
+        raise HTTPException(409, "该账户已有结算引用，不能通过导入调整档案")
+    if not db.get(FeePlan, profile.fee_plan_id):
+        raise HTTPException(404, "Fee Plan不存在")
+    platform_id = profile.platform_id or account.platform_id
+    if not platform_id or not db.get(Platform, platform_id):
+        raise HTTPException(400, "请确认Platform")
+    if profile.end_date and profile.end_date < profile.start_date:
+        raise HTTPException(400, "账户结束日期不能早于开始日期")
+    if db.scalar(select(SubAccount.id).where(
+        SubAccount.platform_id == platform_id,
+        SubAccount.account_number == account.account_number,
+        SubAccount.id != account.id,
+    )):
+        raise HTTPException(409, "同一Platform下的Account Number必须唯一")
+    if client.status == "DRAFT":
+        if not profile.fc_id or not profile.management_start_date:
+            raise HTTPException(400, "请确认客户FC和开始管理日期")
+        if not db.get(FC, profile.fc_id):
+            raise HTTPException(404, "FC不存在")
+    elif any(value is not None for value in (
+        profile.fc_id, profile.management_start_date, profile.contact, profile.client_remark,
+    )):
+        raise HTTPException(409, "已有客户资料不能通过新账户导入改写，请刷新后核对")
+
+    before = {"client_status": client.status, "account_status": account.status,
+              "platform_id": account.platform_id, "fee_plan_id": account.fee_plan_id}
+    if client.status == "DRAFT":
+        client.fc_id = profile.fc_id
+        client.management_start_date = profile.management_start_date
+        client.contact = profile.contact
+        client.remark = profile.client_remark
+        client.status = "ACTIVE"
+    account.platform_id = platform_id
+    account.fee_plan_id = profile.fee_plan_id
+    account.start_date = profile.start_date
+    account.end_date = profile.end_date
+    account.remark = profile.account_remark
+    account.status = "ACTIVE"
+    db.add(AuditEvent(action="STATEMENT_PROFILES_CONFIRMED", entity_type="STATEMENT_IMPORT",
+                      entity_id=item.id, details_json={"client_id": client.id,
+                      "account_id": account.id, "before": before,
+                      "confirmed": profile.model_dump(mode="json")}))
+
+
+@router.post("/{import_id}/confirm-profile")
+def confirm_statement_profile(
+    import_id: int, payload: StatementProfileConfirmation, db: Session = Depends(get_db),
+) -> dict:
+    with _STATEMENT_RECOGNITION_LOCK:
+        _begin_immediate(db)
+        item = _require_statement(db, import_id)
+        account = db.get(SubAccount, item.confirmed_account_id) if item.confirmed_account_id else None
+        snapshot = db.get(BalanceSnapshot, item.confirmed_snapshot_id) if item.confirmed_snapshot_id else None
+        if (item.status != "CONFIRMED" or account is None or snapshot is None
+                or snapshot.account_id != account.id or snapshot.statement_import_id != item.id):
+            raise HTTPException(409, "该导入尚未入账或来源关联不完整，请核对原记录")
+        _checked_statement_source(db, item=item, require_integrity=True, operation="确认档案")
+        _confirm_profiles(db, item, account, payload)
+        db.commit()
+        return {"statement_import": _statement_dict(item), "account_id": account.id,
+                "client_id": account.client_id, "snapshot_id": snapshot.id}
+
+
 @router.post("/{import_id}/confirm")
 def confirm_statement(
     import_id: int,
@@ -1352,7 +1431,9 @@ def _confirm_statement_locked(
         account = db.get(SubAccount, payload.account_id)
         if not account:
             raise HTTPException(status_code=404, detail="指定的Sub Account不存在")
-        if payload.account_platform_id is None:
+        if payload.account_platform_id is None and (
+            account.platform_id is not None or account.status != "DRAFT" or payload.profile is None
+        ):
             raise HTTPException(status_code=400, detail="明确选择已有Sub Account时必须同时确认Platform")
         if account.platform_id != payload.account_platform_id:
             raise HTTPException(status_code=409, detail="所选Sub Account的Platform已变化，请刷新后重新选择")
@@ -1402,7 +1483,11 @@ def _confirm_statement_locked(
                     status_code=409,
                     detail="已有同名客户，请在客户归属中选择已有客户，再新增他的子账户；若确为不同的人，请先建立独立客户档案后明确选择",
                 )
-        platform = _platform_for_statement(db, payload.scheme_name, payload.trustee)
+        platform = (db.get(Platform, payload.profile.platform_id)
+                    if payload.profile and payload.profile.platform_id
+                    else _platform_for_statement(db, payload.scheme_name, payload.trustee))
+        if platform is None:
+            raise HTTPException(404, "Platform不存在")
         if db.scalar(select(SubAccount.id).where(
             SubAccount.platform_id == platform.id,
             SubAccount.account_number == payload.account_number,
@@ -1441,6 +1526,8 @@ def _confirm_statement_locked(
     ):
         raise HTTPException(status_code=409, detail="账单Scheme与选定Sub Account不一致")
 
+    _confirm_profiles(db, item, account, payload.profile)
+
     snapshot = BalanceSnapshot(
         id=_next_entity_id(db, BalanceSnapshot),
         account_id=account.id,
@@ -1469,6 +1556,7 @@ def _confirm_statement_locked(
                 "account_platform_id",
                 "ai_conflicts_reviewed",
                 "luna_document_type_reviewed",
+                "profile",
             },
         ),
         "document_type": "empf_account_page",
@@ -1521,7 +1609,8 @@ def _confirm_statement_locked(
         "account_id": account.id,
         "client_id": account.client_id,
         "created_client": created_client,
-        "created_draft": created_draft,
+        "created_account": created_draft,
+        "created_draft": False,
         "snapshot": {
             "id": snapshot.id,
             "as_of_date": snapshot.as_of_date.isoformat(),

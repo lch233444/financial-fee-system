@@ -19,7 +19,7 @@ async function choose(label: string, option: string) {
   fireEvent.focus(input); fireEvent.change(input, { target: { value: option } });
   fireEvent.click(await screen.findByRole("option", { name: option }));
 }
-test("客户查询和待确认账户均先明确选择客户，文字搜索不展开账户，切换清除旧选择", async () => {
+test("期间查询和全部档案均先明确选择客户，文字搜索不展开账户，切换清除旧选择", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/accounts" ? [...accounts, ...accounts.map((account) => ({ ...account, id: account.id + 10, account_number: `MANAGED-${account.id}`, status: "ACTIVE" }))] : records[path] ?? []))));
   render(<ClientsPage notify={vi.fn()} />);
   await screen.findByText("客户1");
@@ -32,16 +32,13 @@ test("客户查询和待确认账户均先明确选择客户，文字搜索不�
   expect(screen.queryByText("ACCOUNT-2")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空查询客户账户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
-  const draft = screen.getByLabelText("选择Draft Sub Account") as HTMLSelectElement;
-  expect(draft.disabled).toBe(true);
-  await choose("待确认账户客户", "客户1");
-  fireEvent.change(draft, { target: { value: "1" } });
-  expect(screen.getByRole("button", { name: "补全并激活Sub Account" })).toBeTruthy();
-  await choose("待确认账户客户", "客户2");
-  expect(draft.value).toBe("");
-  expect(screen.queryByRole("button", { name: "补全并激活Sub Account" })).toBeNull();
-  expect(within(draft).queryByRole("option", { name: /ACCOUNT-1/ })).toBeNull();
+  fireEvent.change(screen.getByLabelText("查询范围"), { target: { value: "all" } });
+  expect(screen.queryByText("ACCOUNT-1")).toBeNull();
+  await choose("查询客户账户", "客户1");
+  expect(screen.getByText("ACCOUNT-1")).toBeTruthy();
+  await choose("查询客户账户", "客户2");
+  expect(screen.queryByText("ACCOUNT-1")).toBeNull();
+  expect(screen.getByText("ACCOUNT-2")).toBeTruthy();
 });
 test("资金记录、结余及账户在未选客户时隐藏，切客清除更正与补存凭证表单", async () => {
   setup(); render(<TransactionsPage notify={vi.fn()} />);

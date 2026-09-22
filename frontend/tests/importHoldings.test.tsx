@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
+import { completeProfile, profileRecords } from "./importProfileFixtures";
 import ImportsPage from "../src/pages/ImportsPage";
 
 const holdings = [
@@ -29,7 +30,7 @@ function mockImports({ balanceConflict = false, embedded = false, recognitionFai
       return new Response(JSON.stringify({ detail: "测试停在提交边界" }), { status: 409 });
     }
     return new Response(JSON.stringify(url === "/api/statement-imports" ? records
-      : url === "/api/ai-assistant/status" ? { status: "unavailable" } : []));
+      : url === "/api/ai-assistant/status" ? { status: "unavailable" } : profileRecords[url] ?? []));
   }));
   render(<ImportsPage notify={vi.fn()} embedded={embedded} />);
   return submitted;
@@ -37,6 +38,7 @@ function mockImports({ balanceConflict = false, embedded = false, recognitionFai
 
 async function openFirst() {
   fireEvent.click(await screen.findByRole("button", { name: /合成账单1/ }));
+  completeProfile();
   return screen.getByRole("button", { name: /生成历史结余/ }) as HTMLButtonElement;
 }
 

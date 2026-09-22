@@ -503,6 +503,7 @@ def test_imported_exit_snapshot_uses_actual_exit_date_without_rewriting_legacy_f
                 "account_number": account_number,
                 "scheme_name": scheme_name,
                 "trustee": f"Exit Trustee {short}",
+                "profile": {"fc_id": fc["id"], "fee_plan_id": plan["id"], "management_start_date": "2026-07-01", "start_date": "2026-07-01"},
                 "as_of_date": exit_date,
                 "total_balance": "1200.00",
                 "holdings": [],
@@ -510,7 +511,8 @@ def test_imported_exit_snapshot_uses_actual_exit_date_without_rewriting_legacy_f
         )
         assert confirmed.status_code == 200, confirmed.text
         confirmed_body = confirmed.json()
-        assert confirmed_body["created_draft"] is True
+        assert confirmed_body["created_account"] is True
+        assert confirmed_body["created_draft"] is False
         assert "eligible_for_closing" not in confirmed_body["snapshot"]
         account_id = confirmed_body["account_id"]
         snapshot_id = confirmed_body["snapshot"]["id"]

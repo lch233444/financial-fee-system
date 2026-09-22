@@ -65,17 +65,16 @@ test("客户、FC、收费计划和年季组合筛选，明确选客后才展开
   expect(within(directory).getByText("ACCOUNT-B")).toBeTruthy();
 });
 
-test("整年继承及路由期间变更生效，导入仅新增区挂载并刷新客户账户，草稿仍可补全维护", async () => {
+test("整年继承及路由期间变更生效，导入仅新增区挂载并刷新客户账户，删除重复区块且导入后刷新", async () => {
   const view = setup("");
   await screen.findByText("未来客户");
   expect(screen.queryByRole("button", { name: "嵌入导入确认" })).toBeNull();
   view.rerender(<ClientsPage notify={vi.fn()} initialYear="2026" initialQuarter="2" />);
   await waitFor(() => expect(screen.queryByText("未来客户")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）" }));
-  await choose("待确认客户", "待补全客户");
-  expect(screen.getByRole("button", { name: "补全并激活Client" })).toBeTruthy();
-  await choose("维护客户档案", "无账户客户");
-  expect(screen.getByRole("button", { name: "删除Client 无账户客户" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "补全待确认Client" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "补全待确认Sub Account" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "档案维护" })).toBeNull();
   const clientsBefore = view.fetcher.mock.calls.filter(([path]) => path === "/api/clients").length;
   const accountsBefore = view.fetcher.mock.calls.filter(([path]) => path === "/api/accounts").length;
   fireEvent.click(screen.getByRole("button", { name: "嵌入导入确认" }));
@@ -91,4 +90,23 @@ test("管理区间含边界日且全年范围覆盖闰年，不把当前状态�
   expect(accountManagedInPeriod({ ...account, end_date: "2026-03-31" }, "2026", "2")).toBe(false);
   expect(accountManagedInPeriod({ ...account, end_date: null }, "2026", "2")).toBe(false);
   expect(accountManagedInPeriod({ ...account, status: "DRAFT" }, "2026", "2")).toBe(false);
+});
+
+
+test("全部档案统一显示非期间档案及空客户，筛选、账户隐藏和删除保留", async () => {
+  const { fetcher } = setup();
+  await screen.findByText("客户甲");
+  fireEvent.change(screen.getByLabelText("查询范围"), { target: { value: "all" } });
+  const directory = screen.getByRole("region", { name: "客户与账户清单" });
+  for (const name of ["未来客户", "待补全客户", "无账户客户", "客户乙"]) expect(within(directory).getByText(name)).toBeTruthy();
+  expect(screen.queryByLabelText("季度")).toBeNull();
+  expect(within(directory).queryByText("ACCOUNT-A")).toBeNull();
+  await choose("查询客户账户", "无账户客户");
+  expect(screen.getByText("尚无Sub Account")).toBeTruthy();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "删除Client 无账户客户" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith("/api/clients/7", expect.objectContaining({ method: "DELETE" })));
+  fireEvent.change(screen.getByLabelText("查询范围"), { target: { value: "period" } });
+  expect(screen.getByLabelText("季度")).toBeTruthy();
+  expect(screen.queryByText("无账户客户")).toBeNull();
 });

@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from import_profile_fixtures import confirmation_profile
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -1860,6 +1861,7 @@ def test_controlled_deletion_never_reuses_client_account_statement_or_snapshot_i
             f"/api/statement-imports/{first_statement_id}/confirm",
             json={
                 "client_name": extracted["client_name"],
+                "profile": confirmation_profile(http),
                 "account_number": account_number,
                 "scheme_name": extracted["scheme_name"],
                 "trustee": extracted["trustee"],

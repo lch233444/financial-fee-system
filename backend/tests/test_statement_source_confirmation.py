@@ -1,5 +1,6 @@
 from hashlib import sha256
 
+from import_profile_fixtures import confirmation_profile
 from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
@@ -34,6 +35,7 @@ def test_confirmation_requires_original_source_before_any_business_write(tmp_pat
             db.commit()
             import_id = item.id
             before = [db.scalar(select(func.count()).select_from(model)) for model in (Client, SubAccount, BalanceSnapshot, AuditEvent)]
+        profile = confirmation_profile(client)
         try:
             if damage == "missing":
                 source.unlink()
@@ -41,7 +43,7 @@ def test_confirmation_requires_original_source_before_any_business_write(tmp_pat
                 Image.new("RGB", (15, 15), "black").save(source)
             response = client.post(f"/api/statement-imports/{import_id}/confirm", json={
                 "client_name": f"Synthetic source {damage}", "account_number": f"SRC-{damage}",
-                "scheme_name": "Synthetic", "as_of_date": "2026-06-30", "total_balance": "123.45"})
+                "profile": profile, "scheme_name": "Synthetic", "as_of_date": "2026-06-30", "total_balance": "123.45"})
             if damage is None:
                 assert response.status_code == 200, response.text
                 with SessionLocal() as db:

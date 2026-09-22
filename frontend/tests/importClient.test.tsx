@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
+import { completeProfile, profileRecords } from "./importProfileFixtures";
 import ImportsPage from "../src/pages/ImportsPage";
 
 function setup({ success = false, clientsFail = false, noAccounts = false } = {}) {
@@ -29,7 +30,7 @@ function setup({ success = false, clientsFail = false, noAccounts = false } = {}
     }
     return new Response(JSON.stringify(url === "/api/statement-imports" ? records
       : url === "/api/clients" ? clients : url === "/api/accounts" ? noAccounts ? [] : accounts
-      : url === "/api/ai-assistant/status" ? { status: "unavailable" } : []));
+      : url === "/api/ai-assistant/status" ? { status: "unavailable" } : profileRecords[url] ?? []));
   }));
   const onConfirmed = vi.fn();
   render(<ImportsPage notify={notify} embedded onConfirmed={onConfirmed} />);
@@ -46,6 +47,7 @@ function chooseCustomer(id: number) {
   fireEvent.focus(input);
   fireEvent.change(input, { target: { value: `EXISTING-${id}` } });
   fireEvent.click(screen.getByRole("option", { name: new RegExp(`EXISTING-${id}`) }));
+  completeProfile();
 }
 
 test("新账户遇同名档案必须明确客户归属，提交客户ID并刷新清单", async () => {
@@ -58,7 +60,7 @@ test("新账户遇同名档案必须明确客户归属，提交客户ID并刷新
   chooseCustomer(11);
   expect(save.disabled).toBe(false);
   fireEvent.click(save);
-  await waitFor(() => expect(notify).toHaveBeenCalledWith("已为已有客户新增子账户草稿，历史结余已入账"));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith("客户与账户已确认，历史结余已入账"));
   expect(submitted[0]).toMatchObject({ client_id: 11, account_id: null, account_number: "NEW-ACCOUNT" });
   expect(clientLoads()).toBe(2);
   expect(onConfirmed).toHaveBeenCalledOnce();
@@ -113,6 +115,7 @@ test("同名同FC且无实际账户时保留必要档案编号，确认仍提交
   fireEvent.focus(screen.getByRole("combobox", { name: "选择已有客户" }));
   expect(screen.getByRole("option", { name: /档案 #11$/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("option", { name: /档案 #12$/ }));
+  completeProfile();
   expect(screen.getByText(/本次账户归属：/).textContent).toContain("档案 #12");
   fireEvent.click(save);
   await waitFor(() => expect(submitted).toHaveLength(1));

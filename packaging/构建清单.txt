@@ -2,7 +2,7 @@
 2026-09-22：1.1.1客户与账户资料确认合并到季度结余导入，查询信息增加全部档案并承接受控删除；无新增迁移。完整后端570、前端110、实际EXE接口16项、浏览器及正式备份恢复验收通过；已正式升级，详见docs/项目说明书.md第12.23节。
 1.1.2（2026-09-23）：审查修复及查询优化；当前验证和正式交付状态以docs/项目说明书.md第12.24节为准。
 2026-09-21：1.1.0财务会议23项需求已完成正式交付，迁移head c921f0181100。完整后端557、前端105、实际EXE断言310、OCR及正式数据一致性通过；以下旧版本记录仅作历史追溯。
-文档修订：2026-09-23；本次候选及待审批状态见项目说明书12.24节。
+文档修订：2026-09-23；本次正式升级、完整备份、验收与清理边界见项目说明书12.24节。
 
 2026-09-17前端修订：2026居中且年份连续滚动、结算凭证弹窗加下载、快照原账单仅弹窗。沿用原1.0.3 EXE与数据库；前端78项、生产构建、隔离图片/年份、完整备份恢复和正式资源验证通过，PDF视觉及下载落盘工具限制见主说明书12.20。开发临时目录F:\ffui0917，与12.19旧工作目录区分；清理不重试历史受阻范围。
 
@@ -11,7 +11,7 @@
 一、当前构建契约
 - 应用版本：1.1.2；Windows ProductVersion：1.1.2；FileVersion：1.1.2.0。
 - 数据库目标head：c921f0181100；目标60个Trigger；结构数量不能替代业务验收。
-- 常规候选输出：release/FinancialFeeSystem。既有受阻候选/构建目录保持，本轮使用全新F:\ffreq0921下的release、build及临时目录，沿用原构建参数与全部组件校验；不执行曾被拒绝的清理，不把真实数据放入候选目录。
+- 常规候选输出：release/FinancialFeeSystem。既有受阻候选/构建目录保持，1.1.2使用F:\财务系统\t23下独立release、build及合成候选数据，沿用原构建参数与全部组件校验；正式数据隔离恢复另用t23/restored，未放入候选运行数据根。最终测试和OCR使用纯英文F:\f23；不执行曾被拒绝的清理。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -19,7 +19,7 @@
 - Tesseract版本5.5.3.20260724；tools/Tesseract-OCR/tesseract.exe：C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - packaging/tesseract-runtime.json固定95个实际OCR运行文件哈希，包括所有DLL、eng/osd语言及配置；复制为运行包Tesseract-OCR/runtime-manifest.json。安装文件不符即停止，不以修改清单绕过。
 - scripts/check-ocr-runtime.py先核对源组件及语言启动，打包后实际启动EXE，合成PNG/JPG/扫描PDF经上传接口验证账户、日期和余额仍为待复核；覆盖仅剩EXE、再次缺DLL缓存修复及原件reparse，不运行Sol。报告存docs/build-dependencies/ocr-smoke.json。
-- 常规原生OCR验收临时根为源码盘根下.ffsys-ocr-build；本轮改用全新F:\ffreq0921\ocr-build，使用独立临时数据及登录目录。既有清理暂停范围不动，报告保留。
+- 常规原生OCR验收临时根为源码盘根下.ffsys-ocr-build；1.1.2最终改用纯英文F:\f23下独立OCR工作目录，使用合成临时数据及隔离登录目录。既有清理暂停范围不动，报告保留。
 - 唯一Excel母版：新收费计划计算纯净版模板.xlsx；SHA-256：16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 - 客户PDF在Windows优先使用系统微软正黑体常规/粗体，回退微软雅黑及原有字体候选；不另行打包商业字体。英文含中文公司/客户资料时也须验证原名完整显示。

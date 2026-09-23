@@ -5,9 +5,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..database import SessionLocal, get_db
+from ..services.financial_writes import begin_immediate as _begin_immediate, is_sqlite_busy as _is_sqlite_busy
 from ..services.settlement_period import transaction_locked_settlement_id
 from ..models import (
     Attachment,
@@ -34,6 +35,7 @@ from ..services.calculation import is_quarter_end
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
 from ..services.client_identity import normalized_client_name
 from ..services.record_evidence import claim_evidence, transaction_attachments, unclaimed_evidence
+from ..services.evidence_counts import snapshot_evidence_counts
 from ..schemas import (
     AccountCreate,
     AccountUpdate,
@@ -59,28 +61,6 @@ def _commit(db: Session, message: str = "资料重复或关联不正确") -> Non
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=message) from exc
-
-
-def _is_sqlite_busy(exc: OperationalError) -> bool:
-    message = str(exc.orig).casefold()
-    return (
-        "database is locked" in message
-        or "database table is locked" in message
-        or "database is busy" in message
-    )
-
-
-def _begin_immediate(db: Session) -> None:
-    try:
-        db.execute(text("BEGIN IMMEDIATE"))
-    except OperationalError as exc:
-        db.rollback()
-        if _is_sqlite_busy(exc):
-            raise HTTPException(
-                status_code=409,
-                detail="数据库正在处理另一笔财务写入，请稍后重试",
-            ) from exc
-        raise
 
 
 def _transaction_audit_values(item: TransactionRecord) -> dict:
@@ -1190,20 +1170,19 @@ def update_transaction(
 
 @router.get("/balance-snapshots")
 def list_balance_snapshots(account_id: int | None = None, db: Session = Depends(get_db)) -> list[dict]:
-    query = select(BalanceSnapshot).order_by(BalanceSnapshot.as_of_date.desc())
+    query = select(BalanceSnapshot).options(
+        joinedload(BalanceSnapshot.account).joinedload(SubAccount.client),
+        joinedload(BalanceSnapshot.account).joinedload(SubAccount.platform),
+        joinedload(BalanceSnapshot.account).joinedload(SubAccount.fee_plan),
+    ).order_by(BalanceSnapshot.as_of_date.desc())
     if account_id:
         query = query.where(BalanceSnapshot.account_id == account_id)
     items = db.scalars(query).all()
+    counts = snapshot_evidence_counts(db, (item.id for item in items))
     result = []
     for item in items:
         account = item.account
-        attachment_count = db.scalar(
-            select(func.count(Attachment.id)).where(
-                Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == item.id,
-                Attachment.superseded.is_(False),
-            )
-        ) or 0
-        evidence_count = int(attachment_count) + (1 if item.statement_import_id is not None else 0)
+        evidence_count = counts.get(item.id, 0)
         result.append({
             "id": item.id,
             "account_id": item.account_id,

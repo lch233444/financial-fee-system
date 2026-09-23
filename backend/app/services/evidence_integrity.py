@@ -1,13 +1,113 @@
 from __future__ import annotations
 
+import hashlib
+import os
+import stat
+import tempfile
 from pathlib import Path
 
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.types import Receive, Scope, Send
 
 from ..config import get_settings
 from ..models import Attachment, BalanceSnapshot, StatementImport, TransactionRecord
-from .storage import is_within, sha256_file
+from .storage import detect_statement_format, is_within, sha256_file
+
+
+class _VerifiedEvidenceResponse(FileResponse):
+    def __init__(self, *, temporary: tempfile.TemporaryDirectory, **kwargs) -> None:
+        self._temporary = temporary
+        super().__init__(**kwargs)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # A server pathsend may read the path after returning to this response;
+        # stream it here so cleanup always follows the last read, including errors.
+        scope = {**scope, "extensions": {
+            key: value for key, value in scope.get("extensions", {}).items()
+            if key != "http.response.pathsend"
+        }}
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._temporary.cleanup()
+
+
+def evidence_file_response(
+    *,
+    stored_path: str,
+    root: Path,
+    expected_sha256: str,
+    expected_size_bytes: int | None,
+    filename: str,
+    media_type: str | None,
+    statement_preview: bool = False,
+) -> FileResponse:
+    """Verify and serve one bounded-memory snapshot, never reopen the source.
+
+    Keep the snapshot below the data root's temporary directory, outside archived
+    evidence. FileResponse retains download names and range/conditional-range
+    behavior, while its owner cleans up after success, disconnect or rejection.
+    """
+    temporary = None
+    path = Path(stored_path)
+    try:
+        if not is_within(path, root) or not path.exists():
+            raise HTTPException(404, "凭证原文件不存在或不在系统受控目录")
+        if not path.is_file():
+            raise HTTPException(409, "凭证原文件不是普通文件")
+        with path.open("rb") as source:
+            source_stat = os.fstat(source.fileno())
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise HTTPException(409, "凭证原文件不是普通文件")
+            if source_stat.st_size <= 0:
+                raise HTTPException(409, "凭证原文件为空")
+            if expected_size_bytes is not None and source_stat.st_size != expected_size_bytes:
+                raise HTTPException(409, "凭证文件大小与记录不一致")
+            temporary = tempfile.TemporaryDirectory(
+                prefix="evidence-read-", dir=get_settings().data_root / "tmp"
+            )
+            snapshot = Path(temporary.name) / "verified"
+            digest = hashlib.sha256()
+            size_bytes = 0
+            signature = b""
+            with snapshot.open("wb") as output:
+                while chunk := source.read(64 * 1024):
+                    if not signature:
+                        signature = chunk[:8]
+                    size_bytes += len(chunk)
+                    if size_bytes > source_stat.st_size:
+                        raise HTTPException(409, "凭证文件大小在读取期间发生变化")
+                    digest.update(chunk)
+                    output.write(chunk)
+            if size_bytes != source_stat.st_size:
+                raise HTTPException(409, "凭证文件大小在读取期间发生变化")
+            if digest.hexdigest().casefold() != expected_sha256.casefold():
+                raise HTTPException(409, "凭证文件SHA-256与记录不一致")
+        if statement_preview:
+            detected = detect_statement_format(signature)
+            if detected is None:
+                raise HTTPException(415, "原始文件格式无法安全预览")
+            media_type = detected[1]
+        return _VerifiedEvidenceResponse(
+            temporary=temporary,
+            path=snapshot,
+            stat_result=source_stat,
+            media_type=media_type,
+            filename=filename,
+            content_disposition_type="inline" if statement_preview else "attachment",
+            headers={"X-Content-Type-Options": "nosniff"} if statement_preview else None,
+        )
+    except BaseException as exc:
+        if temporary is not None:
+            temporary.cleanup()
+        if isinstance(exc, FileNotFoundError):
+            raise HTTPException(404, "凭证原文件不存在") from exc
+        if isinstance(exc, OSError):
+            raise HTTPException(409, "凭证原文件无法安全读取") from exc
+        raise
 
 
 def _file_integrity_problem(

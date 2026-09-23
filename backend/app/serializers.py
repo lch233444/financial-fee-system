@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session, object_session
 
 from .config import get_settings
 from .money import money_string
-from .models import Attachment, BalanceSnapshot, Invoice, InvoiceCorrection, QuarterlySettlement
+from .models import Invoice, InvoiceCorrection, QuarterlySettlement
+from .services.evidence_counts import snapshot_evidence_counts
 from .services.invoice_recovery import validated_recovery_archives
 
 
@@ -15,21 +15,21 @@ def _optional_money(value: int | None) -> str | None:
     return None if value is None else money_string(value)
 
 
-def _snapshot_evidence_count(db: Session | None, snapshot_id: int | None) -> int | None:
-    if db is None or snapshot_id is None:
-        return None
-    snapshot = db.get(BalanceSnapshot, snapshot_id)
-    if not snapshot:
-        return 0
-    attachment_count = db.scalar(
-        select(func.count(Attachment.id)).where(
-            Attachment.entity_type == "SNAPSHOT", Attachment.entity_id == snapshot_id
-        )
-    ) or 0
-    return int(attachment_count) + (1 if snapshot.statement_import_id is not None else 0)
+def settlement_dict(
+    item: QuarterlySettlement, *, db: Session | None = None,
+    evidence_counts: dict[int, int] | None = None,
+) -> dict:
+    if evidence_counts is None and db is not None:
+        evidence_counts = snapshot_evidence_counts(db, (
+            snapshot_id for line in item.account_lines
+            for snapshot_id in (line.beginning_snapshot_id, line.closing_snapshot_id)
+        ))
 
+    def evidence_count(snapshot_id: int | None) -> int | None:
+        if evidence_counts is None or snapshot_id is None:
+            return None
+        return evidence_counts.get(snapshot_id, 0)
 
-def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> dict:
     return {
         "id": item.id,
         "client_id": item.client_id,
@@ -96,8 +96,8 @@ def settlement_dict(item: QuarterlySettlement, *, db: Session | None = None) -> 
                 "service_fee": _optional_money(line.service_fee_cents),
                 "next_hwm": _optional_money(line.next_hwm_cents),
                 "closing_snapshot_id": line.closing_snapshot_id,
-                "beginning_evidence_count": _snapshot_evidence_count(db, line.beginning_snapshot_id),
-                "closing_evidence_count": _snapshot_evidence_count(db, line.closing_snapshot_id),
+                "beginning_evidence_count": evidence_count(line.beginning_snapshot_id),
+                "closing_evidence_count": evidence_count(line.closing_snapshot_id),
                 "remark": line.remark,
             }
             for line in item.account_lines

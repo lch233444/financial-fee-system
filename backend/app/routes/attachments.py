@@ -20,7 +20,8 @@ from ..models import (
     SubAccount,
     TransactionRecord,
 )
-from ..services.storage import is_within, sha256_bytes, store_bytes
+from ..services.evidence_integrity import evidence_file_response
+from ..services.storage import sha256_bytes, store_bytes
 from ..services.record_evidence import validate_image
 
 
@@ -164,8 +165,11 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)) -> Fi
     item = db.get(Attachment, attachment_id)
     if not item:
         raise HTTPException(status_code=404, detail="凭证不存在")
-    path = Path(item.stored_path)
-    root = get_settings().data_root / "attachments"
-    if not path.exists() or not is_within(path, root):
-        raise HTTPException(status_code=404, detail="凭证原文件不存在")
-    return FileResponse(path, media_type=item.mime_type, filename=item.original_name)
+    return evidence_file_response(
+        stored_path=item.stored_path,
+        root=get_settings().data_root / "attachments",
+        expected_sha256=item.sha256,
+        expected_size_bytes=item.size_bytes,
+        media_type=item.mime_type,
+        filename=item.original_name,
+    )

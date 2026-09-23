@@ -61,22 +61,46 @@ export function accountIdentityLabel(account: Account) {
 
 export type ClientIdentity = Pick<Client, "id" | "name"> & Partial<Pick<Client, "fc_name" | "contact">>;
 
-/** Distinguish same-name choices without putting internal IDs in customer lists. */
-export function clientIdentityLabel(client: ClientIdentity, clients: readonly ClientIdentity[], accounts: readonly Account[] = []) {
-  const comparable = (value: string) => value.trim().normalize("NFKC").toLocaleLowerCase();
-  const sameName = clients.filter((item) => comparable(item.name) === comparable(client.name));
+const comparableIdentity = (value: string) => value.trim().normalize("NFKC").toLocaleLowerCase();
+
+function clientIdentityLabelInGroup(client: ClientIdentity, sameName: readonly ClientIdentity[], accountsFor: (clientId: number) => readonly Account[]) {
   if (sameName.length < 2) return client.name;
   const details = (item: ClientIdentity) => [item.name, item.fc_name?.trim() ? `FC ${item.fc_name.trim()}` : null, item.contact?.trim()].filter(Boolean).join(" · ");
   const basicLabel = details(client);
-  const sameDetails = sameName.filter((item) => comparable(details(item)) === comparable(basicLabel));
+  const sameDetails = sameName.filter((item) => comparableIdentity(details(item)) === comparableIdentity(basicLabel));
   if (sameDetails.length < 2) return basicLabel;
   const withAccount = (item: ClientIdentity) => {
-    const ownedAccounts = accounts.filter((account) => account.client_id === item.id).sort((a, b) => a.id - b.id);
+    const ownedAccounts = accountsFor(item.id);
     return [details(item), ownedAccounts.length ? `${accountIdentityDetail(ownedAccounts[0])}${ownedAccounts.length > 1 ? ` 等${ownedAccounts.length}个账户` : ""}` : null].filter(Boolean).join(" · ");
   };
   const accountLabel = withAccount(client);
-  return sameDetails.filter((item) => comparable(withAccount(item)) === comparable(accountLabel)).length < 2
+  return sameDetails.filter((item) => comparableIdentity(withAccount(item)) === comparableIdentity(accountLabel)).length < 2
     ? accountLabel : `${accountLabel} · 档案 #${client.id}`;
+}
+
+/** Distinguish same-name choices without putting internal IDs in customer lists. */
+export function clientIdentityLabel(client: ClientIdentity, clients: readonly ClientIdentity[], accounts: readonly Account[] = []) {
+  const sameName = clients.filter((item) => comparableIdentity(item.name) === comparableIdentity(client.name));
+  return clientIdentityLabelInGroup(client, sameName, (clientId) => accounts.filter((account) => account.client_id === clientId).sort((a, b) => a.id - b.id));
+}
+
+/** Build a whole chooser with the same identity rules, grouping shared inputs once. */
+export function clientIdentityLabels(clients: readonly ClientIdentity[], accounts: readonly Account[] = []) {
+  const byName = new Map<string, ClientIdentity[]>();
+  const byClient = new Map<number, Account[]>();
+  for (const client of clients) {
+    const name = comparableIdentity(client.name);
+    const group = byName.get(name) ?? [];
+    group.push(client);
+    byName.set(name, group);
+  }
+  for (const account of accounts) {
+    const group = byClient.get(account.client_id) ?? [];
+    group.push(account);
+    byClient.set(account.client_id, group);
+  }
+  for (const group of byClient.values()) group.sort((a, b) => a.id - b.id);
+  return clients.map((client) => clientIdentityLabelInGroup(client, byName.get(comparableIdentity(client.name))!, (clientId) => byClient.get(clientId) ?? []));
 }
 
 /** Date-only API values are calendar dates, never timezone-shift them. */

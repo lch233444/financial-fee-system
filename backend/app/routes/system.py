@@ -32,6 +32,7 @@ from ..serializers import invoice_accounting_cents, invoice_is_overdue
 from ..services.backup import create_backup, stage_restore
 from ..services.calculation import quarter_dates
 from ..services.excel_export import export_settlements_to_template, file_sha256
+from ..services.export_files import generated_export_file
 from ..services.pdf_invoice import generate_settlement_pdf
 from ..services.storage import store_stream
 from ..services.shutdown import ShutdownCoordinator, get_shutdown_coordinator
@@ -289,25 +290,26 @@ def export_excel(
         f"{uuid4().hex[:8]}.xlsx"
     )
     output_path = settings.data_root / "output" / "excel" / filename
-    try:
-        export_settlements_to_template(
-            settlements=settlements,
-            template_path=settings.template_path,
-            output_path=output_path,
-            invoices_by_settlement=invoice_map,
+    with generated_export_file(db, output_path):
+        try:
+            export_settlements_to_template(
+                settlements=settlements,
+                template_path=settings.template_path,
+                output_path=output_path,
+                invoices_by_settlement=invoice_map,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        db.add(
+            ExportRecord(
+                export_type="EXCEL_INTERNAL",
+                entity_type="SETTLEMENT_BATCH",
+                entity_id=settlements[0].id,
+                stored_path=str(output_path),
+                sha256=file_sha256(output_path),
+            )
         )
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    db.add(
-        ExportRecord(
-            export_type="EXCEL_INTERNAL",
-            entity_type="SETTLEMENT_BATCH",
-            entity_id=settlements[0].id,
-            stored_path=str(output_path),
-            sha256=file_sha256(output_path),
-        )
-    )
-    db.commit()
+        db.commit()
     return FileResponse(
         output_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -335,18 +337,19 @@ def export_settlement_pdf(
         f"{uuid4().hex[:8]}.pdf"
     )
     output_path = settings.data_root / "output" / "pdf" / filename
-    generate_settlement_pdf(settlement=settlement, output_path=output_path, language=language)
-    db.add(
-        ExportRecord(
-            export_type="PDF_SETTLEMENT",
-            entity_type="SETTLEMENT",
-            entity_id=settlement.id,
-            stored_path=str(output_path),
-            sha256=file_sha256(output_path),
-            language=language,
+    with generated_export_file(db, output_path):
+        generate_settlement_pdf(settlement=settlement, output_path=output_path, language=language)
+        db.add(
+            ExportRecord(
+                export_type="PDF_SETTLEMENT",
+                entity_type="SETTLEMENT",
+                entity_id=settlement.id,
+                stored_path=str(output_path),
+                sha256=file_sha256(output_path),
+                language=language,
+            )
         )
-    )
-    db.commit()
+        db.commit()
     return FileResponse(output_path, media_type="application/pdf", filename=filename)
 
 

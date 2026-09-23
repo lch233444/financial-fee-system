@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
+from ..services.financial_writes import begin_immediate as _begin_immediate, is_sqlite_busy as _is_sqlite_busy
 from ..models import (
     AuditEvent,
     BalanceSnapshot,
@@ -19,6 +20,7 @@ from ..models import (
 from ..money import to_cents
 from ..schemas import SettlementCalculateRequest, VoidRequest
 from ..serializers import settlement_dict
+from ..services.evidence_counts import snapshot_evidence_counts
 from ..services.evidence_integrity import (
     snapshot_evidence_problem,
     transaction_evidence_problem,
@@ -42,21 +44,6 @@ def _commit_state_change(db: Session, detail: str) -> None:
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=detail) from exc
-    except OperationalError as exc:
-        db.rollback()
-        if _is_sqlite_busy(exc):
-            raise HTTPException(status_code=409, detail="数据库正在处理另一笔财务写入，请稍后重试") from exc
-        raise
-
-
-def _is_sqlite_busy(exc: OperationalError) -> bool:
-    message = str(exc.orig).casefold()
-    return "database is locked" in message or "database table is locked" in message or "database is busy" in message
-
-
-def _begin_immediate(db: Session) -> None:
-    try:
-        db.execute(text("BEGIN IMMEDIATE"))
     except OperationalError as exc:
         db.rollback()
         if _is_sqlite_busy(exc):
@@ -88,7 +75,12 @@ def list_settlements(
         query = query.where(QuarterlySettlement.year == year)
     if quarter:
         query = query.where(QuarterlySettlement.quarter == quarter)
-    return [settlement_dict(item, db=db) for item in db.scalars(query).unique().all()]
+    items = db.scalars(query).unique().all()
+    counts = snapshot_evidence_counts(db, (
+        snapshot_id for item in items for line in item.account_lines
+        for snapshot_id in (line.beginning_snapshot_id, line.closing_snapshot_id)
+    ))
+    return [settlement_dict(item, evidence_counts=counts) for item in items]
 
 
 @router.get("/{settlement_id}")

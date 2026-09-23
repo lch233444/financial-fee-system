@@ -7,12 +7,13 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_settings
 from ..database import get_db
+from ..services.financial_writes import begin_immediate as _begin_immediate, is_sqlite_busy as _is_sqlite_busy
 from ..models import (
     AuditEvent,
     Attachment,
@@ -81,6 +82,8 @@ def _invoice_query():
         .selectinload(InvoiceLine.source_account_line)
         .selectinload(SettlementAccountLine.account),
         selectinload(Invoice.issue_attempts),
+        selectinload(Invoice.original_correction),
+        selectinload(Invoice.replacement_correction),
         selectinload(Invoice.settlement)
         .selectinload(QuarterlySettlement.account_lines)
         .selectinload(SettlementAccountLine.account),
@@ -99,21 +102,6 @@ def _correction_query():
         selectinload(InvoiceCorrection.refunds),
         selectinload(InvoiceCorrection.adjustments),
     )
-
-
-def _is_sqlite_busy(exc: OperationalError) -> bool:
-    message = str(exc.orig).casefold()
-    return "database is locked" in message or "database table is locked" in message or "database is busy" in message
-
-
-def _begin_immediate(db: Session) -> None:
-    try:
-        db.execute(text("BEGIN IMMEDIATE"))
-    except OperationalError as exc:
-        db.rollback()
-        if _is_sqlite_busy(exc):
-            raise HTTPException(status_code=409, detail="数据库正在处理另一笔财务写入，请稍后重试") from exc
-        raise
 
 
 def _flush_financial_state(db: Session, detail: str) -> None:

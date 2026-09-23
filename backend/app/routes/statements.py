@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import get_settings
 from ..database import SessionLocal, get_db
+from ..services.financial_writes import begin_immediate as _begin_immediate, is_sqlite_busy as _is_sqlite_busy
 from ..models import (
     Attachment,
     AuditEvent,
@@ -42,6 +43,7 @@ from ..services.codex_app_server import (
     get_codex_app_server,
 )
 from ..services.entity_ids import EntityIdAllocationError, allocate_entity_id
+from ..services.evidence_integrity import evidence_file_response
 from ..services.client_identity import normalized_client_name
 from ..services.statement_parser import DOCUMENT_TYPE_LABELS, OCR_PARSER_VERSION, parse_empf_statement
 from ..services.statement_delete_recovery import (
@@ -87,28 +89,6 @@ def _require_statement(db: Session, import_id: int) -> StatementImport:
     if item is None:
         raise HTTPException(status_code=404, detail="导入记录不存在")
     return item
-
-
-def _is_sqlite_busy(exc: OperationalError) -> bool:
-    message = str(exc.orig).casefold()
-    return (
-        "database is locked" in message
-        or "database table is locked" in message
-        or "database is busy" in message
-    )
-
-
-def _begin_immediate(db: Session) -> None:
-    try:
-        db.execute(text("BEGIN IMMEDIATE"))
-    except OperationalError as exc:
-        db.rollback()
-        if _is_sqlite_busy(exc):
-            raise HTTPException(
-                status_code=409,
-                detail="数据库正在处理另一笔财务写入，请稍后重试",
-            ) from exc
-        raise
 
 
 def _next_entity_id(db: Session, model: type) -> int:
@@ -1158,25 +1138,15 @@ def delete_statement_import(
 @router.get("/{import_id}/file")
 def get_statement_file(import_id: int, db: Session = Depends(get_db)) -> FileResponse:
     item = _require_statement(db, import_id)
-    path = Path(item.stored_path)
-    settings = get_settings()
-    if not path.exists() or not is_within(path, settings.data_root / "statement_imports"):
-        raise HTTPException(status_code=404, detail="原始文件不存在")
-    try:
-        detected_format = detect_statement_format(path.read_bytes()[:8])
-    except OSError as exc:
-        raise HTTPException(status_code=404, detail="原始文件无法读取") from exc
-    if not detected_format:
-        raise HTTPException(status_code=415, detail="原始文件格式无法安全预览")
-    _detected_suffix, detected_mime = detected_format
-    response = FileResponse(
-        path,
-        media_type=detected_mime,
+    return evidence_file_response(
+        stored_path=item.stored_path,
+        root=get_settings().data_root / "statement_imports",
+        expected_sha256=item.sha256,
+        expected_size_bytes=None,
+        media_type=item.mime_type,
         filename=item.original_name,
-        content_disposition_type="inline",
+        statement_preview=True,
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    return response
 
 
 @router.post("/{import_id}/reparse")

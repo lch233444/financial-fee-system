@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import SearchableSelect from "./SearchableSelect";
 import { Field } from "./components";
-import { clientIdentityLabel } from "./types";
+import { clientIdentityLabels } from "./types";
 import type { Account, Client, FC, FeePlan } from "./types";
 import type { RecordFilterValue } from "./periodFilters";
 
@@ -22,8 +22,9 @@ export default function RecordFilters({ value, onChange, clients, accounts = [],
   showPeriod?: boolean;
 }) {
   const change = (key: keyof RecordFilterValue, next: string) => onChange({ ...value, [key]: next });
+  const clientLabels = clientIdentityLabels(clients, accounts);
   return <div className="record-filters">
-    <Field group label="Client"><SearchableSelect label={clientLabel} value={value.clientId} onChange={(next) => change("clientId", next)} disabled={disabled} placeholder="全部客户" options={clients.map((client) => ({ value: String(client.id), label: clientIdentityLabel(client, clients, accounts) }))} /></Field>
+    <Field group label="Client"><SearchableSelect label={clientLabel} value={value.clientId} onChange={(next) => change("clientId", next)} disabled={disabled} placeholder="全部客户" options={clients.map((client, index) => ({ value: String(client.id), label: clientLabels[index] }))} /></Field>
     {showPeriod ? <><Field group label="年份"><SearchableSelect label="年份" value={value.year} onChange={(next) => change("year", next)} disabled={disabled} required options={years.map((year) => ({ value: year, label: `${year}年` }))} optionLimit={years.length} centerSelectedOnOpen searchPlaceholder="输入年份搜索" /></Field>
     <Field label="季度"><select value={value.quarter} disabled={disabled} onChange={(event) => change("quarter", event.target.value)}><option value="">全年 · 全部季度</option><option value="1">Q1 · 第一季度</option><option value="2">Q2 · 第二季度</option><option value="3">Q3 · 第三季度</option><option value="4">Q4 · 第四季度</option></select></Field></> : null}
     <Field group label="FC"><SearchableSelect label="FC筛选" value={value.fcId} onChange={(next) => change("fcId", next)} disabled={disabled} placeholder="全部FC" searchPlaceholder="输入FC名称搜索" options={fcs.map((fc) => ({ value: String(fc.id), label: fc.name }))} /></Field>

@@ -47,7 +47,8 @@ def test_company_is_not_needed_until_bill_and_chosen_payee_drives_archive_and_ca
         assert issued.status_code == 200, issued.text
         bill = issued.json()
         assert bill['payee_company_id'] == company['id'] and bill['due_date'] == '2026-05-05'
-        assert bill['invoice_number'].isdigit() and len(bill['invoice_number']) == 9 and bill['amount'] == '20.00'
+        assert bill['invoice_number'].startswith(company['name'] + '-IF-202604')
+        assert bill['invoice_number'].rsplit('-', 1)[1].isdigit() and len(bill['invoice_number'].rsplit('-', 1)[1]) == 9 and bill['amount'] == '20.00'
         after_excel = api.post(f"/api/exports/excel?settlement_ids={settlement['id']}")
         assert after_excel.status_code == 200
         workbook = load_workbook(BytesIO(after_excel.content))
@@ -67,8 +68,8 @@ def test_company_is_not_needed_until_bill_and_chosen_payee_drives_archive_and_ca
 
 def test_legacy_company_metadata_does_not_restrict_fc_plan_or_payee():
     with TestClient(app, headers=WRITE_HEADERS) as api:
-        a = _group(api, uuid4().hex[:10], platform_count=1)
-        b = _group(api, uuid4().hex[:10], platform_count=1)
+        a = _group(api, uuid4().hex[:10], platform_count=1, fc_name='Alpha Agent')
+        b = _group(api, uuid4().hex[:10], platform_count=1, fc_name='Beta Agent')
         # Old ownership differs in all three records, without changing FC identity.
         patched = api.patch(f"/api/clients/{a['client']['id']}", json={'company_id': b['company']['id']})
         assert patched.status_code == 200, patched.text

@@ -71,7 +71,7 @@ def test_monthly_invoice_number_is_global_and_changes_month():
             response = client.post(f"/api/invoices/{draft['id']}/issue", json={'issue_date':issue_date,'language':'zh'})
             assert response.status_code == 200, response.text
             issued.append(response.json()['invoice_number'])
-        assert issued == ['209109001','209109002','209110001']
+        assert issued == ['Frozen Issuer MONA100-FM-209109001','Frozen Issuer MONB100-FM-209109002','Frozen Issuer MONC100-FM-209110001']
         data = _group(client, 'CAP100', platform_count=1)
         _finalized_settlement(client, data, 0, year=2026, quarter=1)
         draft = _draft(client, data, year=2026, quarter=1).json()

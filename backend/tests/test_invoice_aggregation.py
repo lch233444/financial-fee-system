@@ -65,6 +65,7 @@ def _group(
     platform_count: int = 2,
     company_name: str | None = None,
     bank_information: str | None = None,
+    fc_name: str | None = None,
 ) -> dict:
     company = client.post(
         "/api/companies",
@@ -76,7 +77,7 @@ def _group(
     ).json()
     fc = client.post(
         "/api/fcs",
-        json={"company_id": company["id"], "name": f"FC {suffix}", "code": f"F{suffix}"},
+        json={"company_id": company["id"], "name": fc_name or f"FC {suffix}", "code": f"F{suffix}"},
     ).json()
     plan = client.post(
         "/api/fee-plans",
@@ -218,7 +219,7 @@ def test_monthly_number_uses_safe_internal_archive_and_skips_reserved_collision(
             json={"issue_date": "2026-04-05", "language": "zh"},
         )
         assert issued.status_code == 200, issued.text
-        expected_number = str(int(first_candidate) + 1)
+        expected_number = company_name + "-FF-" + str(int(first_candidate) + 1)
         assert issued.json()["invoice_number"] == expected_number
 
         pdf_root = get_settings().data_root / "output" / "pdf"
@@ -275,7 +276,7 @@ def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monk
             json={"issue_date": "2026-04-05", "language": "en"},
         )
         assert issued.status_code == 200, issued.text
-        assert issued.json()["invoice_number"] == str(int(first_candidate) + 1)
+        assert issued.json()["invoice_number"] == "Invoice Collision Company-FI-" + str(int(first_candidate) + 1)
 
         with SessionLocal() as db:
             sequence = db.get(InvoiceMonthlySequence, "202604")
@@ -290,7 +291,7 @@ def test_invoice_table_collision_is_skipped_and_updates_sequence_with_audit(monk
             ).all()
             assert len(events) == 1
             assert events[0].details_json == {
-                "invoice_number": first_candidate,
+                "invoice_number": "Invoice Collision Company-FI-" + first_candidate,
                 "sequence": int(first_candidate[-3:]),
             }
 
@@ -720,7 +721,8 @@ def test_bilingual_payment_notices_show_chinese_company_and_issued_number() -> N
         )
         assert issued.status_code == 200, issued.text
         invoice_number = issued.json()["invoice_number"]
-        assert len(invoice_number) == 9 and invoice_number.isdigit() and invoice_number.startswith("202610")
+        numeric_part = invoice_number.rsplit("-", 1)[1]
+        assert len(numeric_part) == 9 and numeric_part.isdigit() and numeric_part.startswith("202610")
 
         for language in ("zh", "en"):
             response = client.post(f"/api/invoices/{draft['id']}/pdf?language={language}")
@@ -981,7 +983,8 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
                 select(InvoiceIssueAttempt).where(InvoiceIssueAttempt.invoice_id == draft["id"])
             )
             assert failed_attempt.status == "FAILED"
-            assert len(failed_attempt.invoice_number) == 9 and failed_attempt.invoice_number.startswith("202604")
+            numeric_part = failed_attempt.invoice_number.rsplit("-", 1)[1]
+            assert len(numeric_part) == 9 and numeric_part.startswith("202604")
             assert failed_attempt.completed_at is not None
             failed_number = failed_attempt.invoice_number
         pdf_root = get_settings().data_root / "output" / "pdf"
@@ -1003,7 +1006,8 @@ def test_failed_issue_attempt_consumes_number_and_is_auditable(monkeypatch) -> N
             json={"issue_date": "2026-04-06", "language": "en"},
         )
         assert retried.status_code == 200, retried.text
-        assert retried.json()["invoice_number"] == str(int(failed_number) + 1)
+        assert retried.json()["invoice_number"].rsplit("-", 1)[0] == failed_number.rsplit("-", 1)[0]
+        assert int(retried.json()["invoice_number"].rsplit("-", 1)[1]) == int(failed_number.rsplit("-", 1)[1]) + 1
 
 
 def test_legacy_missing_pdf_uses_atomic_single_writer_fallback(monkeypatch) -> None:

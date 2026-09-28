@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
@@ -45,6 +45,7 @@ from ..schemas import (
     VoidRequest,
 )
 from ..services.invoice_sources import settlements_follow_original
+from ..services.invoice_number import invoice_number_prefix
 from ..serializers import invoice_accounting_cents, invoice_correction_dict, invoice_dict
 from ..services.excel_export import file_sha256
 from ..services.invoice_archive import (
@@ -463,6 +464,10 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
 
 
 def _next_number(db: Session, invoice: Invoice, issue_date: date) -> str:
+    try:
+        prefix = invoice_number_prefix(invoice.receiving_company.name, invoice.fc.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     month = issue_date.strftime("%Y%m")
     sequence = db.get(InvoiceMonthlySequence, month)
     if not sequence:
@@ -473,13 +478,20 @@ def _next_number(db: Session, invoice: Invoice, issue_date: date) -> str:
         if sequence.last_number >= 999:
             raise HTTPException(status_code=409, detail="本出具月份的三位账单编号已用完，请联系负责人；系统不会重复使用编号")
         sequence.last_number += 1
-        candidate = f"{month}{sequence.last_number:03d}"
+        numeric_part = f"{month}{sequence.last_number:03d}"
+        candidate = f"{prefix}-{numeric_part}"
         used_by_invoice = db.scalar(
-            select(Invoice.id).where(Invoice.invoice_number == candidate).limit(1)
+            select(Invoice.id).where(or_(
+                Invoice.invoice_number == numeric_part,
+                Invoice.invoice_number.endswith(f"-{numeric_part}"),
+            )).limit(1)
         )
         used_by_attempt = db.scalar(
             select(InvoiceIssueAttempt.id)
-            .where(InvoiceIssueAttempt.invoice_number == candidate)
+            .where(or_(
+                InvoiceIssueAttempt.invoice_number == numeric_part,
+                InvoiceIssueAttempt.invoice_number.endswith(f"-{numeric_part}"),
+            ))
             .limit(1)
         )
         if used_by_invoice is None and used_by_attempt is None:

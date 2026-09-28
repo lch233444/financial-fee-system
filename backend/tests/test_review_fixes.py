@@ -502,7 +502,8 @@ def test_invoice_issue_reserves_unique_numbers_without_render_write_transaction(
             issued = list(executor.map(issue, [item["id"] for item in drafts]))
         numbers = {item["invoice_number"] for item in issued}
         assert len(numbers) == 2
-        assert all(number and len(number) == 9 and number.startswith("202604") for number in numbers)
+        assert all(number.startswith("Review Company CONCUR-RFC-202604") for number in numbers)
+        assert all(len(number.rsplit("-", 1)[1]) == 9 for number in numbers)
         suffixes = sorted(int(number[-3:]) for number in numbers)
         assert suffixes[1] == suffixes[0] + 1
         for item in issued:

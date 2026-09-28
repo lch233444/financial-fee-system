@@ -2,6 +2,7 @@ from __future__ import annotations
 from evidence_fixtures import upload_evidence
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -18,9 +19,10 @@ from app.models import (
     Invoice,
     InvoiceAdjustment,
     InvoiceCorrection,
+    Payment,
     PaymentAllocation,
 )
-from app.serializers import invoice_accounting_cents
+from app.serializers import invoice_accounting_cents, invoice_dict
 
 
 WRITE_HEADERS = {"X-Financial-System-Request": "1"}
@@ -38,6 +40,10 @@ def test_open_correction_pending_entries_are_not_accounting_effective() -> None:
             entry_type="APPLY",
             correction_id=91,
             correction=correction,
+            payment=Payment(
+                id=1, invoice_id=92, payment_date=date(2026, 4, 1),
+                amount_cents=7_000, method="BANK_TRANSFER", proof_attachment_id=1,
+            ),
         )
     ]
     replacement.adjustments = [
@@ -53,8 +59,16 @@ def test_open_correction_pending_entries_are_not_accounting_effective() -> None:
     ]
 
     assert invoice_accounting_cents(replacement) == (0, 0, 10_000)
+    pending = invoice_dict(replacement)
+    assert pending["adjustment_amount"] == "0.00"
+    assert pending["adjustments"] == []
     correction.status = "COMPLETED"
     assert invoice_accounting_cents(replacement) == (7_000, 3_000, 0)
+    completed = invoice_dict(replacement)
+    assert completed["adjustment_amount"] == "30.00"
+    assert completed["adjustments"] == [
+        {"id": 94, "amount": "30.00", "reason": "pending difference"}
+    ]
 
 
 def _create(client: TestClient, path: str, payload: dict) -> dict:

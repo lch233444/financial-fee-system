@@ -266,9 +266,7 @@ def invoice_dict(item: Invoice) -> dict:
             {"id": adjustment.id, "amount": money_string(adjustment.amount_cents),
              "reason": adjustment.reason}
             for adjustment in item.adjustments
-            if adjustment.correction_id is None or (
-                adjustment.correction and adjustment.correction.status == "COMPLETED"
-            )
+            if _adjustment_is_effective(adjustment)
         ],
         "payments": [
             {

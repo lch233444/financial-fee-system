@@ -62,10 +62,6 @@ describe("保存成功后立即更新页面", () => {
     fireEvent.click(screen.getByRole("button", { name: ({ Company: "收款公司 Company", FC: "中介人 FC", Platform: "投资平台 Platform", "Fee Plan": "收费计划 Fee Plan" } as Record<string, string>)[tab], exact: true }));
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
-    fireEvent.click(screen.getByRole("button", { name: "2 查询已有" }));
-    fireEvent.click(screen.getByRole("button", { name: "3 补建资料" }));
-    expect(document.activeElement?.id).toBe("setup-create");
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe(values.name);
     expect(db.requests).toHaveLength(0);
     fireEvent.submit(form);

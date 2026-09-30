@@ -4,7 +4,7 @@ import ClientsPage from "../src/pages/ClientsPage";
 import SettlementsPage from "../src/pages/SettlementsPage";
 import InvoicesPage from "../src/pages/InvoicesPage";
 import PageBoundary from "../src/PageBoundary";
-import { ErrorBanner, Panel, SectionNav } from "../src/components";
+import { ErrorBanner } from "../src/components";
 
 test("客户查询分页及状态筛选重置页码，与新增确认入口分开", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/clients"
@@ -75,19 +75,6 @@ test("页面异常提供明确恢复入口，避免整个工作台空白", () =>
   render(<PageBoundary><Broken /></PageBoundary>);
   expect(screen.getByRole("alert").textContent).toContain("页面暂时无法显示");
   expect(screen.getByRole("button", { name: "刷新页面" })).toBeTruthy();
-});
-
-test("页内导航只定位目标区域，不改变当前功能地址或销毁输入", () => {
-  const scroll = vi.fn();
-  const initial = window.location.hash;
-  render(<><SectionNav items={[{ id: "proof", label: "上传凭证" }]} /><Panel id="proof" title="凭证"><input aria-label="备注" defaultValue="保留输入" /></Panel></>);
-  const panel = screen.getByRole("region", { name: "凭证" });
-  panel.scrollIntoView = scroll;
-  fireEvent.click(screen.getByRole("button", { name: "上传凭证" }));
-  expect(scroll).toHaveBeenCalledOnce();
-  expect(document.activeElement).toBe(panel);
-  expect(window.location.hash).toBe(initial);
-  expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("保留输入");
 });
 
 test("服务端错误以完整原因展示并聚焦，后续不同错误也能获得焦点", () => {

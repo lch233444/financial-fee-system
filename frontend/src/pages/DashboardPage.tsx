@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
 import { api } from "../api";
-import { ErrorBanner, Field, Loading, Money, PageHeader, SectionNav, WorkflowSection } from "../components";
+import { ErrorBanner, Field, Loading, Money, PageHeader, WorkflowSection } from "../components";
 import SearchableSelect from "../SearchableSelect";
 
 type Dashboard = {
@@ -42,7 +42,6 @@ export default function DashboardPage() {
   return (
     <div className="workflow-page dashboard-workflow">
       <PageHeader title="经营概览" subtitle="先选统计期间，再核对经营数据，按需要进入对应页面处理。" />
-      <SectionNav items={[{ id: "dashboard-period", label: "1 选择期间" }, { id: "dashboard-summary", label: "2 查看概况" }, { id: "dashboard-next", label: "3 前往处理" }]} />
       <div className="workflow-intro"><strong>从所选期间开始查看经营情况</strong>首次建账先准备基础资料，再建立客户与账户；日常查询按下方步骤查看。<a className="text-link" href="#/setup">前往基础设置</a></div>
 
       <WorkflowSection id="dashboard-period" title="第1步 · 选择统计期间" description="选择年度及全年或季度；年份需点击候选确认，仅输入搜索文字不会改变统计期间。">

@@ -5,7 +5,6 @@ import SystemPage from "../src/pages/SystemPage";
 function setup() {
   const writes: Array<{ path: string; init: RequestInit }> = [];
   const notify = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit = {}) => {
     if (init.method === "POST") {
       writes.push({ path, init });
@@ -20,14 +19,11 @@ function setup() {
   return { writes, notify };
 }
 
-test("数据操作页内跳转保留检查批次，只在明确导出时发送对应请求", async () => {
+test("选择检查批次后，只在明确导出时发送对应请求", async () => {
   const { writes, notify } = setup();
   await screen.findByLabelText("检查年度");
   fireEvent.change(screen.getByLabelText("检查年度"), { target: { value: "2025" } });
   fireEvent.change(screen.getByLabelText("检查季度"), { target: { value: "2" } });
-  fireEvent.click(screen.getByRole("button", { name: "按需 · 辅助识别" }));
-  fireEvent.click(screen.getByRole("button", { name: "2 选择操作" }));
-  expect(document.activeElement?.id).toBe("system-tasks");
   expect((screen.getByLabelText("检查年度") as HTMLInputElement).value).toBe("2025");
   expect((screen.getByLabelText("检查季度") as HTMLSelectElement).value).toBe("2");
   expect(writes).toHaveLength(0);
@@ -47,13 +43,11 @@ test("数据操作页内跳转保留检查批次，只在明确导出时发送�
   expect(revoke).toHaveBeenCalledWith("blob:synthetic");
 });
 
-test("导入文件在页内跳转后保留，取消覆盖确认不发送请求，确认后才安排恢复", async () => {
+test("选择导入文件后，取消覆盖确认不发送请求，确认后才安排恢复", async () => {
   const { writes, notify } = setup();
   const fileInput = await screen.findByLabelText("选择完整数据包ZIP") as HTMLInputElement;
   const file = new File(["synthetic zip"], "synthetic.zip", { type: "application/zip" });
   fireEvent.change(fileInput, { target: { files: [file] } });
-  fireEvent.click(screen.getByRole("button", { name: "1 核对本机" }));
-  fireEvent.click(screen.getByRole("button", { name: "2 选择操作" }));
   expect(fileInput.files?.[0]).toBe(file);
   expect(writes).toHaveLength(0);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

@@ -127,13 +127,9 @@ test("凭证原件缺失显示错误，不伪装为预览成功", async () => {
   expect(screen.queryByRole("img", { name: "付款凭证 #77" })).toBeNull();
 });
 
-test("收款第3步按当前账单打开凭证，页内跳转不产生付款写入", async () => {
+test("收款第3步按当前账单打开凭证，不产生付款写入", async () => {
   const { writes } = setup();
-  const scroll = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
   fireEvent.click(await screen.findByRole("button", { name: "查看MIXED-001" }));
-  fireEvent.click(screen.getByRole("button", { name: "3 收款与凭证" }));
-  expect(document.activeElement?.id).toBe("invoice-action");
   const trigger = screen.getByRole("button", { name: "查看本单付款凭证" });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
   trigger.focus(); fireEvent.click(trigger);

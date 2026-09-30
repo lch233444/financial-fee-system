@@ -4,7 +4,7 @@ import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Calculator, CheckCircle2, Download, Trash2 } from "lucide-react";
 import { api, download, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, SectionNav, Loading, Pagination, WorkflowSection } from "../components";
+import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, Loading, Pagination, WorkflowSection } from "../components";
 import { hwmBasis } from "../hwmBasis";
 import { settlementGroups } from "../settlementWorkspace";
 import { quarterDates, useApiList, usePagination } from "../hooks";
@@ -353,7 +353,6 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   return (
     <div className="workflow-page settlement-workflow">
       <PageHeader title="账单计算" subtitle="先选客户和季度，再逐组计算，核对后锁定；完成本季所需组合后，继续到账单出具。" />
-      <SectionNav items={[{ id: "settlement-groups", label: "1 选择组合" }, { id: "settlement-create", label: "2 填写并计算" }, { id: "settlement-result", label: "3 核对并锁定" }, { id: "settlement-records", label: "查询与导出" }]} />
       <div className="workflow-intro"><strong>开始前：备齐历史结余、资金记录和原始凭证</strong>客户及账户应已启用并分配收费计划；已有前序季度时，须先完成其锁定。仅查询旧记录或导出文件，可直接进入“查询与导出”。</div>
       {error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error ? <ErrorBanner message={error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error} /> : null}
       <Panel id="settlement-groups" step="第1步 · 选择客户季度与组合" title="本季账户组合总览" subtitle={`${year} Q${quarter} · 按客户、平台和收费计划分组。点击“建立此组合”进入第2步；已有计算可直接查看结果。已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>

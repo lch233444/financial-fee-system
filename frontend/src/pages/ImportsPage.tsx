@@ -17,7 +17,7 @@ import {
   postJson,
   recognizeStatementWithAi,
 } from "../api";
-import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, Pagination, SectionNav } from "../components";
+import { EmptyState, ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, Pagination } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import type { Account, AiAssistantStatus, BalanceSnapshot, Client, FC, FeePlan, Platform, StatementImport } from "../types";
 import { accountIdentityLabel, clientIdentityLabel, formatDate, SOL_MODEL_ID } from "../types";
@@ -576,7 +576,6 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
       /> : null}
       {(localError || imports.error || clients.error || accounts.error || snapshots.error || profileError) ? <ErrorBanner message={localError || imports.error || clients.error || accounts.error || snapshots.error || profileError} /> : null}
 
-      {!embedded ? <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} /> : null}
       <Panel id="statement-upload" step={guided ? "第1步 · 上传原件" : undefined} title={embedded ? title : "上传eMPF文件"} subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
           <UploadCloud size={32} />

@@ -2,7 +2,7 @@ import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, SectionNav, Pagination, Loading, WorkflowStep, WorkflowSection } from "../components";
+import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, Pagination, Loading, WorkflowStep, WorkflowSection } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel, clientIdentityLabel, formatDate } from "../types";
@@ -118,7 +118,6 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
     <div className="workflow-page">
       <PageHeader title="客户与账户" subtitle="查已有资料请选择“查询信息”；建立客户及账户请选择“新增客户”。一个客户可有多个独立收费账户。" />
       <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
-      {view === "create" ? <SectionNav items={[{ id: "client-import", label: "自动导入" }, { id: "client-manual", label: "手动导入" }, { id: "account-create", label: "已有客户新增账户" }]} /> : null}
       {error ? <ErrorBanner message={error} /> : null}
       {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；FC及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
         <WorkflowStep number={1} title="选择查询范围与条件" detail="查看当前在管客户可按年季筛选；查找无账户或待补全客户，请切换到全部档案。" />

@@ -5,7 +5,7 @@ import RecordFilters from "../RecordFilters";
 import { defaultRecordFilters, dateInPeriod } from "../periodFilters";
 import { periodSnapshots, transactionLabels } from "../cashRecords";
 import { api, patchJson, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, SectionNav, Loading, WorkflowStep } from "../components";
+import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, Loading, WorkflowStep } from "../components";
 import { todayIso, useApiList } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel, accountIdentityDetail, formatDate, formatDateTime } from "../types";
@@ -142,7 +142,6 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
 
   return <div className="workflow-page">
     <PageHeader title="资金与余额" subtitle="先查询已有记录；需要补录时，按记录类型选择季度结余或供款、加款、取款入口。" />
-    <SectionNav items={[{ id: "cash-records", label: "记录查询" }, { id: "balance-import", label: "导入季度结余" }, { id: "cash-create", label: "导入供款加款取款" }]} />
     {error ? <ErrorBanner message={error} /> : null}
     <Panel id="cash-records" title="记录查询" subtitle="查询供款、加款、取款及历史结余；本季历史结余同时带出适用的期初结余。">
       <WorkflowStep number={1} title="选择客户与查询条件" detail="先搜索并选定客户，再按期间、平台或账户缩小范围；下方手动录入也使用此处选定的客户。" />

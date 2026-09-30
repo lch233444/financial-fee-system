@@ -2,7 +2,7 @@ import { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, PageHeader, Panel, Loading, SectionNav, WorkflowSection } from "../components";
+import { EmptyState, ErrorBanner, Field, PageHeader, Panel, Loading, WorkflowSection } from "../components";
 import { useApiList } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import type { Company, FC, FeePlan, Platform } from "../types";
@@ -105,7 +105,6 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
   return (
     <div className="workflow-page setup-workflow">
       <PageHeader title="基础设置" subtitle="FC与收费计划独立建立；Company用于出账单时选择收款公司" />
-      <SectionNav items={[{ id: "setup-category", label: "1 选择类别" }, { id: "setup-existing", label: "2 查询已有" }, { id: "setup-create", label: "3 补建资料" }]} />
       <div className="workflow-intro"><strong>先查已有资料，缺少时再新增</strong>FC、平台和收费计划分别建立后用于客户及账户；收款公司在出账单时选择，不用于绑定FC或收费计划。已有资料可直接使用，无需重复创建。</div>
       {error ? <ErrorBanner message={error} /> : null}
       <WorkflowSection id="setup-category" title="第1步 · 选择资料类别" description="按本次需要选择收款公司、中介人、投资平台或收费计划；切换类别会清空搜索及未保存表单，填写后请先保存。">

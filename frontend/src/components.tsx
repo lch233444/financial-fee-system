@@ -1,5 +1,5 @@
 import { type PropsWithChildren, useEffect, useId, useRef } from "react";
-import { AlertCircle, ArrowUpRight, Inbox, LoaderCircle } from "lucide-react";
+import { AlertCircle, Inbox, LoaderCircle } from "lucide-react";
 
 export function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -103,15 +103,6 @@ export function ErrorBanner({ message }: { message: string }) {
   const element = useRef<HTMLDivElement>(null);
   useEffect(() => { element.current?.focus(); }, [message]);
   return <div ref={element} tabIndex={-1} className="error-banner" role="alert"><AlertCircle size={20} aria-hidden="true" /><div><strong>请检查后继续</strong><span>{message}</span></div></div>;
-}
-
-/** Page-local navigation does not change the app route or unmount any form. */
-export function SectionNav({ items }: { items: Array<{ id: string; label: string }> }) {
-  return <nav className="section-nav" aria-label="本页分区"><span>本页</span>{items.map((item) => <button type="button" key={item.id} onClick={() => {
-    const target = document.getElementById(item.id);
-    target?.scrollIntoView({ behavior: "auto", block: "start" });
-    target?.focus({ preventScroll: true });
-  }}>{item.label}<ArrowUpRight size={14} aria-hidden="true" /></button>)}</nav>;
 }
 
 export function Pagination({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (page: number) => void }) {

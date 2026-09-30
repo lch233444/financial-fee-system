@@ -16,7 +16,7 @@ import {
   startAiAssistantLogin,
   withFinancialSystemRequestHeader,
 } from "../api";
-import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, SectionNav, WorkflowSection } from "../components";
+import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, WorkflowSection } from "../components";
 import type { AiAssistantStatus } from "../types";
 import { SOL_MODEL_ID } from "../types";
 
@@ -198,7 +198,6 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   return (
     <div className="workflow-page system-workflow">
       <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整数据包交接" />
-      <SectionNav items={[{ id: "system-location", label: "1 核对本机" }, { id: "system-tasks", label: "2 选择操作" }, { id: "system-assistant", label: "按需 · 辅助识别" }]} />
       <div className="workflow-intro"><strong>先核对当前数据位置，再办理本次任务</strong>导出供交接或保留完整资料；导入用于接收同版本数据包并整体覆盖。两者按需要选择，辅助识别登录单独办理。</div>
       {error ? <ErrorBanner message={error} /> : null}
       <WorkflowSection id="system-location" title="第1步 · 核对本机数据与运行状态" description="先确认正在使用的业务数据位置及模板状态；具体数据库和模板路径可按需展开查看。">

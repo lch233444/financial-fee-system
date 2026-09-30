@@ -4,7 +4,6 @@
 .workflow-page .workflow-tabs { gap: 8px; padding: 6px; }
 .workflow-page .workflow-tabs button { min-height: 48px; font-size: 16px; padding: 10px 24px; }
 .workflow-page .workflow-tabs button.active { background: var(--navy); color: var(--surface); }
-.workflow-page .section-nav button { min-height: 44px; }
 .workflow-intro { margin: 0 0 28px; padding: 18px 22px; border-left: 4px solid var(--blue); background: var(--surface); color: var(--muted); line-height: 1.8; }
 .workflow-intro strong { display: block; color: var(--navy); font-size: 17px; margin-bottom: 4px; }
 .workflow-intro > .text-link { display: inline-block; margin-left: 8px; }

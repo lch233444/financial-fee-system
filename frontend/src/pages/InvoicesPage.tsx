@@ -6,7 +6,7 @@ import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CheckCircle2, FileDown, FilePlus2, ReceiptText, RotateCcw } from "lucide-react";
 import { api, download, patchJson, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, SectionNav, Pagination, WorkflowSection, WorkflowStep } from "../components";
+import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, Pagination, WorkflowSection, WorkflowStep } from "../components";
 import { accountOverlapsQuarter } from "../settlementWorkspace";
 import { todayIso, useApiList, usePagination } from "../hooks";
 import { settlementSourcesFollowOriginal } from "../invoiceSources";
@@ -764,7 +764,6 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
   return (
     <div className="workflow-page invoice-workflow">
       <PageHeader title={mode === "issue" ? "账单出具" : "收款情况"} subtitle={mode === "issue" ? "建立或选择客户季度账单，核对完整来源与收款公司，再正式出具。" : "先找到账单，核对金额与状态，再登记收款或查看已付款凭证。"} />
-      <SectionNav items={[{ id: "invoice-start", label: mode === "issue" ? "1 建立或选择" : "1 找到账单" }, { id: "invoice-detail", label: "2 核对明细" }, { id: "invoice-action", label: mode === "issue" ? "3 正式出具" : "3 收款与凭证" }, { id: "invoice-correction-workflow", label: "更正与记录" }]} />
       <div className="workflow-intro"><strong>{mode === "issue" ? "开始前：完成该客户本季度所需结算的锁定" : "开始前：确认账单已正式出具，并备齐本次付款凭证"}</strong>{mode === "issue" ? "同客户同季度跨平台、跨收费计划合并一张缴费单。新建前核对账户是否齐全；已有账单直接从清单进入第2步。" : "实际现金与公司承担差额必须精确结清本单；有差额须填写原因。已付款直接查看凭证，错单使用下方更正流程。"}</div>
       {error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error} /> : null}
       <WorkflowSection id="invoice-start" title={mode === "issue" ? "第1步 · 建立或选择账单" : "第1步 · 找到账单"} description={mode === "issue" ? "新账单先选择已锁定的客户季度组合；已有账单可直接从清单选择，继续核对。" : "按客户、编号或期间找到已出具账单；点击编号核对明细，已付款可直接查看凭证。"}>

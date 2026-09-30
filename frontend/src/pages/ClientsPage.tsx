@@ -2,7 +2,7 @@ import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, SectionNav, Pagination, Loading } from "../components";
+import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, SectionNav, Pagination, Loading, WorkflowStep, WorkflowSection } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel, clientIdentityLabel, formatDate } from "../types";
@@ -115,17 +115,19 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   }
 
   return (
-    <>
-      <PageHeader title="客户与账户" subtitle="一个Client可有多个Sub Account；每个账户独立计算HWM，组合层只汇总结果" />
-      <div className="tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户（自动导入）</button></div>
-      {view === "create" ? <SectionNav items={[{ id: "client-import", label: "自动导入" }, { id: "client-create", label: "手工新增客户" }, { id: "account-create", label: "新增账户" }]} /> : null}
+    <div className="workflow-page">
+      <PageHeader title="客户与账户" subtitle="查已有资料请选择“查询信息”；建立客户及账户请选择“新增客户”。一个客户可有多个独立收费账户。" />
+      <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
+      {view === "create" ? <SectionNav items={[{ id: "client-import", label: "自动导入" }, { id: "client-manual", label: "手动导入" }, { id: "account-create", label: "已有客户新增账户" }]} /> : null}
       {error ? <ErrorBanner message={error} /> : null}
       {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；FC及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
+        <WorkflowStep number={1} title="选择查询范围与条件" detail="查看当前在管客户可按年季筛选；查找无账户或待补全客户，请切换到全部档案。" />
         <Field label="查询范围"><select value={queryScope} disabled={Boolean(deletingKey)} onChange={(event) => { setQueryScope(event.target.value as "period" | "all"); setFilters((current) => ({ ...current, clientId: "" })); }}><option value="period">所选期间在管客户</option><option value="all">全部档案</option></select></Field>
         <RecordFilters showPeriod={queryScope === "period"} value={filters} onChange={setFilters} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} clientLabel="查询客户账户" disabled={Boolean(deletingKey)}>
           <Field label="客户状态"><select value={clientStatus} disabled={Boolean(deletingKey)} onChange={(event) => setClientStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field>
           <small role="status">显示 {visibleClients.length} / {queryScope === "all" ? clients.data.length : managedClientIds.size} 位{queryScope === "all" ? "客户" : "在管客户"}</small>
         </RecordFilters>
+        <WorkflowStep number={2} title="查看客户与账户" detail="点击客户的“查看账户”，展开该客户在当前筛选条件下的账户资料。" />
         {clients.loading || accounts.loading ? <Loading /> : visibleClients.length ? (
           <div className="client-list">
             {clientPages.rows.map((client) => {
@@ -143,9 +145,11 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
       </Panel> : null}
 
       <div hidden={view !== "create"}>
-      {view === "create" ? <div id="client-import"><ImportsPage notify={notify} embedded onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></div> : null}
+      <p className="workflow-intro"><strong>先选择一种建档方式</strong>有原始账单可使用自动导入；需要直接填写资料可使用手动导入。已有客户新增账户可直接进入手动导入第2步。</p>
+      {view === "create" ? <WorkflowSection id="client-import" title="自动导入" description="上传原件 → 选择导入记录 → 核对资料并确认。确认成功后，可在查询信息中查看客户及账户。"><ImportsPage notify={notify} embedded guided title="新增客户自动导入" onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></WorkflowSection> : null}
+      <WorkflowSection id="client-manual" title="手动导入" description="新客户先建立客户档案，再建立账户；已有客户可直接选择其档案新增账户。">
       <div className="split-layout">
-        <Panel id="client-create" title="新增Client" subtitle="补全FC和管理开始日期；建立受管子账户后才计为在管客户">
+        <Panel id="client-create" title="新增Client" step="第1步 · 建立客户档案" subtitle="填写FC、姓名及管理开始日期；建立受管账户后才计为在管客户。">
           <form className="form-grid" onSubmit={(e) => void submitClient(e)}>
             <Field label="FC"><select name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Client Name"><input name="name" required /></Field>
@@ -153,9 +157,10 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
             <Field label="联系方式"><input name="contact" /></Field>
             <Field label="备注"><textarea name="remark" rows={2} /></Field>
             <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存Client"}</button>
+            <p className="workflow-next">保存成功后：在第2步选择该客户，继续建立账户。</p>
           </form>
         </Panel>
-        <Panel id="account-create" title="新增Sub Account" subtitle="币种固定为HKD">
+        <Panel id="account-create" title="新增Sub Account" step="第2步 · 建立客户账户" subtitle="先选择已有客户，再填写平台、收费计划及账户资料；币种为HKD。">
           <form className="form-grid" onSubmit={(e) => void submitAccount(e)}>
             <Field group label="Client"><SearchableSelect label="新增账户客户" name="client_id" value={accountClientId} required onChange={setAccountClientId} options={clients.data.filter((x) => x.status === "ACTIVE").map(clientOption)} /></Field>
             <Field label="Platform"><select name="platform_id" defaultValue="" required><option value="" disabled>请选择</option>{platforms.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
@@ -165,11 +170,12 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
             <Field label="开始管理日期"><input name="start_date" type="date" required /></Field>
             <Field label="实际结束日期（如适用）"><input name="end_date" type="date" /></Field>
             <button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存Sub Account"}</button>
+            <p className="workflow-next">保存成功后：在“查询信息”核对账户，再到“资金与余额”录入结余及资金记录。</p>
           </form>
         </Panel>
       </div>
-
+      </WorkflowSection>
       </div>
-    </>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import TransactionsPage from "../src/pages/TransactionsPage";
+import { loadPreviewImage, mockImagePreviewLayout } from "./imagePreviewFixtures";
 
 const records: Record<string, unknown[]> = {
   "/api/clients": [{ id: 1, name: "合成客户", status: "ACTIVE" }],
@@ -9,6 +10,7 @@ const records: Record<string, unknown[]> = {
   "/api/attachments": [{ id: 8, entity_type: "SNAPSHOT", entity_id: 2, original_name: "synthetic-proof.png", created_at: "2026-09-17T01:00:00" }],
 };
 async function setup(file: () => Promise<Response> = async () => new Response("synthetic-image", { headers: { "Content-Type": "image/png" } }), overrides: Record<string, unknown[]> = {}) {
+  mockImagePreviewLayout();
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   URL.createObjectURL = vi.fn(() => "blob:synthetic-preview");
@@ -31,6 +33,9 @@ test("结算凭证先弹窗展示，下载单独提供，关闭释放预览并�
   const download = within(dialog).getByRole("link", { name: "下载" });
   expect(download.getAttribute("download")).toBe("synthetic-proof.png");
   expect(download.getAttribute("href")).toBe("blob:synthetic-preview");
+  loadPreviewImage(within(dialog).getByRole("img"));
+  fireEvent.click(within(dialog).getByRole("button", { name: "放大图片" }));
+  expect(within(dialog).getByRole("status", { name: "图片缩放比例" }).textContent).toBe("125%");
   fireEvent.click(within(dialog).getByRole("button", { name: "关闭预览" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic-preview");
@@ -44,6 +49,7 @@ test("历史结余显示查看原始凭证，弹窗预览PDF不提供下载入�
   fireEvent.click(ledger.getByRole("button", { name: "查看原始凭证" }));
   const dialog = screen.getByRole("dialog", { name: "原始凭证" });
   await waitFor(() => expect(dialog.querySelector("object")?.getAttribute("type")).toBe("application/pdf"));
+  expect(within(dialog).queryByRole("group", { name: "图片缩放" })).toBeNull();
   expect(within(dialog).queryByRole("link")).toBeNull();
   expect(fetcher).toHaveBeenCalledWith("/api/statement-imports/7/file", expect.anything());
   fireEvent(dialog, new Event("cancel", { cancelable: true }));
@@ -82,8 +88,13 @@ test("资金凭证优先显示当前原件，可追溯旧凭证和旧版独立�
   fireEvent.click(within(screen.getByRole("region", { name: "供款、加款、取款记录表" })).getByRole("button", { name: "查看原件" }));
   const dialog = within(screen.getByRole("dialog"));
   expect((await dialog.findByRole("link", { name: "下载" })).getAttribute("download")).toBe("current.png");
+  loadPreviewImage(dialog.getByRole("img"));
+  fireEvent.click(dialog.getByRole("button", { name: "放大图片" }));
+  expect(dialog.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("125%");
   fireEvent.click(dialog.getByRole("button", { name: "旧凭证 · old.png" }));
   await waitFor(() => expect(dialog.getByRole("link", { name: "下载" }).getAttribute("download")).toBe("old.png"));
+  loadPreviewImage(dialog.getByRole("img"));
+  expect(dialog.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("100%");
   expect(fetcher).toHaveBeenCalledWith("/api/attachments/8/file", expect.anything());
   fireEvent.click(dialog.getByRole("button", { name: "legacy.png" }));
   await waitFor(() => expect(dialog.getByRole("link", { name: "下载" }).getAttribute("download")).toBe("legacy.png"));

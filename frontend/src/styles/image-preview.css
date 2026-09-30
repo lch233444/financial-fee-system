@@ -1,0 +1,9 @@
+.payment-proof-preview, .zoomable-image { min-width: 0; }
+.image-zoom-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.image-zoom-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 8px 12px; }
+.image-zoom-controls [role="status"] { min-width: 54px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; color: var(--navy); }
+.image-zoom-hint { margin: 8px 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.image-zoom-viewport { width: 100%; height: min(60dvh, 560px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: 8px; background: var(--subtle); }
+.image-zoom-stage { min-width: 100%; min-height: 100%; display: grid; place-items: center; }
+.zoomable-image .image-zoom-stage img { display: block; max-width: none; max-height: none; margin: 0; }
+.image-zoom-viewport > [role="alert"] { padding: 16px; color: var(--red); }

@@ -5,7 +5,7 @@ import RecordFilters from "../RecordFilters";
 import { defaultRecordFilters, dateInPeriod } from "../periodFilters";
 import { periodSnapshots, transactionLabels } from "../cashRecords";
 import { api, patchJson, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, SectionNav, Loading } from "../components";
+import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, SectionNav, Loading, WorkflowStep } from "../components";
 import { todayIso, useApiList } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel, accountIdentityDetail, formatDate, formatDateTime } from "../types";
@@ -140,15 +140,17 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
   const identity = (id: number, fallback: string) => { const account = accountById.get(id); return <><strong>{account?.client_name || "客户资料待核对"}</strong><small className="cell-note">{account ? accountIdentityDetail(account) : fallback}</small></>; };
   const remarkField = (type: string, disabled: boolean, initial = "") => <Field label={type === "CONTRIBUTION" ? "加款备注（必填）" : "备注"} hint={type === "CONTRIBUTION" ? "请填写加款说明，至少2字；系统自动附上到账日期、户口和金额，总长度不超过500字。" : undefined}><textarea name="remark" rows={2} defaultValue={initial} required={type === "CONTRIBUTION"} minLength={type === "CONTRIBUTION" ? 2 : undefined} maxLength={type === "CONTRIBUTION" ? 500 : undefined} disabled={disabled} /></Field>;
 
-  return <>
-    <PageHeader title="资金与余额" subtitle="查询资金记录与历史结余，导入时一并保存凭证；结算仍须人工核对并锁定。" />
-    <SectionNav items={[{ id: "cash-records", label: "记录与历史结余" }, { id: "balance-import", label: "导入季度结余" }, { id: "cash-create", label: "导入供款加款取款" }]} />
+  return <div className="workflow-page">
+    <PageHeader title="资金与余额" subtitle="先查询已有记录；需要补录时，按记录类型选择季度结余或供款、加款、取款入口。" />
+    <SectionNav items={[{ id: "cash-records", label: "记录查询" }, { id: "balance-import", label: "导入季度结余" }, { id: "cash-create", label: "导入供款加款取款" }]} />
     {error ? <ErrorBanner message={error} /> : null}
-    <Panel id="cash-records" title="供款、加款、取款记录与历史结余" subtitle="按客户及期间查询，本季历史结余同时带出适用的期初结余。">
+    <Panel id="cash-records" title="记录查询" subtitle="查询供款、加款、取款及历史结余；本季历史结余同时带出适用的期初结余。">
+      <WorkflowStep number={1} title="选择客户与查询条件" detail="先搜索并选定客户，再按期间、平台或账户缩小范围；下方手动录入也使用此处选定的客户。" />
       <RecordFilters value={filters} onChange={(next) => { setFilters(next); clearDependentSelection(); }} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} disabled={busy} clientLabel="资金与余额客户">
         <Field label="Platform"><select disabled={!filters.clientId || busy} value={platformId} onChange={(event) => { setPlatformId(event.target.value); setAccountId(""); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部Platform</option>{platformOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
         <Field label="Sub Account"><select disabled={!filters.clientId || busy} value={accountId} onChange={(event) => { setAccountId(event.target.value); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部账户</option>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
       </RecordFilters>
+      <WorkflowStep number={2} title="查看记录与凭证" detail="核对资金记录和历史结余；需要补录时，选择下方对应的导入入口。" />
       <section className="record-section" aria-labelledby="cash-ledger-heading"><h3 id="cash-ledger-heading">供款、加款、取款记录</h3>
         {transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="供款、加款、取款记录表" className="table-wrap cash-ledger-table"><table><thead><tr><th>日期</th><th>Client / Platform / A/C</th><th>类型</th><th>金额</th><th>凭证</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={item.id}>
           <td>{formatDate(item.transaction_date)}</td><td>{identity(item.account_id, item.account_number)}</td><td>{transactionLabels[item.transaction_type] || item.transaction_type}</td><td><Money value={item.amount} /></td>
@@ -177,25 +179,36 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
       {supplement ? <section className="record-section" aria-labelledby="supplement-heading"><h3 id="supplement-heading">补存历史凭证</h3><p>{supplement.label}</p><form className="inline-form" onSubmit={(event) => void submitSupplement(event)}><Field label="原始凭证"><input name="file" type="file" accept={supplement.type === "SNAPSHOT" ? ".jpg,.jpeg,.png" : ".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv"} required disabled={busy} /></Field><button className="secondary" disabled={busy} type="submit">上传到本条记录</button><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement(null)}>取消</button></form></section> : null}
     </Panel>
     <Panel id="balance-import" title="导入季度结余" subtitle="上传原始账单识别并人工确认，或填写结余并附上图片凭证。">
-      <div className="tabs" role="group" aria-label="结余导入方式"><button type="button" aria-pressed={importMode === "auto"} className={importMode === "auto" ? "active" : ""} disabled={busy} onClick={() => setImportMode("auto")}>原件识别导入</button><button type="button" aria-pressed={importMode === "manual"} className={importMode === "manual" ? "active" : ""} disabled={busy} onClick={() => setImportMode("manual")}>手动填写并附图</button></div>
-      {importMode === "auto" ? showImporter ? <Suspense fallback={<Loading />}><ImportsPage notify={notify} embedded onConfirmed={() => { void refresh(); void accounts.reload(); void clients.reload(); }} /></Suspense> : <div className="import-entry"><p>上传原件后，逐项核对客户、账户、日期、币种和结余金额，再确认保存。</p><button className="primary" type="button" onClick={() => setShowImporter(true)}>开始导入季度结余</button></div> : <form className="form-grid" onSubmit={(event) => void submitSnapshot(event)}>
-        {accountSelect("snapshot", busy)}<Field label="结余日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
+      <div className="tabs workflow-tabs" role="group" aria-label="结余导入方式"><button type="button" aria-pressed={importMode === "auto"} className={importMode === "auto" ? "active" : ""} disabled={busy} onClick={() => setImportMode("auto")}>原件识别导入</button><button type="button" aria-pressed={importMode === "manual"} className={importMode === "manual" ? "active" : ""} disabled={busy} onClick={() => setImportMode("manual")}>手动填写并附图</button></div>
+      {importMode === "auto" ? showImporter ? <div className="workflow-embedded"><Suspense fallback={<Loading />}><ImportsPage notify={notify} embedded guided onConfirmed={() => { void refresh(); void accounts.reload(); void clients.reload(); }} /></Suspense></div> : <div className="import-entry"><ol className="workflow-outline" aria-label="原件识别导入步骤"><li>上传原始账单</li><li>选择导入记录并查看原件</li><li>核对客户、账户及结余，确认保存</li></ol><button className="primary" type="button" onClick={() => setShowImporter(true)}>开始导入季度结余</button></div> : <form className="form-grid" onSubmit={(event) => void submitSnapshot(event)}>
+        <WorkflowStep number={1} title="选择结余账户" detail={selectedClient ? `当前客户：${selectedClient.name}。请选择本次结余对应的账户。` : "请先在上方“记录查询”选定客户，再选择本次结余的账户。"} />
+        {accountSelect("snapshot", busy)}
+        <WorkflowStep number={2} title="填写结余资料" />
+        <div className="workflow-fields"><Field label="结余日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
         <Field label="结余金额 (HKD)"><input name="balance" type="number" min="0" step="0.01" required disabled={busy || !filters.clientId} /></Field>
-        <Field label="备注"><textarea name="remark" rows={2} disabled={busy || !filters.clientId} /></Field>
+        <Field label="备注"><textarea name="remark" rows={2} disabled={busy || !filters.clientId} /></Field></div>
+        <WorkflowStep number={3} title="附上凭证并核对保存" detail="核对账户、日期和金额后，一并保存结余及图片凭证。" />
         <Field label="图片凭证（必填，可选多张）" hint="每份附件为一张 JPG 或 PNG 图片。"><input name="files" type="file" multiple accept=".jpg,.jpeg,.png" required disabled={busy || !filters.clientId} /></Field>
         <button className="primary" type="submit" disabled={busy || !filters.clientId}>{snapshotAction.pending ? "保存中…" : "保存结余与凭证"}</button>
+        <p className="workflow-next">保存成功后：在“记录查询”核对历史结余；如日期不在当前查询期间，请调整年季筛选。</p>
       </form>}
     </Panel>
     <Panel id="cash-create" title="导入供款加款取款" subtitle="资金生效日期填写实际转账到账日；记录与凭证核对后一起提交。">
       <form className="form-grid" onSubmit={(event) => void submitTransaction(event)}>
-        {accountSelect("transaction", busy)}<Field label="资金生效日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
+        <WorkflowStep number={1} title="选择资金记录账户" detail={selectedClient ? `当前客户：${selectedClient.name}。请选择本次资金变动的账户。` : "请先在上方“记录查询”选定客户，再选择本次资金记录的账户。"} />
+        {accountSelect("transaction", busy)}
+        <WorkflowStep number={2} title="填写资金变动" detail="选择供款、加款或取款，并填写实际到账日期和金额。" />
+        <div className="workflow-fields"><Field label="资金生效日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
         <TransactionType value={transactionType} onChange={setTransactionType} disabled={busy || !filters.clientId} />
         <Field label="金额 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={busy || !filters.clientId} /></Field>
         {remarkField(transactionType, busy || !filters.clientId)}
+        </div>
+        <WorkflowStep number={3} title="附上凭证并核对保存" detail="加款须填写备注；记录与凭证核对后一起提交。" />
         <Field label="原始凭证（必填，可选多份）"><input name="files" type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required disabled={busy || !filters.clientId} /></Field>
         <button className="primary" type="submit" disabled={busy || !filters.clientId}>{transactionAction.pending ? "保存中…" : "保存记录与凭证"}</button>
+        <p className="workflow-next">保存成功后：在“记录查询”核对资金记录及凭证；如日期不在当前查询期间，请调整年季筛选。</p>
       </form>
     </Panel>
     {previewDocuments.length ? <DocumentPreviewDialog key={previewDocuments[0].path} document={previewDocuments[0]} documents={previewDocuments} onClose={() => setPreviewDocuments([])} /> : null}
-  </>;
+  </div>;
 }

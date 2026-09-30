@@ -1,5 +1,6 @@
 import SearchableSelect, { matchesSearch } from "../SearchableSelect";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { searchClientOptions } from "../clientSimilarity";
 import {
   BrainCircuit,
   CheckCircle2,
@@ -241,9 +242,10 @@ function DocumentRoutingNotice({ record }: { record: StatementImport }) {
   </div>;
 }
 
-export default function ImportsPage({ notify, embedded = false, onConfirmed, title = "导入季度结余" }: {
+export default function ImportsPage({ notify, embedded = false, guided = false, onConfirmed, title = "导入季度结余" }: {
   notify: (message: string) => void;
   embedded?: boolean;
+  guided?: boolean;
   onConfirmed?: () => void | Promise<void>;
   title?: string;
 }) {
@@ -274,10 +276,8 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
   const [selectedClientId, setSelectedClientId] = useState("");
   const [reviewValues, setReviewValues] = useState<Record<ReviewKey, string>>(initialReviewValues(null));
   const recognized = recognitionSucceeded(selected);
-  const comparisonRows = recognized ? comparisonFields.map((field) => ({ field, conflict: fieldHasConflict(selected, field) })) : [];
   const reviewIssues = buildReviewIssues(selected);
   const reviewIssueCount = reviewIssues.length;
-  const aiNeedsReview = reviewIssueCount > 0;
   const assistantReady = assistant?.status === "ready";
   const localDocumentType = value(selected, "document_type") || "unknown";
   const solDocumentType = aiValue(selected, "document_type");
@@ -293,6 +293,12 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
   const profileError = fcs.error || plans.error || platforms.error;
   const normalizedName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
   const matchingClients = clients.data.filter((item) => normalizedName(item.name) === normalizedName(reviewValues.client_name));
+  const clientNameMismatch = Boolean(selectedClient && normalizedName(selectedClient.name) !== normalizedName(reviewValues.client_name));
+  const clientOptions = useMemo(() => clients.data.filter((item) => item.status !== "CLOSED").map((item) => ({
+    value: String(item.id), name: item.name, label: clientIdentityLabel(item, clients.data, accounts.data),
+    searchText: [item.name, item.fc_name, item.contact, ...accounts.data.filter((account) => account.client_id === item.id).map(accountIdentityLabel)].filter(Boolean).join(" "),
+  })), [clients.data, accounts.data]);
+  const findClients = useCallback((query: string) => searchClientOptions(clientOptions, query, reviewValues.client_name), [clientOptions, reviewValues.client_name]);
   const needsClientSelection = !selectedClientId && (matchingClients.length > 0
     || accounts.data.some((item) => item.account_number === reviewValues.account_number));
   const needsAccountSelection = Boolean(selectedClient && !selectedExistingAccount
@@ -328,7 +334,8 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
   }, [selected?.id]);
 
   useEffect(() => {
-    setSelectedClientId("");
+    // Keep the explicitly selected client while finance corrects the OCR name.
+    // A mismatching name blocks confirmation; account identity must be reselected.
     setSelectedAccountId("");
   }, [reviewValues.client_name]);
 
@@ -478,6 +485,10 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
       setLocalError("已发现同名客户，请先选择客户归属，再新增他的子账户。");
       return;
     }
+    if (clientNameMismatch) {
+      setLocalError("复核姓名与所选客户不一致，请核对原件并手工修正Client Name，或重新选择客户归属。");
+      return;
+    }
     if (needsAccountSelection) {
       setLocalError("该客户已有同号码账户，请明确选择原账户。");
       return;
@@ -566,7 +577,7 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
       {(localError || imports.error || clients.error || accounts.error || snapshots.error || profileError) ? <ErrorBanner message={localError || imports.error || clients.error || accounts.error || snapshots.error || profileError} /> : null}
 
       {!embedded ? <SectionNav items={[{ id: "statement-upload", label: "上传文件" }, { id: "statement-records", label: "导入记录" }, { id: "statement-review", label: "财务复核" }]} /> : null}
-      <Panel id="statement-upload" title={embedded ? title : "上传eMPF文件"} subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
+      <Panel id="statement-upload" step={guided ? "第1步 · 上传原件" : undefined} title={embedded ? title : "上传eMPF文件"} subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
           <UploadCloud size={32} />
           <div><strong>选择客人账单、余额页面或供款凭证</strong><span>先在本机分类并执行OCR；非余额文件不会生成历史结余</span></div>
@@ -575,22 +586,20 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
         </form>
       </Panel>
 
-      <Panel title="AI大模型辅助识别" className="ai-assistant-panel">
-        <div className="ai-assistant-strip">
-          <div className="ai-assistant-icon"><BrainCircuit /></div>
-          <div className="ai-assistant-copy">
-            <strong>Sol 单模型复核</strong>
-            <span>{assistantLoading ? "正在检查ChatGPT登录状态..." : assistantReady ? "ChatGPT订阅已登录 · Sol可用" : assistant?.message || "尚未登录或Sol当前不可用，请到“数据与系统”处理"}</span>
+      <section aria-label="AI辅助识别" className="ai-assistant-compact">
+          <BrainCircuit size={20} aria-hidden="true" />
+          <div className="ai-assistant-summary">
+            <h2>AI辅助识别</h2>
+            <p>{assistantLoading ? "正在检查ChatGPT登录状态..." : assistantReady ? "Sol已就绪 · 识别后仅列出待核对异常" : assistant?.message || "尚未登录或Sol当前不可用，请到“数据与系统”处理"}</p>
           </div>
           <StatusBadge value={assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} />
           <button className="secondary" type="button" disabled={!selected || !assistantReady || statementWriteBusy || Boolean(selected?.ai_recognition) || selected?.status === "CONFIRMED"} onClick={() => void runSol()}>
             <Sparkles size={15} />{recognizing ? "Sol识别中..." : selected?.ai_recognition ? "Sol识别已完成" : "运行Sol辅助识别"}
           </button>
-        </div>
-      </Panel>
+      </section>
 
       <div className="import-layout">
-        <Panel id="statement-records" title="导入记录" className="import-list-panel">
+        <Panel id="statement-records" step={guided ? "第2步 · 选择导入记录" : undefined} title="导入记录" className="import-list-panel">
           <div className="list-search"><Field label="搜索导入文件"><input type="search" value={importSearch} onChange={(event) => setImportSearch(event.target.value)} placeholder="文件名称…" /></Field><Field label="复核状态"><select value={importStatus} onChange={(event) => setImportStatus(event.target.value)}><option value="">全部记录</option><option value="NEEDS_REVIEW">待复核</option><option value="CONFIRMED">已入账</option></select></Field></div>
           {imports.loading ? <Loading /> : filteredImports.length ? <div className="import-list">{importPages.rows.map((item) => {
             const type = String(item.extracted?.document_type || "unknown");
@@ -608,7 +617,7 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
           {selected ? <><div className="document-open"><a className="text-link" href={`/api/statement-imports/${selected.id}/file`} target="_blank" rel="noreferrer">打开原件 ↗</a><small>预览未显示时，可直接打开文件查看。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <iframe className="document-preview" src={`/api/statement-imports/${selected.id}/file`} title="原始账单预览" sandbox="" />}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
         </Panel>
 
-        <Panel id="statement-review" title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接保存历史结余或资金记录">
+        <Panel id="statement-review" step={guided ? "第3步 · 核对并确认" : undefined} title="识别结果与财务复核" subtitle="AI只提供待确认结果，不会直接保存历史结余或资金记录">
           {selected ? selected.status === "CONFIRMED" ? <div className="confirmed-receipt">
             <header><CheckCircle2 /><div><strong>该账单已经复核并生成历史结余</strong><span>原始账单、人工确认值、账户和历史结余均已关联保留</span></div>{confirmedAccount ? <StatusBadge value={confirmedAccount.status} /> : null}</header>
             <div className="confirmed-trace-grid">
@@ -638,51 +647,35 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
             {visibleWarnings(selected.ai_recognition?.warnings).length ? <div className="warning-list ai-warning-list">{visibleWarnings(selected.ai_recognition?.warnings).map((warning, index) => <p key={index}>Sol：{warning}</p>)}</div> : null}
             {selected.ai_recognition?.status?.toUpperCase() === "FAILED" ? <div className="ai-failure"><TriangleAlert size={17} /><span>Sol识别失败：{selected.ai_recognition.error || "未返回有效结果"}。不会切换其他模型，请直接人工复核。</span></div> : null}
 
-            {recognized ? <div className="ai-comparison">
-              <div className="ai-comparison-heading">
-                <div><strong>本地OCR与Sol逐字段比较</strong><span>{reviewIssueCount ? `${reviewIssueCount}项差异或校验问题必须人工确认` : "当前字段全部一致，仍需财务最终确认"}</span></div>
-                <StatusBadge value={aiNeedsReview ? "NEEDS_REVIEW" : "MATCHED"} />
-              </div>
-              <div className="ai-comparison-table">
-                <div className="ai-comparison-row header"><span>字段</span><span>本地OCR</span><span>Sol</span><span>结果 / 选择</span></div>
-                {comparisonRows.map(({ field, conflict }) => {
-                  const local = value(selected, field.key);
-                  const sol = aiValue(selected, field.key);
-                  const bothMissing = !local && !sol;
-                  return <div className={`ai-comparison-row ${conflict ? "conflict" : "match"}`} key={field.key}>
-                    <strong>{field.label}</strong>
-                    <span>{field.key === "as_of_date" && local ? formatDate(local) : local || "未识别"}</span>
-                    <span>{field.key === "as_of_date" && sol ? formatDate(sol) : sol || "未识别"}</span>
-                    <div>{conflict ? <><b><TriangleAlert size={13} />冲突</b>{field.editable ? <span className="comparison-actions"><button type="button" onClick={() => chooseValue(field.editable!, "local")}>采用本地</button><button type="button" onClick={() => chooseValue(field.editable!, "ai")}>采用Sol</button></span> : null}</> : <b className={bothMissing ? "missing" : "agree"}>{bothMissing ? "均未识别" : "一致"}</b>}</div>
-                  </div>;
-                })}
-              </div>
-              {reviewIssueCount ? <div className="ai-review-register">
-                <div className="ai-review-register-heading"><strong>完整人工复核清单</strong><span>{reviewIssueCount}项 · 逐项核对识别差异</span></div>
-                <div className="ai-review-register-row header"><span>字段 / 检查</span><span>本地OCR</span><span>Sol</span><span>复核原因</span></div>
-                {reviewIssues.map((issue) => {
-                  const ocrText = issueDisplayValue(issue.ocrValue, issue.field);
-                  const aiText = issueDisplayValue(issue.aiValue, issue.field);
-                  return <div className="ai-review-register-row" key={issue.id}>
-                    <div><strong>{issue.label}</strong></div>
-                    <span title={ocrText}>{ocrText}</span>
-                    <span title={aiText}>{aiText}</span>
-                    <div><b>{issue.reasons.join(" / ")}</b>{issue.detail ? <small>{issue.detail}</small> : null}</div>
-                  </div>;
-                })}
-              </div> : null}
-            </div> : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} /><span>尚未运行Sol。本地OCR结果仍可由财务人工复核；运行Sol前请确认可以将此账单发送至OpenAI。</span></div>}
+            {reviewIssueCount ? <section className="ai-review-summary" aria-label="待核对异常">
+              <header><h3>待核对异常 · {reviewIssueCount}项</h3><p>一致字段已隐藏；以下问题请逐项对照原件核对。</p></header>
+              <ul className="ai-review-issues">{reviewIssues.map((issue) => {
+                const editable = comparisonFields.find((field) => field.key === issue.field)?.editable;
+                const local = value(selected, issue.field);
+                const sol = aiValue(selected, issue.field);
+                return <li key={issue.id}>
+                  <div><h4>{issue.label}</h4><p className="ai-issue-reasons">{issue.reasons.join(" / ")}</p>{issue.detail ? <p>{issue.detail}</p> : null}</div>
+                  <dl><div><dt>本地OCR</dt><dd>{issueDisplayValue(issue.ocrValue, issue.field)}</dd></div><div><dt>Sol</dt><dd>{issueDisplayValue(issue.aiValue, issue.field)}</dd></div></dl>
+                  {editable && (local || sol) ? <div className="ai-issue-actions">
+                    {local ? <button type="button" disabled={statementWriteBusy} onClick={() => chooseValue(editable, "local")}>采用本地</button> : null}
+                    {sol ? <button type="button" disabled={statementWriteBusy} onClick={() => chooseValue(editable, "ai")}>采用Sol</button> : null}
+                  </div> : null}
+                </li>;
+              })}</ul>
+            </section> : recognized ? <div className="ai-review-clear" role="status"><CheckCircle2 size={18} aria-hidden="true" /><span>未发现待核对异常，一致字段已隐藏；请核对下方资料后确认。</span></div>
+              : selected.ai_recognition ? null : <div className="ai-not-run"><BrainCircuit size={18} aria-hidden="true" /><span>尚未运行Sol。本地OCR结果仍可由财务人工复核；运行Sol前请确认可以将此账单发送至OpenAI。</span></div>}
 
             <Field group label="客户归属" hint="同一位客户的不同账户归在同一个客户档案下；新增子账户时，请先选择已有客户。">
               <SearchableSelect label="选择已有客户" name="client_id" value={selectedClientId}
                 disabled={statementWriteBusy || clients.loading || Boolean(clients.error)}
                 onChange={(id) => { setSelectedClientId(id); setSelectedAccountId(""); }}
                 placeholder="新客户 / 尚未选择已有客户" searchPlaceholder="搜索客户姓名、FC、联系方式或账户…"
-                options={clients.data.filter((item) => item.status !== "CLOSED").map((item) => ({ value: String(item.id),
-                  label: clientIdentityLabel(item, clients.data, accounts.data) }))} />
+                options={clientOptions} searchOptions={findClients} />
+              <small>打开列表时按下方复核姓名的文字相似度排序；也可输入姓名、FC、联系方式或账户搜索。请结合原件明确选择客户。</small>
               {selectedClient ? <small>本次账户归属：{clientIdentityLabel(selectedClient, clients.data, accounts.data)}。新账户沿用该客户档案，收费计划仍按子账户分配。</small>
                 : needsClientSelection ? <small role="alert">发现{matchingClients.length}个同名客户档案，请先选择已有客户，再为他新增子账户。若确为不同的人，请先在“客户与账户”建立独立档案。</small> : null}
             </Field>
+            {clientNameMismatch ? <p className="client-name-mismatch" role="alert">复核姓名“{reviewValues.client_name || "未填写"}”与所选客户“{selectedClient?.name}”不一致。若确认是同一人，请手工修正下方Client Name；客户选择已保留，修正后重新核对账户。</p> : null}
             <Field group label="匹配已有Sub Account" hint="账户已经登记时选择原账户；属于已有客户的新账户，选择上方客户后保留此项为空。"><SearchableSelect label="匹配已有账户" name="account_id" value={selectedAccountId}
               disabled={!selectedClient || statementWriteBusy || accounts.loading || Boolean(accounts.error)}
               onChange={setSelectedAccountId}
@@ -702,8 +695,8 @@ export default function ImportsPage({ notify, embedded = false, onConfirmed, tit
               disabled={statementWriteBusy || profileLoading || Boolean(profileError)} /> : null}
             <div className="readonly-grid"><span><small>累计净供款（仅参考）</small><b>{value(selected, "lifetime_net_contributions") || "未识别"}</b></span><span><small>累计投资盈亏（仅参考）</small><b>{value(selected, "lifetime_gain_loss") || "未识别"}</b></span></div>
             {reviewIssueCount > 0 ? <label className="conflict-acknowledgement"><input type="checkbox" checked={conflictsAcknowledged} onChange={(event) => setConflictsAcknowledged(event.target.checked)} /><span><strong>我已人工核对完整清单中的{reviewIssueCount}项差异与校验问题</strong><small>包含账户资料、单边识别、关键字段不确定或缺失及余额校验。</small></span></label> : null}
-            <button className="primary" type="submit" disabled={statementWriteBusy || clients.loading || accounts.loading || Boolean(clients.error || accounts.error) || needsClientSelection || needsAccountSelection || (needsProfile && (profileLoading || Boolean(profileError))) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成历史结余" : "确认并生成历史结余"}</button>
-          </form> : <EmptyState title="等待选择" detail="选择左侧记录后，在此核对识别字段。" />}
+            <button className="primary" type="submit" disabled={statementWriteBusy || clients.loading || accounts.loading || Boolean(clients.error || accounts.error) || needsClientSelection || clientNameMismatch || needsAccountSelection || (needsProfile && (profileLoading || Boolean(profileError))) || (usesSolBalanceClassification && !solDocumentTypeReviewed)}>{reviewing ? "处理中..." : reviewIssueCount ? "人工复核完成并生成历史结余" : "确认并生成历史结余"}</button>
+          </form> : <EmptyState title="等待选择" detail="从导入记录选择文件后，在此核对识别字段。" />}
         </Panel>
       </div>
     </>

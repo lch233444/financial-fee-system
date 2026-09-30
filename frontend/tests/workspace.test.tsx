@@ -19,7 +19,7 @@ test("客户查询分页及状态筛选重置页码，与新增确认入口分�
   fireEvent.change(screen.getByRole("combobox", { name: "客户状态" }), { target: { value: "CLOSED" } });
   expect(within(directory).getByText("客户24")).toBeTruthy();
   expect(within(directory).queryByRole("button", { name: "下一页" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
   expect(screen.queryByRole("region", { name: "客户与账户清单" })).toBeNull();
   expect(screen.getByRole("textbox", { name: "Client Name", exact: true })).toBeTruthy();
 

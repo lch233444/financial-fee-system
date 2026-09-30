@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
 import { api } from "../api";
-import { ErrorBanner, Field, Loading, Money, PageHeader } from "../components";
+import { ErrorBanner, Field, Loading, Money, PageHeader, SectionNav, WorkflowSection } from "../components";
 import SearchableSelect from "../SearchableSelect";
 
 type Dashboard = {
@@ -40,15 +40,20 @@ export default function DashboardPage() {
   }, [quarter, year]);
 
   return (
-    <>
-      <PageHeader title="经营概览" subtitle="掌握服务费、收款进度与客户管理情况。" />
+    <div className="workflow-page dashboard-workflow">
+      <PageHeader title="经营概览" subtitle="先选统计期间，再核对经营数据，按需要进入对应页面处理。" />
+      <SectionNav items={[{ id: "dashboard-period", label: "1 选择期间" }, { id: "dashboard-summary", label: "2 查看概况" }, { id: "dashboard-next", label: "3 前往处理" }]} />
+      <div className="workflow-intro"><strong>从所选期间开始查看经营情况</strong>首次建账先准备基础资料，再建立客户与账户；日常查询按下方步骤查看。<a className="text-link" href="#/setup">前往基础设置</a></div>
 
+      <WorkflowSection id="dashboard-period" title="第1步 · 选择统计期间" description="选择年度及全年或季度；年份需点击候选确认，仅输入搜索文字不会改变统计期间。">
       <div className="dashboard-period">
         <div className="settlement-controls dashboard-period-controls">
           <Field group label="统计年度"><SearchableSelect label="统计年度" required value={String(year)} onChange={(value) => setYear(Number(value))} options={years.map((value) => ({ value: String(value), label: `${value}年` }))} optionLimit={years.length} centerSelectedOnOpen searchPlaceholder="输入年份搜索" /></Field>
           <Field label="统计季度"><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">全年 · 全部季度</option><option value="1">Q1 · 第一季度</option><option value="2">Q2 · 第二季度</option><option value="3">Q3 · 第三季度</option><option value="4">Q4 · 第四季度</option></select></Field>
         </div>
       </div>
+      </WorkflowSection>
+      <WorkflowSection id="dashboard-summary" title="第2步 · 查看本期概况" description={`当前期间：${year}年${quarter ? `第${quarter}季度` : "全年"}。核对服务费、已收、未收及逾期情况；点击在管客户数字可查看对应期间客户。`}>
       {error ? <ErrorBanner message={error} /> : null}
       {!dashboard && !error ? <Loading /> : null}
       {dashboard ? <><div className="stats-grid dashboard-stats">
@@ -61,6 +66,15 @@ export default function DashboardPage() {
 
       {dashboard.accounts_with_incomplete_management_dates > 0 ? <p role="status">有{dashboard.accounts_with_incomplete_management_dates}个账户缺少完整管理日期，未纳入期间统计；请在客户与账户中补齐后核对。</p> : null}
       </> : null}
-    </>
+      </WorkflowSection>
+      <WorkflowSection id="dashboard-next" title="第3步 · 按需要前往处理" description="选择与本次任务对应的入口。客户查询会带入本页年季；其他页面进入后仍需选择并核对客户、期间或账单。">
+        <div className="workflow-links">
+          <a href={`#/clients?year=${year}${quarter ? `&quarter=${quarter}` : ""}`}><strong>查看本期客户与账户</strong><span>核对在管客户及管理日期；新增客户使用该页的新增入口。</span></a>
+          <a href="#/settlements"><strong>计算本季收费</strong><span>先备齐结余、资金记录和凭证，再计算并人工复核锁定。</span></a>
+          <a href="#/invoices"><strong>出具客户账单</strong><span>核对已锁定来源及收款公司，再正式出具缴费单。</span></a>
+          <a href="#/payments"><strong>处理收款与凭证</strong><span>按账单核对收款、查看已付款凭证，或处理错单更正。</span></a>
+        </div>
+      </WorkflowSection>
+    </div>
   );
 }

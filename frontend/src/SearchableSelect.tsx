@@ -11,11 +11,12 @@ export function matchesSearch(text: string, query: string) {
 export default function SearchableSelect({
   label, value, onChange, options, name, required = false, disabled = false,
   placeholder = "请选择", searchPlaceholder = "输入客户名称搜索…",
-  optionLimit = 100, centerSelectedOnOpen = false,
+  optionLimit = 100, centerSelectedOnOpen = false, searchOptions,
 }: {
   label: string; value: string; onChange: (value: string) => void; options: Option[];
   name?: string; required?: boolean; disabled?: boolean; placeholder?: string; searchPlaceholder?: string;
   optionLimit?: number; centerSelectedOnOpen?: boolean;
+  searchOptions?: (query: string) => Option[];
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -26,7 +27,7 @@ export default function SearchableSelect({
   const [active, setActive] = useState(-1);
   const [position, setPosition] = useState({ top: 0, left: 0, width: 0, maxHeight: 280 });
   const selected = options.find((option) => option.value === value);
-  const matches = useMemo(() => options.filter((option) => matchesSearch(option.label, query)), [options, query]);
+  const matches = useMemo(() => searchOptions ? searchOptions(query) : options.filter((option) => matchesSearch(option.label, query)), [options, query, searchOptions]);
   // Limit rendered options while allowing a focused name search over the complete list.
   const visible = matches.slice(0, optionLimit);
 

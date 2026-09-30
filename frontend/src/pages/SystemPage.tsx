@@ -16,7 +16,7 @@ import {
   startAiAssistantLogin,
   withFinancialSystemRequestHeader,
 } from "../api";
-import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, SectionNav } from "../components";
+import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, SectionNav, WorkflowSection } from "../components";
 import type { AiAssistantStatus } from "../types";
 import { SOL_MODEL_ID } from "../types";
 
@@ -196,13 +196,22 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   if (!info && !error) return <Loading />;
   const assistantReady = assistant?.status === "ready";
   return (
-    <>
+    <div className="workflow-page system-workflow">
       <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整数据包交接" />
-      <SectionNav items={[{ id: "system-backup", label: "导出数据包" }, { id: "system-restore", label: "导入数据包" }, { id: "system-assistant", label: "Sol登录" }]} />
+      <SectionNav items={[{ id: "system-location", label: "1 核对本机" }, { id: "system-tasks", label: "2 选择操作" }, { id: "system-assistant", label: "按需 · 辅助识别" }]} />
+      <div className="workflow-intro"><strong>先核对当前数据位置，再办理本次任务</strong>导出供交接或保留完整资料；导入用于接收同版本数据包并整体覆盖。两者按需要选择，辅助识别登录单独办理。</div>
       {error ? <ErrorBanner message={error} /> : null}
+      <WorkflowSection id="system-location" title="第1步 · 核对本机数据与运行状态" description="先确认正在使用的业务数据位置及模板状态；具体数据库和模板路径可按需展开查看。">
       {info ? <><div className="system-grid"><article><FolderLock aria-hidden="true" /><span><small>业务数据保存位置</small><strong>{info.data_root}</strong></span></article><article><DatabaseBackup aria-hidden="true" /><span><small>运行范围与导出模板</small><strong>{info.local_only ? "仅本机运行" : "请检查网络配置"} · {info.template_exists ? "Excel模板已就绪" : "Excel模板未找到"}</strong></span></article></div><details className="technical-details"><summary>查看数据库与模板位置</summary><div><p><HardDrive size={16} aria-hidden="true" /><span><strong>数据库</strong>{info.database_path}</span></p><p><ArchiveRestore size={16} aria-hidden="true" /><span><strong>Excel模板</strong>{info.template_path}</span></p></div></details></> : null}
+      </WorkflowSection>
+      <WorkflowSection id="system-tasks" title="第2步 · 选择本次数据操作" description="导出和导入是两个独立用途，按本次需要选择；不是必须依次执行的步骤。">
+      <div className="split-layout">
+        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} aria-hidden="true" /><ol className="workflow-outline"><li>选择本次检查年度和季度。</li><li>生成并下载完整ZIP数据包。</li><li>保管原包，供同版本系统复核或恢复。</li></ol><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel id="system-restore" step="导入路径 · 接收并整体覆盖" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} aria-hidden="true" /><ol className="workflow-outline"><li>确认双方版本一致；本机有需保留资料时，先导出现状数据包。</li><li>选择ZIP，阅读整体覆盖提示后确认校验。</li><li>等待系统安全退出，重新启动完成导入并逐项复核。</li></ol><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><Field label="选择完整数据包ZIP"><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /></Field><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
+      </div>
+      </WorkflowSection>
 
-      <Panel id="system-assistant" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI API Key">
+      <Panel id="system-assistant" step="按需使用 · 登录后返回导入页" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI API Key">
         <div className="assistant-settings">
           <div className="assistant-settings-main">
             <div className="assistant-settings-icon"><BrainCircuit /></div>
@@ -222,13 +231,10 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
             <button className="ghost" type="button" disabled={assistantWorking} onClick={() => void refreshAssistant(true)}><RefreshCw size={15} />刷新状态</button>
             {assistant?.authenticated ? <button className="danger" type="button" disabled={assistantWorking} onClick={() => void logout()}><LogOut size={15} />退出ChatGPT Pro</button> : <button className="primary" type="button" disabled={assistantWorking || assistantLoading || assistant?.available === false} onClick={() => void login()}><LogIn size={15} />{assistantWorking ? "正在启动登录..." : "登录ChatGPT Pro"}</button>}
           </div>
+          <p className="workflow-next">{assistantReady ? "当前识别已就绪。前往客户与账户的新增客户，或资金与余额的导入季度结余，上传原件后主动运行Sol并人工复核。" : "需要Sol辅助识别时，先登录并刷新确认就绪；未就绪时仍可人工复核。识别结果须人工确认才能入账。"}</p>
+          <div className="workflow-link-actions"><a className="text-link" href="#/clients">前往客户与账户</a><a className="text-link" href="#/transactions">前往资金与余额</a></div>
         </div>
       </Panel>
-
-      <div className="split-layout">
-        <Panel id="system-backup" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} /><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
-        <Panel id="system-restore" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} /><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
-      </div>
-    </>
+    </div>
   );
 }

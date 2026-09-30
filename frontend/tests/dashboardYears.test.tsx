@@ -46,4 +46,9 @@ test("在管数字链接保留年度季度并移除原客户总览，全年不�
   expect(screen.queryByRole("heading", { name: "客户总览" })).toBeNull();
   fireEvent.change(screen.getByLabelText("统计季度"), { target: { value: "2" } });
   expect((await screen.findByRole("link", { name: "查看2026年第2季度在管客户：0位" })).getAttribute("href")).toBe("#/clients?year=2026&quarter=2");
+  expect(screen.getByRole("link", { name: /查看本期客户与账户/ }).getAttribute("href")).toBe("#/clients?year=2026&quarter=2");
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  fireEvent.click(screen.getByRole("button", { name: "3 前往处理" }));
+  expect(document.activeElement?.id).toBe("dashboard-next");
+  expect((screen.getByLabelText("统计季度") as HTMLSelectElement).value).toBe("2");
 });

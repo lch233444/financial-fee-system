@@ -59,9 +59,15 @@ describe("保存成功后立即更新页面", () => {
     const notify = vi.fn();
     render(<SetupPage notify={notify} />);
     await screen.findByText("原公司");
-    fireEvent.click(screen.getByRole("button", { name: tab, exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: ({ Company: "收款公司 Company", FC: "中介人 FC", Platform: "投资平台 Platform", "Fee Plan": "收费计划 Fee Plan" } as Record<string, string>)[tab], exact: true }));
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: "2 查询已有" }));
+    fireEvent.click(screen.getByRole("button", { name: "3 补建资料" }));
+    expect(document.activeElement?.id).toBe("setup-create");
+    expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe(values.name);
+    expect(db.requests).toHaveLength(0);
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());
     const panel = screen.getByRole("heading", { name: title }).closest("section")!;
@@ -82,7 +88,7 @@ describe("保存成功后立即更新页面", () => {
   ])("$button：列表和依赖选项同时更新", async ({ button, path, values, text }) => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
     await screen.findByRole("option", { name: "原FC" });
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);

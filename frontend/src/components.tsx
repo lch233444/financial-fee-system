@@ -13,12 +13,13 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle: strin
   );
 }
 
-export function Panel({ title, subtitle, children, className = "", id }: PropsWithChildren<{ title: string; subtitle?: string; className?: string; id?: string }>) {
+export function Panel({ title, subtitle, children, className = "", id, step }: PropsWithChildren<{ title: string; subtitle?: string; className?: string; id?: string; step?: string }>) {
   const titleId = useId();
   return (
     <section className={`panel ${className}`} id={id} aria-labelledby={titleId} tabIndex={id ? -1 : undefined}>
       <div className="panel-heading">
         <div>
+          {step ? <span className="workflow-step-label">{step}</span> : null}
           <h2 id={titleId}>{title}</h2>
           {subtitle ? <p>{subtitle}</p> : null}
         </div>
@@ -26,6 +27,19 @@ export function Panel({ title, subtitle, children, className = "", id }: PropsWi
       {children}
     </section>
   );
+}
+
+/** Visible task instructions, not a claim that a financial action has completed. */
+export function WorkflowStep({ number, title, detail }: { number: number; title: string; detail?: string }) {
+  return <div className="workflow-step"><span className="workflow-step-label">第{number}步</span><div><h3>{title}</h3>{detail ? <p>{detail}</p> : null}</div></div>;
+}
+
+export function WorkflowSection({ id, title, description, children }: PropsWithChildren<{ id: string; title: string; description: string }>) {
+  const titleId = useId();
+  return <section className="workflow-section" id={id} aria-labelledby={titleId} tabIndex={-1}>
+    <header className="workflow-section-heading"><h2 id={titleId}>{title}</h2><p>{description}</p></header>
+    {children}
+  </section>;
 }
 
 export function Field({ label, hint, children, group = false }: PropsWithChildren<{ label: string; hint?: string; group?: boolean }>) {

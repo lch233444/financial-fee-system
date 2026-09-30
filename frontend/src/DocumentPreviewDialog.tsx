@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Download, X } from "lucide-react";
 import { fetchBlob } from "./api";
 import { ErrorBanner, Loading } from "./components";
+import ZoomableImage from "./ZoomableImage";
 
 export type PreviewDocument = { path: string; title: string; filename?: string; label?: string };
 
@@ -43,7 +44,7 @@ export default function DocumentPreviewDialog({ document: initialSource, documen
     </header>
     {documents && documents.length > 1 ? <nav className="proof-document-list" aria-label="原始凭证列表">{documents.map((item, index) => <button className="ghost" type="button" key={item.path} aria-pressed={item.path === source.path} onClick={() => setSelectedPath(item.path)}>{item.label || item.filename || `凭证 ${index + 1}`}</button>)}</nav> : null}
     {error ? <ErrorBanner message={error} /> : !preview ? <Loading /> : <div className="payment-proof-preview">
-      {/^image\/(png|jpeg)$/.test(preview.type) ? <img src={preview.url} alt={source.title} />
+      {/^image\/(png|jpeg)$/.test(preview.type) ? <ZoomableImage key={preview.url} src={preview.url} alt={source.title} />
         : preview.type === "application/pdf" ? <object data={`${preview.url}#toolbar=0`} type="application/pdf" aria-label={`${source.title} PDF`}><p>浏览器暂不能显示此PDF。{source.filename ? "请使用下载按钮查看。" : "请使用支持PDF预览的浏览器查看。"}</p></object>
         : <p>此文件格式暂不支持弹窗预览。{source.filename ? "请使用下载按钮查看。" : ""}</p>}
     </div>}

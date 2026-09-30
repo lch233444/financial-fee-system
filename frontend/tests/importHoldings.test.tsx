@@ -56,7 +56,8 @@ test("历史持仓差异不阻断新确认，提交仅保存结余及身份资�
   expect(submitted[0]).not.toHaveProperty("holdings_difference_reason");
   expect(submitted[0]).not.toHaveProperty("eligible_for_closing");
   expect(submitted[0]).toMatchObject({ total_balance: "1000.00", as_of_date: "2026-06-30" });
-  expect(screen.getAllByText("2026年06月30日").length).toBeGreaterThan(0);
+  expect((screen.getByLabelText(/^As-of Date/) as HTMLInputElement).value).toBe("2026-06-30");
+  expect(screen.queryByRole("region", { name: "待核对异常" })).toBeNull();
 });
 
 test("余额差异仍须独立人工确认，切换文件会清空确认", async () => {
@@ -87,6 +88,7 @@ test("嵌入模式保留上传及复核流程并隐藏独立页导航", async ()
 test("识别失败后仍能明确人工复核并提交本地候选", async () => {
   const submitted = mockImports({ recognitionFailed: true });
   const save = await openFirst();
+  expect(screen.getByRole("region", { name: "待核对异常" }).textContent).toContain("服务端要求人工复核");
   fireEvent.click(save);
   expect(submitted).toHaveLength(0);
   fireEvent.click(screen.getByRole("checkbox", { name: /我已人工核对完整清单/ }));

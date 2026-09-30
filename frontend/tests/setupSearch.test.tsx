@@ -29,7 +29,7 @@ test("基础资料搜索的结果和空状态一致，切换类别时清空上�
   fireEvent.change(company.getByRole("searchbox", { name: "搜索Company" }), { target: { value: "missing" } });
   expect(company.getByText("没有匹配项")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "FC", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "中介人 FC", exact: true }));
   const fc = within(screen.getByRole("region", { name: "现有FC" }));
   await fc.findByText("Tony Wu");
   expect((fc.getByRole("searchbox", { name: "搜索FC" }) as HTMLInputElement).value).toBe("");
@@ -37,7 +37,7 @@ test("基础资料搜索的结果和空状态一致，切换类别时清空上�
   expect(fc.queryByText("Tony Wu")).toBeNull();
   expect(fc.getByText("Alice Lee")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "Platform", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "投资平台 Platform", exact: true }));
   const platform = within(screen.getByRole("region", { name: "现有Platform" }));
   await platform.findByText("Alpha Platform");
   expect((platform.getByRole("searchbox", { name: "搜索Platform" }) as HTMLInputElement).value).toBe("");
@@ -45,7 +45,7 @@ test("基础资料搜索的结果和空状态一致，切换类别时清空上�
   expect(platform.queryByText("Alpha Platform")).toBeNull();
   expect(platform.getByText("Beta Platform")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "Fee Plan", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "收费计划 Fee Plan", exact: true }));
   const plan = within(screen.getByRole("region", { name: "现有Fee Plan" }));
   await plan.findByText("Alpha Plan");
   expect((plan.getByRole("searchbox", { name: "搜索Fee Plan" }) as HTMLInputElement).value).toBe("");

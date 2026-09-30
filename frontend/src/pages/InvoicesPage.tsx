@@ -6,7 +6,7 @@ import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CheckCircle2, FileDown, FilePlus2, ReceiptText, RotateCcw } from "lucide-react";
 import { api, download, patchJson, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, SectionNav, Pagination } from "../components";
+import { EmptyState, ErrorBanner, Field, Loading, Money, PageHeader, Panel, StatusBadge, SectionNav, Pagination, WorkflowSection, WorkflowStep } from "../components";
 import { accountOverlapsQuarter } from "../settlementWorkspace";
 import { todayIso, useApiList, usePagination } from "../hooks";
 import { settlementSourcesFollowOriginal } from "../invoiceSources";
@@ -750,12 +750,50 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
     }
   }
 
+  const nextAction = !selected ? "先建立新Draft，或从账单清单选择已有记录。"
+    : !correctionContextReady ? "正在核对更正记录和结算来源；请等待读取完成或处理页面错误。"
+    : selectedCorrection?.status === "OPEN" || pendingReplacementCorrection ? "当前有待完成更正，请在下方“错单更正与记录”继续处理替代账单及资金关联。"
+    : selected.lifecycle_status === "VOID" ? "本单已作废，保留原编号及历史。需要重新出具时，按实际情况建立新Draft或继续更正流程。"
+    : selected.lifecycle_status === "ISSUING" ? "本单出具曾中断，请在账单出具页面核对归档后恢复，或退回Draft。"
+    : selected.lifecycle_status === "DRAFT" ? "当前为草稿。核对客户、收款公司、完整账户费用后，在账单出具第3步填写日期并正式出具。"
+    : mode === "issue" ? "本单已正式出具，可在第3步下载归档PDF，再前往收款情况登记付款或查看凭证。"
+    : selected.payment_status === "PAID" ? "本单已付清。第3步可查看付款及退款凭证；发生错单时使用更正流程。"
+    : hasIncompleteHistoricalFunds ? "本单已有历史资金但未完整结清，请先人工核对台账，不能追加或部分付款。"
+    : "核对本单应付金额后，在第3步填写实际现金、公司差额和付款凭证，确认已付款。";
+
   return (
-    <>
-      <PageHeader title={mode === "issue" ? "账单出具" : "收款情况"} subtitle="各子账户独立算费，同一客户同一季度跨平台、跨收费计划合并一张缴费单" />
-      <SectionNav items={[{ id: "invoice-directory", label: "账单清单" }, ...(mode === "issue" ? [{ id: "invoice-create", label: "建立账单" }] : []), { id: "invoice-detail", label: "选中账单" }, { id: "invoice-corrections", label: "更正记录" }]} />
+    <div className="workflow-page invoice-workflow">
+      <PageHeader title={mode === "issue" ? "账单出具" : "收款情况"} subtitle={mode === "issue" ? "建立或选择客户季度账单，核对完整来源与收款公司，再正式出具。" : "先找到账单，核对金额与状态，再登记收款或查看已付款凭证。"} />
+      <SectionNav items={[{ id: "invoice-start", label: mode === "issue" ? "1 建立或选择" : "1 找到账单" }, { id: "invoice-detail", label: "2 核对明细" }, { id: "invoice-action", label: mode === "issue" ? "3 正式出具" : "3 收款与凭证" }, { id: "invoice-correction-workflow", label: "更正与记录" }]} />
+      <div className="workflow-intro"><strong>{mode === "issue" ? "开始前：完成该客户本季度所需结算的锁定" : "开始前：确认账单已正式出具，并备齐本次付款凭证"}</strong>{mode === "issue" ? "同客户同季度跨平台、跨收费计划合并一张缴费单。新建前核对账户是否齐全；已有账单直接从清单进入第2步。" : "实际现金与公司承担差额必须精确结清本单；有差额须填写原因。已付款直接查看凭证，错单使用下方更正流程。"}</div>
       {error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error ? <ErrorBanner message={error || invoices.error || settlements.error || corrections.error || accounts.error || companies.error || plans.error} /> : null}
-      <Panel id="invoice-directory" title={mode === "issue" ? "账单清单" : "付款账单清单"} subtitle="先找到账单，再确认付款或查看凭证；计划筛选匹配整张账单，应付金额保持完整。">
+      <WorkflowSection id="invoice-start" title={mode === "issue" ? "第1步 · 建立或选择账单" : "第1步 · 找到账单"} description={mode === "issue" ? "新账单先选择已锁定的客户季度组合；已有账单可直接从清单选择，继续核对。" : "按客户、编号或期间找到已出具账单；点击编号核对明细，已付款可直接查看凭证。"}>
+        {mode === "issue" ? <Panel id="invoice-create" title="建立Invoice Draft" subtitle="汇总客户同季度已确认的账户收费；跨平台、跨收费计划合并出具一张缴费单">
+          <form className="form-grid" onSubmit={(e) => void createDraft(e)}>
+            <h3 className="workflow-form-heading">选择客户季度与收款公司</h3>
+            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoiceMutationBusy || invoices.loading || settlements.loading || accounts.loading || Boolean(accounts.error) || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={(value) => { setCandidateKey(value); setPayeeCompanyId(""); }} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
+            <div className="workflow-fields">
+            <Field label="本次账单收款公司" hint={selectedCandidate?.payeeCompanyId ? "更正账单沿用已确定的收款公司" : "请按客户本次要求选择；出具前核对公司名称及收款信息"}>
+              <select name="payee_company_id" required value={selectedCandidate?.payeeCompanyId ?? payeeCompanyId} onChange={(event) => setPayeeCompanyId(event.target.value)} disabled={invoiceMutationBusy || companies.loading || !selectedCandidate || selectedCandidate.payeeCompanyId != null}>
+                <option value="" disabled>请选择收款公司</option>
+                {companies.data.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+              </select>
+            </Field>
+            <Field label="默认PDF语言"><select name="language" defaultValue="zh"><option value="zh">中文</option><option value="en">English</option></select></Field>
+            </div>
+            {candidateState.lateSettlementGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.lateSettlementGroupCount} 个客户季度已有有效Invoice，但后来又出现未纳入的Settlement。迟到Settlement需先更正或作废原Invoice后重开，系统不会建立第二张有效季度Invoice。</div> : null}
+            {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
+            <h3 className="workflow-form-heading">核对全部账户来源及金额</h3>
+            {selectedCandidate ? <div className="invoice-group-preview">
+              <header><div><strong>{selectedCandidate.clientName} · {selectedCandidate.year} Q{selectedCandidate.quarter}</strong><span>{selectedCandidate.payeeCompanyId ? selectedCandidate.companyName : companies.data.find((company) => company.id === Number(payeeCompanyId))?.name ?? "请选择收款公司"} · {selectedCandidate.fcName} · {selectedCandidate.feePlanName}</span></div><div><small>{selectedCandidate.sourceCount}份Settlement</small><Money value={moneyFromCents(selectedCandidate.totalCents)} emphasis /></div></header>
+              {selectedCandidate.pendingAccounts.length ? <div className="invoice-candidate-warning" role="status"><strong>仍有 {selectedCandidate.pendingAccounts.length} 个本季Active账户未纳入本单：</strong><ul>{selectedCandidate.pendingAccounts.map((label) => <li key={label}>{label}</li>)}</ul>请先到账单计算核对并Finalize所需账户；当前金额仅包含下列已锁定来源。</div> : null}
+              <AccountLineTable lines={selectedCandidate.accountLines} />
+            </div> : invoices.loading || settlements.loading ? <Loading /> : candidateState.candidates.length ? null : <EmptyState title="暂无可建立的客户季度Invoice" detail="需要同组Finalized Settlement的锁定Service Fee合计大于0，且冻结FC一致。" />}
+            <p className="workflow-next">建立Draft后，在第2步核对本单明细，再到第3步正式出具并生成编号。</p>
+            <button className="primary" type="submit" disabled={invoiceMutationBusy || accounts.loading || Boolean(accounts.error) || companies.loading || Boolean(companies.error) || !selectedCandidate || !(selectedCandidate.payeeCompanyId ?? payeeCompanyId)}><FilePlus2 size={17} />{draftAction.pending ? "正在建立…" : "建立Draft"}</button>
+          </form>
+        </Panel> : null}
+      <Panel id="invoice-directory" title={mode === "issue" ? "账单清单" : "付款账单清单"} subtitle={mode === "issue" ? "已有账单从这里选择，进入第2步核对明细；新账单使用上方建立入口。计划筛选匹配整张账单，金额保持完整。" : "点击编号进入第2步；未付款可继续登记，已付款可直接查看凭证。计划筛选匹配整张账单，金额保持完整。"}>
         <div className="invoice-list-filters">
           <Field label="搜索Invoice客户或编号"><input type="search" disabled={invoiceMutationBusy} value={invoiceSearch} onChange={(event) => changeFilter(setInvoiceSearch, event.target.value)} placeholder="输入客户名称或账单编号…" /></Field>
           <Field label="账单年度"><select disabled={invoiceMutationBusy} value={filterYear} onChange={(event) => changeFilter(setFilterYear, event.target.value)}><option value="">全部年度</option>{invoiceYears.map((value) => <option key={value} value={value}>{value}年</option>)}</select></Field>
@@ -787,59 +825,54 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
         <Pagination {...invoicePages} />
       </Panel>
 
+      </WorkflowSection>
+
       {proofInvoice ? <PaymentEvidenceDialog key={proofInvoice.id} invoice={proofInvoice} corrections={corrections.data} onClose={() => setProofInvoiceId(null)} /> : null}
 
-      <div className={mode === "issue" ? "split-layout invoices-top" : "invoices-top"}>
-        {mode === "issue" ? <Panel id="invoice-create" title="建立Invoice Draft" subtitle="汇总客户同季度已确认的账户收费；跨平台、跨收费计划合并出具一张缴费单">
-          <form className="form-grid" onSubmit={(e) => void createDraft(e)}>
-            <Field group label="客户季度Invoice组合"><SearchableSelect label="客户季度Invoice组合" name="candidate_key" required disabled={invoiceMutationBusy || invoices.loading || settlements.loading || accounts.loading || Boolean(accounts.error) || !candidateState.candidates.length} value={selectedCandidate?.key ?? ""} onChange={(value) => { setCandidateKey(value); setPayeeCompanyId(""); }} options={candidateState.candidates.map((candidate) => ({ value: candidate.key, label: `${candidate.clientName} · ${candidate.year} Q${candidate.quarter} · ${candidate.feePlanName} · ${candidate.sourceCount}份Settlement · HKD ${moneyFromCents(candidate.totalCents)}` }))} /></Field>
-            <Field label="本次账单收款公司" hint={selectedCandidate?.payeeCompanyId ? "更正账单沿用已确定的收款公司" : "请按客户本次要求选择；出具前核对公司名称及收款信息"}>
-              <select name="payee_company_id" required value={selectedCandidate?.payeeCompanyId ?? payeeCompanyId} onChange={(event) => setPayeeCompanyId(event.target.value)} disabled={invoiceMutationBusy || companies.loading || !selectedCandidate || selectedCandidate.payeeCompanyId != null}>
-                <option value="" disabled>请选择收款公司</option>
-                {companies.data.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-              </select>
-            </Field>
-            <Field label="默认PDF语言"><select name="language" defaultValue="zh"><option value="zh">中文</option><option value="en">English</option></select></Field>
-            {candidateState.lateSettlementGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.lateSettlementGroupCount} 个客户季度已有有效Invoice，但后来又出现未纳入的Settlement。迟到Settlement需先更正或作废原Invoice后重开，系统不会建立第二张有效季度Invoice。</div> : null}
-            {candidateState.ownershipMismatchGroupCount ? <div className="invoice-candidate-warning">有 {candidateState.ownershipMismatchGroupCount} 个组合的冻结FC缺失或不一致，已从候选中排除；请先处理Settlement归属。</div> : null}
-            {selectedCandidate ? <div className="invoice-group-preview">
-              <header><div><strong>{selectedCandidate.clientName} · {selectedCandidate.year} Q{selectedCandidate.quarter}</strong><span>{selectedCandidate.payeeCompanyId ? selectedCandidate.companyName : companies.data.find((company) => company.id === Number(payeeCompanyId))?.name ?? "请选择收款公司"} · {selectedCandidate.fcName} · {selectedCandidate.feePlanName}</span></div><div><small>{selectedCandidate.sourceCount}份Settlement</small><Money value={moneyFromCents(selectedCandidate.totalCents)} emphasis /></div></header>
-              {selectedCandidate.pendingAccounts.length ? <div className="invoice-candidate-warning" role="status"><strong>仍有 {selectedCandidate.pendingAccounts.length} 个本季Active账户未纳入本单：</strong><ul>{selectedCandidate.pendingAccounts.map((label) => <li key={label}>{label}</li>)}</ul>请先到账单计算核对并Finalize所需账户；当前金额仅包含下列已锁定来源。</div> : null}
-              <AccountLineTable lines={selectedCandidate.accountLines} />
-            </div> : invoices.loading || settlements.loading ? <Loading /> : candidateState.candidates.length ? null : <EmptyState title="暂无可建立的客户季度Invoice" detail="需要同组Finalized Settlement的锁定Service Fee合计大于0，且冻结FC一致。" />}
-            <button className="primary" type="submit" disabled={invoiceMutationBusy || accounts.loading || Boolean(accounts.error) || companies.loading || Boolean(companies.error) || !selectedCandidate || !(selectedCandidate.payeeCompanyId ?? payeeCompanyId)}><FilePlus2 size={17} />{draftAction.pending ? "正在建立…" : "建立Draft"}</button>
-          </form>
-        </Panel> : null}
-        <Panel id="invoice-detail" title="选中Invoice">
-          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name || "未识别Client"} · {selected.company_name || "未识别Company"} · {selected.year} Q{selected.quarter} · {selected.fee_plan_name || "未识别Fee Plan"}</span></div><InvoiceLifecycleBadge invoice={selected} /><InvoiceHistoryLinks invoice={selected} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>计入本单现金 <Money value={selected.paid_amount} /></span><span>公司差额 <Money value={selected.adjustment_amount} /></span><span>未结 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} />{selected.is_overdue ? <span className="status status-overdue">已逾期</span> : null}</div>{selected.payments.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap compact-table payment-ledger"><table><thead><tr><th>Payment</th><th>Date / Method</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>{selected.payments.map((payment) => <tr key={payment.id}><td>#{payment.id}</td><td>{formatDate(payment.payment_date)}<small className="cell-note">{payment.method}</small></td><td><Money value={payment.amount} /></td><td><a className="text-link" href={`/api/attachments/${payment.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${payment.id}付款凭证`}>查看付款凭证</a></td></tr>)}</tbody></table></div> : null}<Field group label="账户明细客户"><SearchableSelect label="查看账单账户的客户" value={filterClientId} disabled={invoiceMutationBusy} onChange={(value) => { setFilterClientId(value); setProofInvoiceId(null); }} placeholder="搜索并选定本单客户后显示账户" options={clientOptions} /></Field>{filterClientId === String(selected.client_id) ? <AccountLineTable lines={selected.account_lines} /> : <EmptyState title="请先搜索并选定本单客户" detail="账户明细在选定对应客户后显示；账单金额及归档文件保持完整。" />}</div> : <EmptyState title="尚未选择Invoice" detail="从上方清单选择账单，查看明细并办理收款。" />}
-        </Panel>
-      </div>
 
+        <Panel id="invoice-detail" step="第2步 · 核对当前账单" title="选中Invoice">
+          {selected ? <div className="workflow-current"><strong>当前：{selected.invoice_number || `Draft #${selected.id}`} · {selected.client_name} · {selected.year} Q{selected.quarter}</strong><p>{nextAction}</p></div> : null}
+          {selected ? <div className="invoice-summary"><header><ReceiptText /><div><strong>{selected.invoice_number || `Draft #${selected.id}`}</strong><span>{selected.client_name || "未识别Client"} · {selected.company_name || "未识别Company"} · {selected.year} Q{selected.quarter} · {selected.fee_plan_name || "未识别Fee Plan"}</span></div><InvoiceLifecycleBadge invoice={selected} /><InvoiceHistoryLinks invoice={selected} /></header><div className="invoice-source-summary"><span><small>Settlement来源</small><strong>{selected.source_count} 份</strong></span><span><small>账户收费明细</small><strong>{selected.account_lines.length} 行</strong></span></div><div className="invoice-amount"><small>Service Fee合计</small><Money value={selected.amount} emphasis /></div><div className="invoice-balance"><span>计入本单现金 <Money value={selected.paid_amount} /></span><span>公司差额 <Money value={selected.adjustment_amount} /></span><span>未结 <Money value={selected.outstanding_amount} /></span><StatusBadge value={selected.payment_status} />{selected.is_overdue ? <span className="status status-overdue">已逾期</span> : null}</div>{selected.payments.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap compact-table payment-ledger"><table><thead><tr><th>Payment</th><th>Date / Method</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>{selected.payments.map((payment) => <tr key={payment.id}><td>#{payment.id}</td><td>{formatDate(payment.payment_date)}<small className="cell-note">{payment.method}</small></td><td><Money value={payment.amount} /></td><td><a className="text-link" href={`/api/attachments/${payment.proof_attachment_id}/file`} target="_blank" rel="noreferrer" aria-label={`查看Payment #${payment.id}付款凭证`}>查看付款凭证</a></td></tr>)}</tbody></table></div> : null}<Field group label="账户明细客户"><SearchableSelect label="查看账单账户的客户" value={filterClientId} disabled={invoiceMutationBusy} onChange={(value) => { setFilterClientId(value); setProofInvoiceId(null); }} placeholder="搜索并选定本单客户后显示账户" options={clientOptions} /></Field>{filterClientId === String(selected.client_id) ? <AccountLineTable lines={selected.account_lines} /> : <EmptyState title="请先搜索并选定本单客户" detail="账户明细在选定对应客户后显示；账单金额及归档文件保持完整。" />}</div> : <EmptyState title="尚未选择Invoice" detail={mode === "issue" ? "从第1步建立或选择账单，核对明细后到第3步正式出具。" : "从第1步选择账单，核对明细后到第3步登记付款或查看凭证。"} />}
+        </Panel>
+
+      <WorkflowSection id="invoice-action" title={mode === "issue" ? "第3步 · 正式出具或查看归档" : "第3步 · 登记付款或查看凭证"} description={mode === "issue" ? "核对第2步的客户、期间、公司和逐行费用，再办理当前状态对应的操作。" : "付款前核对本单金额、实际现金、公司差额及凭证；已经付清的账单直接查阅记录。"}>
+      {!selected ? <EmptyState title="先选择并核对账单" detail="完成第1、2步后，这里显示当前账单可办理的操作。" /> : null}
+      {mode === "payment" && (selected?.lifecycle_status === "DRAFT" || selected?.lifecycle_status === "ISSUING") ? <p className="workflow-next">该账单尚未正式出具。<a className="text-link" href={`#/invoices/${selected.id}`}>前往账单出具处理</a></p> : null}
       {mode === "issue" && selected?.lifecycle_status === "DRAFT" ? <Panel title="正式出具" subtitle="编号为公司全名-中介人英文姓名各词首字母-出具年月及三位流水，例如香港智石科技有限公司-TW-202609002。各公司及中介人共用当月流水，次月从001开始，预留号码不复用。"><form key={selected.id} className="inline-form" onSubmit={(e) => void issue(e)}><Field label="Issue Date"><input name="issue_date" type="date" defaultValue={todayIso()} required disabled={invoiceMutationBusy} /></Field><Field label="Due Date" hint="留空则采用Company默认天数"><input name="due_date" type="date" disabled={invoiceMutationBusy} /></Field><Field label="Language"><select name="language" defaultValue={selected.language} disabled={invoiceMutationBusy}><option value="zh">中文</option><option value="en">English</option></select></Field><button className="primary" type="submit" disabled={invoiceMutationBusy}>{issueBusy ? "正在出具..." : "Issued并分配编号"}</button><button className="danger" type="button" disabled={invoiceMutationBusy} onClick={() => void voidInvoice()}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "作废Draft"}</button></form><small className="cell-note">请先核对：Company全名为“{selected.company_name || "未识别"}”，中介人为“{selected.fc_name || "未识别"}”，Fee Plan为“{selected.fee_plan_name || "未识别"}”，并逐行核对Platform、Sub Account及当前Scheme。若Draft建立后同组Settlement发生变化，服务端会拒绝漏项签发。</small></Panel> : null}
       {mode === "issue" && selected?.lifecycle_status === "ISSUING" ? <Panel title="恢复出具中的Invoice" subtitle="系统在预留编号后曾中断。请依据归档文件完整性完成签发，或退回Draft重新出具；已预留编号永久保留且不会复用。"><div className="invoice-recovery"><div><strong>{!selected.issue_recovery ? "恢复状态尚未就绪" : selected.issue_recovery.files_complete ? "中英文归档文件完整" : "归档文件不完整"}</strong><span>{!selected.issue_recovery ? "请刷新Invoice清单；恢复状态可用前不会开放任何操作。" : selected.issue_recovery.files_complete ? "可以完成签发，也可以退回Draft重新核对。" : "不能直接完成签发，请退回Draft后重新生成两份归档PDF。"}</span></div><div className="invoice-actions"><button className="primary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_complete} onClick={() => void recoverIssuing("COMPLETE")}><CheckCircle2 size={17} />{recoveryBusy === "COMPLETE" ? "正在核验..." : "完成签发"}</button><button className="secondary" type="button" disabled={Boolean(recoveryBusy) || !selected.issue_recovery?.can_return_to_draft} onClick={() => void recoverIssuing("RETURN_TO_DRAFT")}><RotateCcw size={17} />{recoveryBusy === "RETURN_TO_DRAFT" ? "正在退回..." : "退回Draft"}</button></div></div></Panel> : null}
-      {selected?.lifecycle_status === "ISSUED" ? <Panel id="invoice-payment" title={mode === "issue" ? "账单PDF与更正" : "付款确认与更正"} subtitle="新付款只允许一次完整确认；实际现金与人工确认的公司承担差额必须精确结清Invoice，付款凭证是硬前置。">
+      {selected?.lifecycle_status === "ISSUED" ? <Panel id="invoice-payment" title={mode === "issue" ? "账单PDF与更正" : "付款确认与更正"} subtitle={mode === "issue" ? "本单已正式出具，可下载中英文归档PDF；登记付款或查看付款凭证，请前往收款情况。" : selected.payment_status === "PAID" ? "本单已结清，可查看原始付款及相关退款凭证；如需修正账单，请使用更正流程。" : "新付款只允许一次完整确认；实际现金与人工确认的公司承担差额必须精确结清Invoice，付款凭证是硬前置。"}>
+        <div className="workflow-current"><strong>本次账单：{selected.invoice_number} · {selected.client_name}</strong><p>应付 <Money value={selected.amount} /> · 已计现金 <Money value={selected.paid_amount} /> · 公司差额 <Money value={selected.adjustment_amount} /></p></div>
+        {mode === "payment" && selected.payment_status === "PAID" ? <div className="invoice-actions"><button className="primary" type="button" disabled={invoiceMutationBusy || !correctionContextReady} onClick={() => setProofInvoiceId(selected.id)}>查看本单付款凭证</button></div> : null}
         <div className="invoice-actions"><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />中文PDF</button><button className="secondary" type="button" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />English PDF</button><button className="danger" type="button" aria-expanded={showCorrection} onClick={() => { setEditingCorrection(null); setShowCorrection((value) => !value); }} disabled={invoiceMutationBusy || !correctionContextReady || Boolean(selectedOriginalCorrection) || Boolean(pendingReplacementCorrection) || hasIncompleteHistoricalFunds} title={selectedOriginalCorrection ? "该Invoice已经作为原单发起过更正" : pendingReplacementCorrection ? `请先完成Invoice更正 #${pendingReplacementCorrection.id}` : hasIncompleteHistoricalFunds ? "历史资金台账未完整平账，必须先人工核对" : undefined}><RotateCcw size={17} />{correctionBusy ? "更正处理中..." : "更正账单"}</button>{!selected.payments.length && !selectedCorrection ? <button className="ghost" type="button" onClick={() => void voidInvoice()} disabled={invoiceMutationBusy || !correctionContextReady}><Ban size={17} />{invoiceVoidBusy ? "作废处理中..." : "直接作废（无替代）"}</button> : null}</div>
         {mode === "issue" ? <a className="text-link" href={`#/payments/${selected.id}`}>前往收款情况，登记付款或查看凭证</a> : !correctionContextReady ? <div className="invoice-candidate-warning pending-replacement-warning">更正记录或Settlement版本链尚未读取完成，付款、更正和直接作废暂时停用；请等待读取完成或处理上方错误。</div> : pendingReplacementCorrection ? <div className="invoice-candidate-warning pending-replacement-warning">该Invoice已通过更正 #{pendingReplacementCorrection.id} 的来源校验，是待关联替代单。完成上一更正前不得登记新Payment或再次发起更正；如替代单有误且尚无资金，可直接作废后重建。</div> : selected.payment_status === "UNPAID" && !selected.payments.length ? <form key={selected.id} className="inline-form payment-confirmation-form" onSubmit={(e) => void addPayment(e)}>
+          <h3 className="workflow-form-heading">填写收款金额与日期</h3>
           <Field label="Payment Date"><input name="payment_date" type="date" defaultValue={todayIso()} required disabled={paymentBusy} /></Field>
           <Field label="实际现金 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={paymentBusy} /></Field>
           <Field label="公司承担差额 (HKD)" hint={`实际现金＋差额必须等于 HKD ${selected.amount}`}><input name="company_difference" type="number" min="0" step="0.01" value={paymentDifference} onChange={(event) => setPaymentDifference(event.target.value)} required disabled={paymentBusy} /></Field>
           {moneyToCents(paymentDifference) > 0 ? <Field label="差额原因" hint="差额大于0时必填"><input name="difference_reason" maxLength={500} required disabled={paymentBusy} /></Field> : null}
           <Field label="Method"><select name="method" defaultValue="BANK_TRANSFER" disabled={paymentBusy}><option value="BANK_TRANSFER">Bank Transfer</option><option value="CHEQUE">Cheque</option><option value="OTHER">Other</option></select></Field>
+          <h3 className="workflow-form-heading">附上凭证并最终确认</h3>
           <Field label="付款凭证"><input name="proof" type="file" accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required disabled={paymentBusy} /></Field>
           <Field label="Remark"><input name="remark" disabled={paymentBusy} /></Field>
+          <p className="workflow-next">保存前核对：实际现金＋公司差额＝本单应付金额，付款凭证对应本次收款。成功后在已付款记录中查看凭证；不得重复登记。</p>
           <button className="primary" type="submit" disabled={invoiceMutationBusy}>{paymentBusy ? "正在核验并锁定..." : "确认已付款"}</button>
         </form> : <div className="invoice-candidate-warning">{selected.payment_status === "PAID" ? "该Invoice已结清。Payment、现金分配、公司差额及凭证均已锁定；如发生错单，请使用受控更正流程。" : "该Invoice已有历史资金台账但未完整结清，不能追加或部分付款；请先人工核对台账。"}</div>}
       </Panel> : null}
-      {showCorrection && selected ? <Panel title={editingCorrection ? "调整本次更正" : "更正账单"} subtitle="在同一处选择收款公司及是否重新核算；提交时重新核对收款和结算状态。">
+      {selected?.lifecycle_status === "VOID" ? <Panel title="作废Invoice档案" subtitle={`作废原因：${selected.void_reason || "未记录"}`}>{selected.invoice_number ? <div className="invoice-actions"><button className="secondary" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />原中文PDF</button><button className="secondary" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />Original English PDF</button></div> : <EmptyState title="Draft在签发前已作废" detail="该记录未分配Invoice编号，因此没有正式归档PDF。" />}</Panel> : null}
+      </WorkflowSection>
+
+      <WorkflowSection id="invoice-correction-workflow" title="错单更正与记录" description="发现错单时使用：确认更正内容 → 核对并出具替代账单 → 处理留存及退款、完成关联。日常开单和正常收款无需重复此流程。">
+      {showCorrection && selected ? <Panel step="更正第1步 · 确认内容与影响" title={editingCorrection ? "调整本次更正" : "更正账单"} subtitle="在同一处选择收款公司及是否重新核算；提交时重新核对收款和结算状态。">
         {companies.error ? <ErrorBanner message={companies.error} /> : null}
         <InvoiceCorrectionForm key={`${selected.id}:${editingCorrection?.revision_no ?? "new"}`} original={selected}
           correction={editingCorrection} companies={companies.data}
           busy={invoiceMutationBusy || companies.loading || Boolean(companies.error) || !correctionContextReady}
           onSubmit={(choice) => void saveCorrection(choice)} onCancel={() => setShowCorrection(false)} />
       </Panel> : null}
-      {selected?.lifecycle_status === "VOID" ? <Panel title="作废Invoice档案" subtitle={`作废原因：${selected.void_reason || "未记录"}`}>{selected.invoice_number ? <div className="invoice-actions"><button className="secondary" onClick={() => void downloadInvoicePdf("zh")}><FileDown size={17} />原中文PDF</button><button className="secondary" onClick={() => void downloadInvoicePdf("en")}><FileDown size={17} />Original English PDF</button></div> : <EmptyState title="Draft在签发前已作废" detail="该记录未分配Invoice编号，因此没有正式归档PDF。" />}</Panel> : null}
+
 
       {selectedCorrection ? <Panel title={`Invoice更正 #${selectedCorrection.id}`} subtitle={`${selectedOriginalCorrection ? "当前Invoice作为本轮原单" : "当前Invoice作为上一轮替代单"} · 状态：${selectedCorrection.status === "OPEN" ? "处理中" : "已完成"} · 原因：${selectedCorrection.reason}`}>
+        {selectedCorrection.status === "OPEN" ? <WorkflowStep number={2} title="核对来源并出具替代账单" detail={selectedCorrection.recalculate_settlements ? "先按版本链完成结算作废、重建和锁定，再建立并签发替代账单。" : "保留原结算及金额，核对新的收款公司后建立并签发替代账单。"} /> : <div className="workflow-current"><strong>本轮更正已完成</strong><p>核对下方替代关系、现金分配及退款记录；无需重复办理。</p></div>}
         {selectedOriginalCorrection && selectedReplacementCorrection ? <div className="correction-continuity">连续更正：当前Invoice曾是更正 #{selectedReplacementCorrection.id} 的替代单，现在又是更正 #{selectedOriginalCorrection.id} 的原单；两轮关系均保留。</div> : null}
         <div className="correction-continuity">收款公司：{selectedCorrection.original_company_name}{selectedCorrection.target_company_id != null ? ` → ${selectedCorrection.target_company_name}` : "（保持不变）"}。
           {selectedCorrection.recalculate_settlements ? "需要按版本链重新核算费用／结算来源。" : "保留原结算和金额，无需重新核算。"}
@@ -856,6 +889,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
           <b>→</b>
           <span><small>替代Invoice</small><strong>{selectedCorrection.replacement_invoice?.invoice_number || "等待建立并出具"}</strong>{selectedCorrection.replacement_invoice ? <InvoiceLifecycleBadge invoice={selectedCorrection.replacement_invoice} /> : null}</span>
         </div>
+        {selectedCorrection.status === "OPEN" ? <WorkflowStep number={3} title="核对留存、退款并完成关联" detail="替代账单正式出具后，到收款情况完成本轮更正；有退款须附上对应凭证，无现金也须完成旧新账单关联。" /> : null}
         {selectedCorrection.status === "OPEN" && mode === "issue" ? <a className="text-link" href={`#/payments/${selectedCorrection.original_invoice.id}`}>前往收款情况完成更正及资金关联</a> : selectedCorrection.status === "OPEN" ? <form className="correction-form" onSubmit={(event) => void completeCorrection(event, selectedCorrection)}>
           <Field label="替代Invoice"><select name="replacement_invoice_id" required value={replacementInvoiceId} onChange={(event) => setReplacementInvoiceId(event.target.value)} disabled={correctionBusy || !replacementCandidates.length}><option value="" disabled>{!selectedCorrection.recalculate_settlements ? "请选择新收款公司的Issued替代Invoice" : "请选择通过完整Settlement版本链校验的同组Issued Invoice"}</option>{replacementCandidates.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number || `Invoice #${invoice.id}`} · HKD {invoice.amount}</option>)}</select></Field>
           {!replacementCandidates.length ? <div className="invoice-candidate-warning">{!selectedCorrection.recalculate_settlements ? "点击上方建立或查看替代账单，核对新公司并签发后，回到本更正记录完成关联；原Settlement保持不变。" : "请先在Settlement页按版本链作废并重建全部相关Settlement，再建立并出具空白替代Invoice。已有资金、差额、其他更正占用或版本链不完整的Invoice不会出现在候选中。"}</div> : null}
@@ -903,6 +937,7 @@ export default function InvoicesPage({ notify, mode = "issue" }: { notify: (mess
       <Panel id="invoice-corrections" title="Invoice更正清单" subtitle="OPEN记录可直接进入原Invoice完成更正；连续更正的每一轮独立保留，不需要手工输入Correction或Payment ID。">{corrections.loading ? <Loading /> : corrections.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>Correction</th><th>原Invoice</th><th>替代Invoice</th><th>现金处理</th><th>Status</th><th>操作</th></tr></thead><tbody>{corrections.data.map((correction) => <tr key={correction.id}><td>#{correction.id}<small className="cell-note">{formatDate(correction.opened_at)}</small></td><td>{correction.original_invoice.invoice_number || `#${correction.original_invoice.id}`}</td><td>{correction.replacement_invoice?.invoice_number || "等待替代单"}</td><td>{correction.payments.length}笔可处置Payment<small className="cell-note">{correction.refunds.length}笔退款 · {correction.adjustments.length}笔差额</small></td><td><span className={`status ${correction.status === "OPEN" ? "status-draft" : "status-confirmed"}`}>{correction.status === "OPEN" ? "处理中" : "已完成"}</span></td><td><button className="ghost correction-open-button" type="button" disabled={invoiceMutationBusy} onClick={() => showInvoice(correction.original_invoice.id)}>{correction.status === "OPEN" ? "继续处理" : "查看记录"}</button></td></tr>)}</tbody></table></div> : <EmptyState title="暂无Invoice更正" detail="只有受控错单更正会出现在这里。" />}</Panel>
 
 
-    </>
+      </WorkflowSection>
+    </div>
   );
 }

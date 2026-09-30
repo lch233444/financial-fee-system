@@ -4,6 +4,7 @@ import InvoicesPage from "../src/pages/InvoicesPage";
 import { todayIso } from "../src/hooks";
 
 test("切换Draft重置签发日期、到期日期和语言，仅向当前账单提交当前表单", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const draft = {
     id: 1, invoice_number: null, client_id: 1, client_name: "合成客户A",
     company_id: 1, company_name: "合成公司A", payee_company_id: 1, fc_id: 1, fc_name: "合成FC",
@@ -28,6 +29,14 @@ test("切换Draft重置签发日期、到期日期和语言，仅向当前账单
   fireEvent.change(formA.getByLabelText("Issue Date"), { target: { value: "2026-01-15" } });
   fireEvent.change(formA.getByLabelText(/^Due Date/), { target: { value: "2026-01-30" } });
   fireEvent.change(formA.getByLabelText("Language"), { target: { value: "zh" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "2 核对明细" }));
+  fireEvent.click(screen.getByRole("button", { name: "3 正式出具" }));
+  expect(document.activeElement?.id).toBe("invoice-action");
+  expect((formA.getByLabelText("Issue Date") as HTMLInputElement).value).toBe("2026-01-15");
+  expect((formA.getByLabelText(/^Due Date/) as HTMLInputElement).value).toBe("2026-01-30");
+  expect((formA.getByLabelText("Language") as HTMLSelectElement).value).toBe("zh");
+  expect(posts).toHaveLength(0);
 
   fireEvent.click(screen.getByRole("button", { name: "查看Draft #2" }));
   const formB = within(screen.getByRole("region", { name: "正式出具" }));

@@ -1,4 +1,7 @@
 @import "./styles/workflows.css";
+@import "./styles/page-workflow.css";
+@import "./styles/import-review.css";
+@import "./styles/image-preview.css";
 
 /* Financial workspace: one palette, one type scale, one spacing rhythm. */
 :root {

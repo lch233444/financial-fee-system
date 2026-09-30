@@ -66,7 +66,7 @@ test("新账户遇同名档案必须明确客户归属，提交客户ID并刷新
   expect(onConfirmed).toHaveBeenCalledOnce();
 });
 
-test("切换原件或修改客户姓名清空旧客户选择", async () => {
+test("切换原件清空客户选择，手工改名保留所选客户但姓名不一致时阻止确认", async () => {
   setup();
   await openFirst();
   chooseCustomer(11);
@@ -74,7 +74,9 @@ test("切换原件或修改客户姓名清空旧客户选择", async () => {
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toBe("");
   chooseCustomer(12);
   fireEvent.change(screen.getByRole("textbox", { name: /^Client Name/ }), { target: { value: "ANOTHER PERSON" } });
-  expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toBe("");
+  expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toContain("EXISTING-12");
+  expect(screen.getByRole("alert").textContent).toContain("复核姓名");
+  expect((screen.getByRole("button", { name: /生成历史结余/ }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 test("先选客户才可匹配已有账户，切换客户清空账户并只显示其账户", async () => {

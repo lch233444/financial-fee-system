@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import InvoicesPage from "../src/pages/InvoicesPage";
+import { loadPreviewImage, mockImagePreviewLayout } from "./imagePreviewFixtures";
 
 const base = {
   id: 1, invoice_number: "MIXED-001", client_id: 1, client_name: "客户甲", fc_id: 1, fc_name: "同名FC",
@@ -11,7 +12,8 @@ const base = {
   adjustments: [{ id: 1, amount: "20.00", reason: "公司承担计算差额" }],
   payments: [{ id: 8, payment_date: "2026-04-12", method: "BANK_TRANSFER", amount: "280.00", original_amount: "320.00", original_invoice_id: 9, proof_attachment_id: 77 }],
 };
-function setup({ fileError = false, unpaid = false, separateUnpaidClient = false } = {}) {
+function setup({ fileError = false, unpaid = false, separateUnpaidClient = false, refundImage = false } = {}) {
+  mockImagePreviewLayout();
   const paid = { ...base, ...(unpaid ? { payment_status: "UNPAID", paid_amount: "0.00", adjustment_amount: "0.00", outstanding_amount: "300.00", payments: [], adjustments: [] } : {}) };
   const invoices = [paid,
     { ...base, id: 2, invoice_number: "ONLY30", fee_plan_id: 30, fee_plan_ids: [30] },
@@ -33,7 +35,7 @@ function setup({ fileError = false, unpaid = false, separateUnpaidClient = false
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("/attachments/") && path.endsWith("/file")) return fileError
       ? new Response(JSON.stringify({ detail: "凭证原文件不存在" }), { status: 404 })
-      : new Response("synthetic", { headers: { "Content-Type": path.includes("78") ? "application/pdf" : "image/png" } });
+      : new Response("synthetic", { headers: { "Content-Type": path.includes("78") ? refundImage ? "image/jpeg" : "application/pdf" : "image/png" } });
     if (init?.method === "POST") {
       writes.push({ path, body: init.body instanceof FormData ? Object.fromEntries(init.body) : JSON.parse(init.body as string) });
       if (path === "/api/attachments") return new Response(JSON.stringify({ id: 77 }));
@@ -81,16 +83,40 @@ test("已付款按钮只打开凭证弹窗，保留原收款、转配、退款�
   trigger.focus(); fireEvent.click(trigger);
   const modal = within(screen.getByRole("dialog", { name: "已付款 · 付款凭证" }));
   expect(await modal.findByRole("img", { name: "付款凭证 #77" })).toBeTruthy();
+  loadPreviewImage(modal.getByRole("img"));
+  fireEvent.click(modal.getByRole("button", { name: "放大图片" }));
+  expect(modal.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("125%");
   expect(modal.getByText("公司承担计算差额", { exact: false })).toBeTruthy();
   expect(modal.getByText(/原账单 #9/)).toBeTruthy();
   fireEvent.click(modal.getByText(/更正 #1/));
   fireEvent.click(modal.getByRole("button", { name: "查看退款凭证 #1" }));
   await waitFor(() => expect(modal.getByLabelText("付款凭证 PDF #78")).toBeTruthy());
+  expect(modal.queryByRole("group", { name: "图片缩放" })).toBeNull();
   expect(writes).toHaveLength(0);
   fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.activeElement).toBe(trigger);
   expect(revokeUrl).toHaveBeenCalledTimes(2);
+});
+
+test("付款与退款图片共用缩放操作，切换凭证恢复完整显示且不写入财务记录", async () => {
+  const { writes } = setup({ refundImage: true });
+  const trigger = await screen.findByRole("button", { name: "已付款，查看凭证 MIXED-001" });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(trigger);
+  const modal = within(screen.getByRole("dialog", { name: "已付款 · 付款凭证" }));
+  loadPreviewImage(await modal.findByRole("img", { name: "付款凭证 #77" }));
+  fireEvent.click(modal.getByRole("button", { name: "放大图片" }));
+  fireEvent.click(modal.getByText(/更正 #1/));
+  fireEvent.click(modal.getByRole("button", { name: "查看退款凭证 #1" }));
+  loadPreviewImage(await modal.findByRole("img", { name: "付款凭证 #78" }));
+  expect(modal.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("100%");
+  fireEvent.click(modal.getByRole("button", { name: "放大图片" }));
+  expect(modal.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("125%");
+  fireEvent.click(modal.getByRole("button", { name: "查看付款凭证 #8" }));
+  loadPreviewImage(await modal.findByRole("img", { name: "付款凭证 #77" }));
+  expect(modal.getByRole("status", { name: "图片缩放比例" }).textContent).toBe("100%");
+  expect(writes).toHaveLength(0);
 });
 
 test("凭证原件缺失显示错误，不伪装为预览成功", async () => {
@@ -99,6 +125,24 @@ test("凭证原件缺失显示错误，不伪装为预览成功", async () => {
   await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(button);
   expect(await screen.findByText("凭证原文件不存在")).toBeTruthy();
   expect(screen.queryByRole("img", { name: "付款凭证 #77" })).toBeNull();
+});
+
+test("收款第3步按当前账单打开凭证，页内跳转不产生付款写入", async () => {
+  const { writes } = setup();
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
+  fireEvent.click(await screen.findByRole("button", { name: "查看MIXED-001" }));
+  fireEvent.click(screen.getByRole("button", { name: "3 收款与凭证" }));
+  expect(document.activeElement?.id).toBe("invoice-action");
+  const trigger = screen.getByRole("button", { name: "查看本单付款凭证" });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  trigger.focus(); fireEvent.click(trigger);
+  const modal = within(screen.getByRole("dialog", { name: "已付款 · 付款凭证" }));
+  expect(await modal.findByRole("img", { name: "付款凭证 #77" })).toBeTruthy();
+  expect(modal.getByText("MIXED-001 · 客户甲 · 2026 Q1")).toBeTruthy();
+  expect(writes).toHaveLength(0);
+  fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
+  expect(document.activeElement).toBe(trigger);
 });
 
 test("未付款按钮进入确认流程，缺凭证拒绝提交，有凭证才先上传再关联付款", async () => {

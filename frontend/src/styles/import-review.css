@@ -1,0 +1,31 @@
+.ai-assistant-compact { display: flex; align-items: center; gap: 12px; padding: 14px 18px; margin-bottom: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.ai-assistant-compact > svg { color: var(--blue); }
+.ai-assistant-summary { flex: 1; min-width: 0; }
+.ai-assistant-summary h2 { margin: 0; font-size: 15px; color: var(--navy); line-height: 1.5; }
+.ai-assistant-summary p { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.ai-assistant-compact > button { flex-shrink: 0; min-height: 44px; }
+.ai-review-summary { min-width: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.ai-review-summary > header { padding: 14px 16px; background: var(--subtle); }
+.ai-review-summary h3 { margin: 0; font-size: 16px; color: var(--navy); }
+.ai-review-summary p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.ai-review-issues { padding: 0; margin: 0; list-style: none; }
+.ai-review-issues > li { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 2fr) auto; align-items: start; gap: 16px; padding: 14px 16px; border-top: 1px solid var(--line); }
+.ai-review-issues h4 { margin: 0; color: var(--navy); font-size: 14px; overflow-wrap: anywhere; }
+.ai-review-summary .ai-issue-reasons { color: var(--amber); font-weight: 600; }
+.ai-review-issues dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.ai-review-issues dt { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.ai-review-issues dd { margin: 0; color: var(--navy); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ai-issue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ai-issue-actions button { min-height: 44px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--blue); background: var(--surface); font-size: 13px; }
+.ai-issue-actions button:hover { background: var(--subtle); border-color: var(--blue); }
+.ai-review-clear { display: flex; align-items: start; gap: 10px; color: var(--green); font-size: 14px; line-height: 1.6; }
+.client-name-mismatch { margin: 0; padding: 12px 14px; background: var(--subtle); color: var(--red); border-left: 3px solid var(--red); font-size: 14px; line-height: 1.7; }
+@media (max-width: 1100px) {
+  .ai-review-issues > li { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+@media (max-width: 600px) {
+  .ai-assistant-compact { flex-wrap: wrap; gap: 10px; padding: 12px; }
+  .ai-assistant-summary { flex-basis: calc(100% - 40px); }
+  .ai-assistant-compact > button { margin-left: auto; }
+  .ai-review-issues > li { padding: 12px; }
+}

@@ -71,7 +71,7 @@ test("整年继承及路由期间变更生效，导入仅新增区挂载并刷�
   expect(screen.queryByRole("button", { name: "嵌入导入确认" })).toBeNull();
   view.rerender(<ClientsPage notify={vi.fn()} initialYear="2026" initialQuarter="2" />);
   await waitFor(() => expect(screen.queryByText("未来客户")).toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: "新增客户（自动导入）" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增客户" }));
   expect(screen.queryByRole("region", { name: "补全待确认Client" })).toBeNull();
   expect(screen.queryByRole("region", { name: "补全待确认Sub Account" })).toBeNull();
   expect(screen.queryByRole("region", { name: "档案维护" })).toBeNull();

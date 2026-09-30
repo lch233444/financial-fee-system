@@ -1,0 +1,71 @@
+/* Opt-in task hierarchy for pages migrated to numbered, in-page workflows. */
+.workflow-page .panel[id], .workflow-section { scroll-margin-top: 144px; }
+.workflow-page .panel-heading h2 { font-size: 20px; }
+.workflow-page .workflow-tabs { gap: 8px; padding: 6px; }
+.workflow-page .workflow-tabs button { min-height: 48px; font-size: 16px; padding: 10px 24px; }
+.workflow-page .workflow-tabs button.active { background: var(--navy); color: var(--surface); }
+.workflow-page .section-nav button { min-height: 44px; }
+.workflow-intro { margin: 0 0 28px; padding: 18px 22px; border-left: 4px solid var(--blue); background: var(--surface); color: var(--muted); line-height: 1.8; }
+.workflow-intro strong { display: block; color: var(--navy); font-size: 17px; margin-bottom: 4px; }
+.workflow-intro > .text-link { display: inline-block; margin-left: 8px; }
+.workflow-link-actions { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 12px; }
+.workflow-link-actions a { display: inline-flex; align-items: center; min-height: 44px; }
+.workflow-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.workflow-links a { display: grid; gap: 8px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-decoration: none; overflow-wrap: anywhere; }
+.workflow-links a:hover { border-color: var(--blue); }
+.workflow-links strong { color: var(--navy); font-size: 17px; line-height: 1.6; }
+.workflow-links span { color: var(--muted); font-size: 14px; line-height: 1.7; }
+.workflow-section { margin-bottom: 36px; min-width: 0; }
+.workflow-section-heading { margin: 0 0 20px; padding: 0 0 14px; border-bottom: 2px solid var(--line); }
+.workflow-section-heading h2 { margin: 0; color: var(--navy); font-size: 24px; line-height: 1.4; }
+.workflow-section-heading p { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.workflow-step-label { display: inline-block; margin-bottom: 8px; border-radius: 6px; padding: 5px 10px; color: var(--blue); background: var(--subtle); font-size: 13px; font-weight: 700; line-height: 1.5; }
+.workflow-step { display: flex; align-items: flex-start; gap: 14px; margin: 0 24px 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.workflow-step > .workflow-step-label { flex-shrink: 0; margin: 0; }
+.workflow-step h3 { margin: 3px 0 0; color: var(--navy); font-size: 16px; line-height: 1.5; }
+.workflow-step p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.workflow-page .form-grid > .workflow-step { margin: 8px 0 0; }
+.workflow-page .form-grid > .workflow-step:first-child { margin-top: 0; }
+.workflow-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.invoice-workflow .workflow-fields { align-items: start; }
+.workflow-next { margin: 0; padding: 12px 16px; border-left: 3px solid var(--blue); background: var(--subtle); color: var(--muted); font-size: 13px; line-height: 1.7; }
+.workflow-current { margin: 0 24px 20px; padding: 16px 18px; border-left: 4px solid var(--blue); background: var(--subtle); color: var(--navy); overflow-wrap: anywhere; }
+.workflow-current strong { display: block; font-size: 16px; line-height: 1.6; }
+.workflow-current p { margin: 6px 0; font-size: 14px; line-height: 1.7; color: var(--muted); }
+.workflow-form-heading { grid-column: 1 / -1; margin: 6px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--navy); font-size: 16px; line-height: 1.6; }
+.workflow-page .inline-form > .workflow-next { grid-column: 1 / -1; }
+.workflow-page .workflow-next .text-link { display: inline-block; margin-left: 8px; }
+.workflow-page .workflow-section > .empty-state { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.workflow-page .form-grid > button[type="submit"] { justify-self: start; min-width: 180px; min-height: 44px; }
+.workflow-page #balance-import > .workflow-tabs { margin-left: 24px; margin-right: 24px; max-width: calc(100% - 48px); }
+.workflow-embedded { padding: 0 24px 24px; }
+.workflow-outline { margin: 0 0 20px; padding-left: 24px; color: var(--navy); line-height: 1.8; }
+.workflow-outline li + li { margin-top: 8px; }
+.workflow-page .import-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
+.workflow-page #statement-review { grid-column: 1 / -1; }
+.setup-workflow #setup-create .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.setup-workflow .workflow-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
+.setup-workflow .workflow-tabs button { white-space: normal; padding: 10px 12px; }
+.setup-workflow #setup-create .form-grid > .workflow-next,
+.setup-workflow #setup-create .form-grid > button,
+.setup-workflow #setup-create .field:has(textarea) { grid-column: 1 / -1; }
+.system-workflow .backup-action { align-items: stretch; text-align: left; }
+.system-workflow .backup-action > svg { align-self: flex-start; }
+.system-workflow .backup-action input[type="file"] { width: 100%; min-width: 0; }
+.system-workflow .backup-action > .field { width: 100%; }
+.system-workflow .backup-action .workflow-outline { font-size: 14px; }
+
+@media (max-width: 1100px) {
+  .workflow-page .import-layout, .workflow-page .split-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .workflow-current { margin-left: 16px; margin-right: 16px; padding: 12px 14px; }
+  .workflow-fields { grid-template-columns: minmax(0, 1fr); }
+  .workflow-links, .setup-workflow #setup-create .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .setup-workflow .workflow-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workflow-step { margin-left: 16px; margin-right: 16px; gap: 10px; }
+  .workflow-page .workflow-tabs button { padding: 10px 14px; font-size: 15px; }
+  .workflow-page #balance-import > .workflow-tabs { margin-left: 16px; margin-right: 16px; max-width: calc(100% - 32px); }
+  .workflow-embedded { padding: 0 12px 16px; }
+  .workflow-page .form-grid > button[type="submit"] { justify-self: stretch; min-width: 0; }
+}

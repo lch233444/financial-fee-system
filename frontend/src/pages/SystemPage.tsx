@@ -1,3 +1,4 @@
+import { systemMessage } from "../uiText";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArchiveRestore,
@@ -113,7 +114,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   }
 
   async function logout() {
-    const confirmed = window.confirm("退出只会结束金融收费系统专用的Sol登录，不影响Codex桌面应用。之后如需Sol辅助识别，需要重新登录。确定继续吗？");
+    const confirmed = window.confirm("退出只会结束金融收费系统专用的智能辅助登录，不影响Codex桌面应用。之后如需智能辅助识别，需要重新登录。确定继续吗？");
     if (!confirmed) return;
     setAssistantWorking(true);
     setError("");
@@ -158,7 +159,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      notify(`${packageYear} Q${packageQuarter}完整数据包已生成并通过校验`);
+      notify(`${packageYear}年第${packageQuarter}季度完整数据包已生成并通过校验`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "数据包导出失败");
     } finally {
@@ -205,32 +206,32 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       </WorkflowSection>
       <WorkflowSection id="system-tasks" title="第2步 · 选择本次数据操作" description="导出和导入是两个独立用途，按本次需要选择；不是必须依次执行的步骤。">
       <div className="split-layout">
-        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} aria-hidden="true" /><ol className="workflow-outline"><li>选择本次检查年度和季度。</li><li>生成并下载完整ZIP数据包。</li><li>保管原包，供同版本系统复核或恢复。</li></ol><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>Q1</option><option value={2}>Q2</option><option value={3}>Q3</option><option value={4}>Q4</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><DatabaseBackup size={38} aria-hidden="true" /><ol className="workflow-outline"><li>选择本次检查年度和季度。</li><li>生成并下载完整ZIP数据包。</li><li>保管原包，供同版本系统复核或恢复。</li></ol><p>年度和季度只是检查批次标签。数据包始终包含完整数据库、账单原件、附件和导出文件，并逐项校验。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>第一季度</option><option value={2}>第二季度</option><option value={3}>第三季度</option><option value={4}>第四季度</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
         <Panel id="system-restore" step="导入路径 · 接收并整体覆盖" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><ArchiveRestore size={38} aria-hidden="true" /><ol className="workflow-outline"><li>确认双方版本一致；本机有需保留资料时，先导出现状数据包。</li><li>选择ZIP，阅读整体覆盖提示后确认校验。</li><li>等待系统安全退出，重新启动完成导入并逐项复核。</li></ol><p>导入后，本机将显示数据包导出时的完整记录和文件。系统不会把两边资料合并。</p><Field label="选择完整数据包ZIP"><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /></Field><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
       </div>
       </WorkflowSection>
 
-      <Panel id="system-assistant" step="按需使用 · 登录后返回导入页" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI API Key">
+      <Panel id="system-assistant" step="按需使用 · 登录后返回导入页" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI 接口密钥">
         <div className="assistant-settings">
           <div className="assistant-settings-main">
             <div className="assistant-settings-icon"><BrainCircuit /></div>
             <div>
-              <div className="assistant-settings-title"><strong>Sol 单模型模式</strong><StatusBadge value={assistantLoading ? "CHECKING" : assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} /></div>
-              <p>{assistantLoading ? "正在检查系统专用登录状态..." : assistant?.message || (assistantReady ? "系统专用ChatGPT登录已就绪，可以在账单导入页运行Sol识别。" : "当前未连接，请为本系统单独登录ChatGPT。")}</p>
+              <div className="assistant-settings-title"><strong>智能辅助 识别模式</strong><StatusBadge value={assistantLoading ? "CHECKING" : assistantReady ? "READY" : assistant?.status || "UNAVAILABLE"} /></div>
+              <p>{assistantLoading ? "正在检查系统专用登录状态..." : (assistant?.message ? systemMessage(assistant.message) : "") || (assistantReady ? "系统专用ChatGPT登录已就绪，可以在账单导入页运行智能辅助识别。" : "当前未连接，请为本系统单独登录ChatGPT。")}</p>
             </div>
           </div>
           <div className="assistant-facts">
             <span><small>固定模型</small><strong>{SOL_MODEL_ID}</strong></span>
             <span><small>登录方式</small><strong>{assistant?.authenticated ? "ChatGPT订阅已登录" : "尚未登录"}</strong>{assistant?.plan_type ? <em>内部标识：{assistant.plan_type}</em> : null}</span>
             <span><small>登录状态</small><strong>{assistant?.authenticated ? "已登录" : "未登录"}</strong></span>
-            <span><small>Sol可用性</small><strong>{assistant?.model_available === false ? "不可用 · 转人工" : assistantReady ? "可用" : "等待连接"}</strong></span>
+            <span><small>智能辅助可用性</small><strong>{assistant?.model_available === false ? "不可用 · 转人工" : assistantReady ? "可用" : "等待连接"}</strong></span>
           </div>
           {assistant?.user_code ? <div className="device-code"><span>浏览器验证代码</span><strong>{assistant.user_code}</strong></div> : null}
           <div className="assistant-actions">
             <button className="ghost" type="button" disabled={assistantWorking} onClick={() => void refreshAssistant(true)}><RefreshCw size={15} />刷新状态</button>
             {assistant?.authenticated ? <button className="danger" type="button" disabled={assistantWorking} onClick={() => void logout()}><LogOut size={15} />退出ChatGPT Pro</button> : <button className="primary" type="button" disabled={assistantWorking || assistantLoading || assistant?.available === false} onClick={() => void login()}><LogIn size={15} />{assistantWorking ? "正在启动登录..." : "登录ChatGPT Pro"}</button>}
           </div>
-          <p className="workflow-next">{assistantReady ? "当前识别已就绪。前往客户与账户的新增客户，或资金与余额的导入季度结余，上传原件后主动运行Sol并人工复核。" : "需要Sol辅助识别时，先登录并刷新确认就绪；未就绪时仍可人工复核。识别结果须人工确认才能入账。"}</p>
+          <p className="workflow-next">{assistantReady ? "当前识别已就绪。前往客户与账户的新增客户，或资金与余额的导入季度结余，上传原件后主动运行智能辅助并人工复核。" : "需要智能辅助识别时，先登录并刷新确认就绪；未就绪时仍可人工复核。识别结果须人工确认才能入账。"}</p>
           <div className="workflow-link-actions"><a className="text-link" href="#/clients">前往客户与账户</a><a className="text-link" href="#/transactions">前往资金与余额</a></div>
         </div>
       </Panel>

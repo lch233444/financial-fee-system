@@ -26,18 +26,18 @@ test("结算按客户联动平台和计划，切换后不会沿用其他客户�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
   await choose("结算客户", "客户甲");
-  const platform = screen.getByRole("combobox", { name: "Platform", exact: true });
+  const platform = screen.getByRole("combobox", { name: "投资平台", exact: true });
   expect(within(platform).queryByRole("option", { name: "平台乙" })).toBeNull();
   fireEvent.change(platform, { target: { value: "1" } });
-  const plan = screen.getByRole("combobox", { name: "Fee Plan", exact: true });
+  const plan = screen.getByRole("combobox", { name: "收费计划", exact: true });
   expect(within(plan).queryByRole("option", { name: /计划15/ })).toBeNull();
   fireEvent.change(plan, { target: { value: "2" } });
-  expect(screen.getByLabelText("A-10 Original HWM")).toBeTruthy();
-  expect(screen.queryByLabelText("A-20 Original HWM")).toBeNull();
+  expect(screen.getByLabelText("A-10 期初高水位线")).toBeTruthy();
+  expect(screen.queryByLabelText("A-20 期初高水位线")).toBeNull();
   await choose("结算客户", "客户乙");
   expect((platform as HTMLSelectElement).value).toBe("");
   expect((plan as HTMLSelectElement).value).toBe("");
-  expect(screen.queryByLabelText("A-10 Original HWM")).toBeNull();
+  expect(screen.queryByLabelText("A-10 期初高水位线")).toBeNull();
   const overview = screen.getByRole("region", { name: "本季账户组合总览" });
   expect(within(overview).getByText("B-15")).toBeTruthy();
   expect(within(overview).queryByText("A-10")).toBeNull();
@@ -52,10 +52,10 @@ test("流水筛选改变时清除已选账户但保留已输入金额，不能�
   fireEvent.focus(account);
   expect(within(screen.getByRole("listbox")).queryByRole("option", { name: /B-15/ })).toBeNull();
   fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: /A-10/ }));
-  fireEvent.change(form.getByLabelText("金额 (HKD)"), { target: { value: "321.09" } });
+  fireEvent.change(form.getByLabelText("金额（港币）"), { target: { value: "321.09" } });
   await choose("资金与余额客户", "客户乙");
   expect((form.getByRole("combobox", { name: "资金记录账户", exact: true }) as HTMLInputElement).value).toBe("");
-  expect((form.getByLabelText("金额 (HKD)") as HTMLInputElement).value).toBe("321.09");
+  expect((form.getByLabelText("金额（港币）") as HTMLInputElement).value).toBe("321.09");
 });
 
 test("同客户两计划只出现一个缴费单候选，总额准确且提示未纳入账户", async () => {
@@ -65,7 +65,7 @@ test("同客户两计划只出现一个缴费单候选，总额准确且提示�
   }));
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/settlements" ? sources : path === "/api/accounts" ? [...accounts, { ...accounts[0], id: 4, account_number: "A-PENDING" }] : records[path] ?? []))));
   render(<InvoicesPage notify={vi.fn()} />);
-  const combo = screen.getByRole("combobox", { name: "客户季度Invoice组合" });
+  const combo = screen.getByRole("combobox", { name: "客户季度账单组合" });
   await waitFor(() => expect((combo as HTMLInputElement).disabled).toBe(false));
   fireEvent.focus(combo);
   const options = screen.getAllByRole("option").filter((option) => option.textContent?.includes("客户甲"));
@@ -73,7 +73,7 @@ test("同客户两计划只出现一个缴费单候选，总额准确且提示�
   expect(options[0].textContent).toContain("50.02");
   fireEvent.click(options[0]);
   expect(screen.getByText(/A-PENDING/)).toBeTruthy();
-  const preview = screen.getByRole("region", { name: "建立Invoice Draft" });
+  const preview = screen.getByRole("region", { name: "建立账单 草稿" });
   expect(within(preview).getByText("A-20")).toBeTruthy();
   expect(within(preview).getByText("A-10")).toBeTruthy();
   expect(within(preview).queryByText("B-15")).toBeNull();

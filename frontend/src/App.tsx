@@ -17,14 +17,14 @@ const SystemPage = lazy(() => import("./pages/SystemPage"));
 
 type Page = "dashboard" | "setup" | "clients" | "transactions" | "settlements" | "invoices" | "payments" | "system";
 const navigation = [
-  { id: "dashboard", label: "经营概览", sub: "Overview", icon: Gauge, group: "工作台" },
-  { id: "clients", label: "客户与账户", sub: "Clients & accounts", icon: UsersRound, group: "账单制作" },
-  { id: "transactions", label: "资金与余额", sub: "Cash & balances", icon: WalletCards, group: "账单制作" },
-  { id: "settlements", label: "账单计算", sub: "Fee calculation", icon: Calculator, group: "账单制作" },
-  { id: "invoices", label: "账单出具", sub: "Invoice issuance", icon: ReceiptText, group: "账单制作" },
-  { id: "payments", label: "收款情况", sub: "Collections", icon: ReceiptText, group: "收款情况" },
-  { id: "setup", label: "基础设置", sub: "Master data", icon: Building2, group: "管理" },
-  { id: "system", label: "数据与系统", sub: "Data & system", icon: Database, group: "管理" },
+  { id: "dashboard", label: "经营概览", sub: "期间经营情况", icon: Gauge, group: "工作台" },
+  { id: "clients", label: "客户与账户", sub: "客户资料与账户", icon: UsersRound, group: "账单制作" },
+  { id: "transactions", label: "资金与余额", sub: "资金记录与历史结余", icon: WalletCards, group: "账单制作" },
+  { id: "settlements", label: "账单计算", sub: "核算并复核收费", icon: Calculator, group: "账单制作" },
+  { id: "invoices", label: "账单出具", sub: "出具并归档账单", icon: ReceiptText, group: "账单制作" },
+  { id: "payments", label: "收款情况", sub: "收款登记与核对", icon: ReceiptText, group: "收款情况" },
+  { id: "setup", label: "基础设置", sub: "公司、中介人、平台及计划", icon: Building2, group: "管理" },
+  { id: "system", label: "数据与系统", sub: "备份、恢复与识别设置", icon: Database, group: "管理" },
 ] as const;
 
 function locationPage(): Page {
@@ -47,6 +47,10 @@ export default function App() {
   const wasSidebarOpen = useRef(false);
   const focusAfterClose = useRef<"menu" | "content">("menu");
   const current = navigation.find((item) => item.id === page)!;
+  const workflow = ["clients", "transactions", "settlements", "invoices", "payments"] as const;
+  const workflowIndex = workflow.findIndex((id) => id === page);
+  const nextPage = workflowIndex >= 0 && workflowIndex < workflow.length - 1
+    ? navigation.find((item) => item.id === workflow[workflowIndex + 1]) : undefined;
 
   useEffect(() => {
     if (!toast) return;
@@ -76,7 +80,7 @@ export default function App() {
       if (!cancelled && !hasNavigated.current && !companies.length) {
         window.history.replaceState(null, "", "#/setup");
         setPage("setup");
-        setToast("首次使用：请先建立Company、FC、Platform和Fee Plan");
+        setToast("首次使用：请先建立收款公司、中介人、投资平台和收费计划");
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };
@@ -141,18 +145,18 @@ export default function App() {
   return <div className="app-shell">
     <a className="skip-link" href="#workspace" onClick={(event) => { event.preventDefault(); content.current?.focus(); }}>跳到主要内容</a>
     <aside ref={sidebar} id="app-navigation" className={sidebarOpen ? "sidebar open" : "sidebar"} aria-label="主导航">
-      <div className="brand"><span className="brand-mark"><Landmark size={25} aria-hidden="true" /></span><div><strong>Financial Fee</strong><small>金融计划收费系统</small></div><button className="mobile-close icon-button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X /></button></div>
+      <div className="brand"><span className="brand-mark"><Landmark size={25} aria-hidden="true" /></span><div><strong>金融收费</strong><small>金融计划收费系统</small></div><button className="mobile-close icon-button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X /></button></div>
       <nav aria-label="功能页面">{["工作台", "账单制作", "收款情况", "管理"].map((group) => <div className="nav-group" key={group}><span className="nav-group-label">{group}</span>{navigation.filter((item) => item.group === group).map((item) => {
         const Icon = item.icon;
         return <button key={item.id} className={page === item.id ? "active" : ""} aria-current={page === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon size={20} aria-hidden="true" /><span><b>{item.label}</b><small>{item.sub}</small></span>{page === item.id ? <ChevronRight className="nav-arrow" size={16} aria-hidden="true" /> : null}</button>;
       })}</div>)}</nav>
-      <div className="sidebar-footer"><ShieldCheck size={19} aria-hidden="true" /><span>本机财务工作台<small>Local workspace · HKD</small></span></div>
+      <div className="sidebar-footer"><ShieldCheck size={19} aria-hidden="true" /><span>本机财务工作台<small>本机使用 · 港币</small></span></div>
     </aside>
     {sidebarOpen ? <button className="sidebar-backdrop" tabIndex={-1} onClick={() => setSidebarOpen(false)} aria-label="关闭菜单" /> : null}
     <main inert={sidebarOpen}>
       <header className="topbar"><button ref={menuButton} className="menu-button icon-button" aria-label="打开导航" aria-controls="app-navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu /></button><div className="breadcrumb"><span>{current.group}</span><ChevronRight size={14} aria-hidden="true" /><strong>{current.label}</strong></div><time>{formatDate(todayIso())} {new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(new Date())}</time></header>
-      <div id="workspace" ref={content} tabIndex={-1} className={`content page-${page}`}><PageBoundary key={page}><Suspense fallback={<Loading />}>{pages[page]}</Suspense></PageBoundary></div>
-      <footer className="workspace-footer"><span>Financial Fee · 本机运行</span><span>港币 HKD · 逐账户独立核算</span></footer>
+      <div id="workspace" ref={content} tabIndex={-1} className={`content page-${page}`}><PageBoundary key={page}><Suspense fallback={<Loading />}>{pages[page]}{nextPage ? <nav className="module-next" aria-label="下一模块"><p>本页需要保留的资料请先保存；准备好后可继续下一模块。</p><button type="button" className="primary" onClick={() => navigate(nextPage.id)}>下一步：{nextPage.label}<ChevronRight size={18} aria-hidden="true" /></button></nav> : null}</Suspense></PageBoundary></div>
+      <footer className="workspace-footer"><span>金融收费 · 本机运行</span><span>港币 · 逐账户独立核算</span></footer>
     </main>
     {toast ? <div className="toast" role="status" aria-live="polite"><Info size={20} aria-hidden="true" /><span>{toast}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setToast("")}><X size={18} /></button></div> : null}
   </div>;

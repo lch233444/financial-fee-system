@@ -84,7 +84,7 @@ test("更改账户身份会清空此前填写的收费计划及管理日期", as
   setup();
   await open();
   completeProfile();
-  fireEvent.change(screen.getByLabelText(/^Account Number/), { target: { value: "NEW-2" } });
+  fireEvent.change(screen.getByLabelText(/^账户号码/), { target: { value: "NEW-2" } });
   expect((screen.getByLabelText("账户收费计划") as HTMLSelectElement).value).toBe("");
   expect((screen.getByLabelText("账户开始管理日期") as HTMLInputElement).value).toBe("");
 });

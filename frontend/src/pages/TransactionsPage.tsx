@@ -65,7 +65,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
   const selectedClient = clients.data.find((item) => item.id === Number(filters.clientId));
   const clientAccounts = accounts.data.filter((item) => Boolean(filters.clientId) && item.client_id === Number(filters.clientId)
     && (!filters.fcId || selectedClient?.fc_id === Number(filters.fcId)) && (!filters.feePlanId || item.fee_plan_id === Number(filters.feePlanId)));
-  const platformOptions = [...new Map(clientAccounts.filter((item) => item.platform_id != null).map((item) => [item.platform_id!, item.platform_name || "待确认Platform"])).entries()];
+  const platformOptions = [...new Map(clientAccounts.filter((item) => item.platform_id != null).map((item) => [item.platform_id!, item.platform_name || "待确认投资平台"])).entries()];
   const availableAccounts = clientAccounts.filter((item) => !platformId || item.platform_id === Number(platformId));
   const filteredAccounts = availableAccounts.filter((item) => !accountId || item.id === Number(accountId));
   const filteredIds = new Set(filteredAccounts.map((item) => item.id));
@@ -136,7 +136,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
       }, afterSave: () => setSupplement(null), refresh, message: "历史记录的凭证已补存",
     });
   }
-  const accountSelect = (kind: "transaction" | "snapshot", disabled: boolean) => <Field group label="Sub Account"><SearchableSelect name="account_id" label={kind === "transaction" ? "资金记录账户" : "季度结余账户"} required value={kind === "transaction" ? transactionAccountId : snapshotAccountId} onChange={kind === "transaction" ? setTransactionAccountId : setSnapshotAccountId} disabled={disabled || !filters.clientId} placeholder="搜索并选择账户" searchPlaceholder="搜索账户…" options={filteredAccounts.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>;
+  const accountSelect = (kind: "transaction" | "snapshot", disabled: boolean) => <Field group label="子账户"><SearchableSelect name="account_id" label={kind === "transaction" ? "资金记录账户" : "季度结余账户"} required value={kind === "transaction" ? transactionAccountId : snapshotAccountId} onChange={kind === "transaction" ? setTransactionAccountId : setSnapshotAccountId} disabled={disabled || !filters.clientId} placeholder="搜索并选择账户" searchPlaceholder="搜索账户…" options={filteredAccounts.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>;
   const identity = (id: number, fallback: string) => { const account = accountById.get(id); return <><strong>{account?.client_name || "客户资料待核对"}</strong><small className="cell-note">{account ? accountIdentityDetail(account) : fallback}</small></>; };
   const remarkField = (type: string, disabled: boolean, initial = "") => <Field label={type === "CONTRIBUTION" ? "加款备注（必填）" : "备注"} hint={type === "CONTRIBUTION" ? "请填写加款说明，至少2字；系统自动附上到账日期、户口和金额，总长度不超过500字。" : undefined}><textarea name="remark" rows={2} defaultValue={initial} required={type === "CONTRIBUTION"} minLength={type === "CONTRIBUTION" ? 2 : undefined} maxLength={type === "CONTRIBUTION" ? 500 : undefined} disabled={disabled} /></Field>;
 
@@ -146,30 +146,30 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
     <Panel id="cash-records" title="记录查询" subtitle="查询供款、加款、取款及历史结余；本季历史结余同时带出适用的期初结余。">
       <WorkflowStep number={1} title="选择客户与查询条件" detail="先搜索并选定客户，再按期间、平台或账户缩小范围；下方手动录入也使用此处选定的客户。" />
       <RecordFilters value={filters} onChange={(next) => { setFilters(next); clearDependentSelection(); }} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} disabled={busy} clientLabel="资金与余额客户">
-        <Field label="Platform"><select disabled={!filters.clientId || busy} value={platformId} onChange={(event) => { setPlatformId(event.target.value); setAccountId(""); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部Platform</option>{platformOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
-        <Field label="Sub Account"><select disabled={!filters.clientId || busy} value={accountId} onChange={(event) => { setAccountId(event.target.value); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部账户</option>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
+        <Field label="投资平台"><select disabled={!filters.clientId || busy} value={platformId} onChange={(event) => { setPlatformId(event.target.value); setAccountId(""); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部投资平台</option>{platformOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
+        <Field label="子账户"><select disabled={!filters.clientId || busy} value={accountId} onChange={(event) => { setAccountId(event.target.value); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部账户</option>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
       </RecordFilters>
       <WorkflowStep number={2} title="查看记录与凭证" detail="核对资金记录和历史结余；需要补录时，选择下方对应的导入入口。" />
       <section className="record-section" aria-labelledby="cash-ledger-heading"><h3 id="cash-ledger-heading">供款、加款、取款记录</h3>
-        {transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="供款、加款、取款记录表" className="table-wrap cash-ledger-table"><table><thead><tr><th>日期</th><th>Client / Platform / A/C</th><th>类型</th><th>金额</th><th>凭证</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={item.id}>
+        {transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="供款、加款、取款记录表" className="table-wrap cash-ledger-table"><table><thead><tr><th>日期</th><th>客户／平台／账户</th><th>类型</th><th>金额</th><th>凭证</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={item.id}>
           <td>{formatDate(item.transaction_date)}</td><td>{identity(item.account_id, item.account_number)}</td><td>{transactionLabels[item.transaction_type] || item.transaction_type}</td><td><Money value={item.amount} /></td>
           <td>{recordProofs("TRANSACTION", item.id).length ? <button className="text-link" type="button" onClick={() => showProofs("TRANSACTION", item.id)}>查看原件</button> : "待补凭证"}</td>
           <td className="record-remark">{item.remark?.replace(/到账日期：(\d{4}-\d{2}-\d{2})/, (_, date: string) => `到账日期：${formatDate(date)}`) || "—"}</td>
           <td>{item.correction_allowed ? <button className="ghost" type="button" disabled={busy} onClick={() => { setEditingTransaction(item); setEditType(item.transaction_type); setSupplement(null); setLocalError(""); }}>更正</button> : <small className="cell-note">已由结算 #{item.locked_settlement_id} 锁定</small>}
-            {!item.evidence_complete ? <button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "TRANSACTION", id: item.id, label: `${formatDate(item.transaction_date)} · ${item.account_number} · HKD ${item.amount}` })}>补存凭证</button> : null}</td>
+            {!item.evidence_complete ? <button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "TRANSACTION", id: item.id, label: `${formatDate(item.transaction_date)} · ${item.account_number} · 港币 ${item.amount}` })}>补存凭证</button> : null}</td>
         </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有资金记录" : "请先搜索并选定客户"} detail="选定客户和期间后查看供款、加款、取款记录。" />}
       </section>
       <section className="record-section" aria-labelledby="balance-ledger-heading"><h3 id="balance-ledger-heading">历史结余</h3>
-        {snapshots.loading || accounts.loading || settlements.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="历史结余表" className="table-wrap balance-ledger-table"><table><thead><tr><th>结余日期</th><th>Client / Platform / A/C</th><th>结余金额</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((item) => <tr key={item.id}>
+        {snapshots.loading || accounts.loading || settlements.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="历史结余表" className="table-wrap balance-ledger-table"><table><thead><tr><th>结余日期</th><th>客户／平台／账户</th><th>结余金额</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((item) => <tr key={item.id}>
           <td>{formatDate(item.as_of_date)}{item.opening ? <small className="cell-note">期初结余</small> : null}</td><td>{identity(item.account_id, item.account_number)}</td><td><Money value={item.total_balance} /></td>
-          <td>{item.statement_import_id || recordProofs("SNAPSHOT", item.id).length ? <button className="text-link snapshot-source-link" type="button" onClick={() => showProofs("SNAPSHOT", item.id, item.statement_import_id)}>查看原始凭证</button> : <><span>待补凭证</span><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "SNAPSHOT", id: item.id, label: `${formatDate(item.as_of_date)} · ${item.account_number} · HKD ${item.total_balance}` })}>补存凭证</button></>}</td>
+          <td>{item.statement_import_id || recordProofs("SNAPSHOT", item.id).length ? <button className="text-link snapshot-source-link" type="button" onClick={() => showProofs("SNAPSHOT", item.id, item.statement_import_id)}>查看原始凭证</button> : <><span>待补凭证</span><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "SNAPSHOT", id: item.id, label: `${formatDate(item.as_of_date)} · ${item.account_number} · 港币 ${item.total_balance}` })}>补存凭证</button></>}</td>
         </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有历史结余" : "请先搜索并选定客户"} detail="显示本季结余及按账户结算规则适用的期初结余。" />}
       </section>
       {visibleAttachments.length ? <details className="record-archive"><summary>结算凭证归档 · {visibleAttachments.length}份</summary><div tabIndex={0} role="region" aria-label="结算凭证归档" className="table-wrap"><table><thead><tr><th>记录</th><th>文件</th><th>归档时间</th><th>操作</th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{item.entity_type === "SNAPSHOT" ? "历史结余" : item.entity_type === "TRANSACTION" ? "资金记录" : "历史账户凭证"} #{item.entity_id}{item.superseded ? <small className="cell-note">旧凭证（已替换，保留追溯）</small> : null}</td><td>{item.original_name}</td><td>{formatDateTime(item.created_at)}</td><td><button className="text-link" type="button" onClick={() => setPreviewDocuments([{ path: `/api/attachments/${item.id}/file`, title: "结算凭证原件", filename: item.original_name }])}>查看原件</button></td></tr>)}</tbody></table></div></details> : null}
       {editingTransaction ? <section className="record-section" aria-labelledby="correction-heading"><h3 id="correction-heading">更正资金记录</h3><p>原凭证继续保留；如选择新凭证，保存成功后作为当前凭证。</p><form className="form-grid" key={editingTransaction.id} onSubmit={(event) => void submitCorrection(event)}>
         <Field label="资金生效日期"><input name="date" type="date" defaultValue={editingTransaction.transaction_date} required disabled={busy} /></Field>
         <TransactionType value={editType} onChange={setEditType} disabled={busy} />
-        <Field label="金额 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingTransaction.amount} required disabled={busy} /></Field>
+        <Field label="金额（港币）"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingTransaction.amount} required disabled={busy} /></Field>
         {remarkField(editType, busy, editingTransaction.remark_note ?? editingTransaction.remark ?? "")}
         <Field label="更正原因"><textarea name="correction_reason" rows={2} minLength={2} maxLength={500} required disabled={busy} /></Field>
         <Field label={editingTransaction.evidence_complete ? "替换凭证（可选、多份）" : "原始凭证（必填）"}><input name="files" type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xlsx,.xls,.csv" required={!editingTransaction.evidence_complete} disabled={busy} /></Field>
@@ -184,7 +184,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
         {accountSelect("snapshot", busy)}
         <WorkflowStep number={2} title="填写结余资料" />
         <div className="workflow-fields"><Field label="结余日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
-        <Field label="结余金额 (HKD)"><input name="balance" type="number" min="0" step="0.01" required disabled={busy || !filters.clientId} /></Field>
+        <Field label="结余金额（港币）"><input name="balance" type="number" min="0" step="0.01" required disabled={busy || !filters.clientId} /></Field>
         <Field label="备注"><textarea name="remark" rows={2} disabled={busy || !filters.clientId} /></Field></div>
         <WorkflowStep number={3} title="附上凭证并核对保存" detail="核对账户、日期和金额后，一并保存结余及图片凭证。" />
         <Field label="图片凭证（必填，可选多张）" hint="每份附件为一张 JPG 或 PNG 图片。"><input name="files" type="file" multiple accept=".jpg,.jpeg,.png" required disabled={busy || !filters.clientId} /></Field>
@@ -199,7 +199,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
         <WorkflowStep number={2} title="填写资金变动" detail="选择供款、加款或取款，并填写实际到账日期和金额。" />
         <div className="workflow-fields"><Field label="资金生效日期"><input name="date" type="date" defaultValue={todayIso()} required disabled={busy || !filters.clientId} /></Field>
         <TransactionType value={transactionType} onChange={setTransactionType} disabled={busy || !filters.clientId} />
-        <Field label="金额 (HKD)"><input name="amount" type="number" min="0.01" step="0.01" required disabled={busy || !filters.clientId} /></Field>
+        <Field label="金额（港币）"><input name="amount" type="number" min="0.01" step="0.01" required disabled={busy || !filters.clientId} /></Field>
         {remarkField(transactionType, busy || !filters.clientId)}
         </div>
         <WorkflowStep number={3} title="附上凭证并核对保存" detail="加款须填写备注；记录与凭证核对后一起提交。" />

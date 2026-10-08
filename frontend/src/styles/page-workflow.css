@@ -9,6 +9,15 @@
 .workflow-intro > .text-link { display: inline-block; margin-left: 8px; }
 .workflow-link-actions { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 12px; }
 .workflow-link-actions a { display: inline-flex; align-items: center; min-height: 44px; }
+.module-next { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 32px; padding: 24px; border-top: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); }
+.module-next p { margin: 0; color: var(--muted); line-height: 1.7; }
+.module-next button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex-shrink: 0; min-height: 44px; }
+.chinese-date-input { display: flex; position: relative; width: 100%; min-width: 0; }
+.chinese-date-input > input[type="text"] { width: 100%; min-width: 0; padding-right: 44px; }
+.date-picker-control { position: absolute; right: 0; top: 0; width: 40px; height: 100%; display: grid; place-items: center; color: var(--muted); }
+.date-picker-control input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.date-picker-control input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; cursor: pointer; }
+.date-picker-control:focus-within { outline: 2px solid var(--blue); border-radius: 6px; }
 .workflow-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .workflow-links a { display: grid; gap: 8px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-decoration: none; overflow-wrap: anywhere; }
 .workflow-links a:hover { border-color: var(--blue); }
@@ -58,6 +67,7 @@
   .workflow-page .import-layout, .workflow-page .split-layout { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
+  .module-next { flex-direction: column; align-items: stretch; padding: 18px; }
   .workflow-current { margin-left: 16px; margin-right: 16px; padding: 12px 14px; }
   .workflow-fields { grid-template-columns: minmax(0, 1fr); }
   .workflow-links, .setup-workflow #setup-create .form-grid { grid-template-columns: minmax(0, 1fr); }

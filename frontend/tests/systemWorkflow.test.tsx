@@ -35,7 +35,7 @@ test("选择检查批次后，只在明确导出时发送对应请求", async ()
     static revokeObjectURL = revoke;
   });
   fireEvent.click(screen.getByRole("button", { name: "生成并下载ZIP数据包" }));
-  await waitFor(() => expect(notify).toHaveBeenCalledWith("2025 Q2完整数据包已生成并通过校验"));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith("2025年第2季度完整数据包已生成并通过校验"));
   expect(writes).toHaveLength(1);
   expect(writes[0].path).toBe("/api/backups?year=2025&quarter=2");
   expect(new Headers(writes[0].init.headers).get("X-Financial-System-Request")).toBe("1");

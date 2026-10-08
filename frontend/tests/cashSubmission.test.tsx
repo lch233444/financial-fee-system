@@ -41,7 +41,7 @@ async function fillTransaction() {
   fireEvent.focus(within(panel).getByRole("combobox", { name: "资金记录账户" }));
   fireEvent.click(await within(screen.getByRole("listbox")).findByRole("option", { name: /SYN-001/ }));
   fireEvent.change(within(panel).getByLabelText("资金生效日期"), { target: { value: "2026-06-30" } });
-  fireEvent.change(within(panel).getByLabelText("金额 (HKD)"), { target: { value: "200.00" } });
+  fireEvent.change(within(panel).getByLabelText("金额（港币）"), { target: { value: "200.00" } });
   return panel;
 }
 
@@ -80,7 +80,7 @@ test("上传失败不创建资金记录，已填写金额保持", async () => {
   fireEvent.submit(panel.querySelector("form")!);
   expect((await screen.findByRole("alert")).textContent).toContain("凭证上传失败");
   expect(fetcher.mock.calls.filter(([path, options]) => path === "/api/transactions" && options?.method)).toHaveLength(0);
-  expect((within(panel).getByLabelText("金额 (HKD)") as HTMLInputElement).value).toBe("200.00");
+  expect((within(panel).getByLabelText("金额（港币）") as HTMLInputElement).value).toBe("200.00");
 });
 
 test("手动结余多张图片同次关联，不提供资格复选框或关联记录选择器", async () => {
@@ -90,7 +90,7 @@ test("手动结余多张图片同次关联，不提供资格复选框或关联�
   const panel = screen.getByRole("region", { name: "导入季度结余", exact: true });
   fireEvent.focus(within(panel).getByRole("combobox", { name: "季度结余账户" }));
   fireEvent.click(await within(screen.getByRole("listbox")).findByRole("option", { name: /SYN-001/ }));
-  fireEvent.change(within(panel).getByLabelText("结余金额 (HKD)"), { target: { value: "1234.56" } });
+  fireEvent.change(within(panel).getByLabelText("结余金额（港币）"), { target: { value: "1234.56" } });
   fireEvent.change(within(panel).getByLabelText(/图片凭证/), { target: { files: [new File(["a"], "a.png"), new File(["b"], "b.jpg")] } });
   fireEvent.submit(panel.querySelector("form")!);
   await waitFor(() => expect(fetcher.mock.calls.some(([path, options]) => path === "/api/balance-snapshots" && options?.method)).toBe(true));
@@ -109,11 +109,11 @@ test("两张录入表单分别选择账户，填写结余不会改变已填资�
   fireEvent.focus(within(balancePanel).getByRole("combobox", { name: "季度结余账户" }));
   fireEvent.click(within(screen.getByRole("listbox", { name: "季度结余账户候选" })).getByRole("option", { name: /SYN-002/ }));
   expect((within(cashPanel).getByRole("combobox", { name: "资金记录账户" }) as HTMLInputElement).value).toContain("SYN-001");
-  expect((within(cashPanel).getByLabelText("金额 (HKD)") as HTMLInputElement).value).toBe("200.00");
-  fireEvent.change(within(balancePanel).getByLabelText("结余金额 (HKD)"), { target: { value: "987.65" } });
+  expect((within(cashPanel).getByLabelText("金额（港币）") as HTMLInputElement).value).toBe("200.00");
+  fireEvent.change(within(balancePanel).getByLabelText("结余金额（港币）"), { target: { value: "987.65" } });
   fireEvent.change(within(cashPanel).getByLabelText(/原始凭证（必填/), { target: { files: [new File(["cash"], "cash.png")] } });
   fireEvent.submit(cashPanel.querySelector("form")!);
   await waitFor(() => expect(fetcher.mock.calls.some(([path, options]) => path === "/api/transactions" && options?.method)).toBe(true));
   expect((within(balancePanel).getByRole("combobox", { name: "季度结余账户" }) as HTMLInputElement).value).toContain("SYN-002");
-  expect((within(balancePanel).getByLabelText("结余金额 (HKD)") as HTMLInputElement).value).toBe("987.65");
+  expect((within(balancePanel).getByLabelText("结余金额（港币）") as HTMLInputElement).value).toBe("987.65");
 });

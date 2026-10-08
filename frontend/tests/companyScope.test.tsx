@@ -12,12 +12,12 @@ test("客户不再选公司，账户计划包含原属其他公司的档案", as
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<ClientsPage notify={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
-  const create = screen.getByRole("region", { name: "新增Client" });
-  expect(within(create).queryByRole("combobox", { name: "Company" })).toBeNull();
+  const create = screen.getByRole("region", { name: "新增客户" });
+  expect(within(create).queryByRole("combobox", { name: "收款公司" })).toBeNull();
   await within(create).findByRole("option", { name: /独立FC/ });
   fireEvent.focus(screen.getByRole("combobox", { name: "新增账户客户" }));
   fireEvent.click(await screen.findByRole("option", { name: "客户", exact: true }));
-  const form = screen.getByRole("region", { name: "新增Sub Account" });
+  const form = screen.getByRole("region", { name: "新增子账户" });
   expect(within(form).getByRole("option", { name: /另一计划/ })).toBeTruthy();
 });
 
@@ -28,7 +28,7 @@ test("切换账单客户后重新选择收款公司，不沿用上一位客户�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(
     path === "/api/settlements" ? settlements : path === "/api/companies" ? [{ id: 1, name: "收款甲" }, { id: 2, name: "收款乙" }] : []))));
   render(<InvoicesPage notify={vi.fn()} />);
-  const candidate = screen.getByRole("combobox", { name: "客户季度Invoice组合" });
+  const candidate = screen.getByRole("combobox", { name: "客户季度账单组合" });
   await waitFor(() => expect((candidate as HTMLInputElement).disabled).toBe(false));
   fireEvent.focus(candidate);
   fireEvent.click(screen.getByRole("option", { name: /客户1/ }));
@@ -39,5 +39,5 @@ test("切换账单客户后重新选择收款公司，不沿用上一位客户�
   fireEvent.change(candidate, { target: { value: "客户2" } });
   fireEvent.click(screen.getByRole("option", { name: /客户2/ }));
   expect(company.value).toBe("");
-  expect((screen.getByRole("button", { name: "建立Draft" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "建立草稿" }) as HTMLButtonElement).disabled).toBe(true);
 });

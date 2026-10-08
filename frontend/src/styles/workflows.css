@@ -860,7 +860,7 @@
   display: grid;
   grid-template-columns: 50px minmax(120px, 1.1fr) minmax(125px, .9fr) minmax(125px, .9fr) minmax(170px, 1.2fr) minmax(170px, 1.2fr) minmax(130px, 1fr);
   gap: 10px;
-  align-items: center;
+  align-items: start;
   min-width: 1150px;
   min-height: 54px;
   padding: 8px 10px;

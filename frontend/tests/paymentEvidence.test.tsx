@@ -65,15 +65,15 @@ test("账单按六项条件联合筛选，混合计划按任一来源匹配且�
   await choose("账单客户", "客户甲");
   await choose("账单收费计划", "计划20");
   await choose("账单收款公司", "实际收款公司乙 · #2");
-  await choose("账单FC", "同名FC · #1");
+  await choose("账单中介人", "同名FC · #1");
   fireEvent.click(screen.getByRole("button", { name: "已付款", exact: true }));
   const table = within(screen.getByRole("region", { name: "付款账单清单" }));
   expect(table.getAllByRole("row")).toHaveLength(2);
-  expect(table.getByText("HKD 300.00")).toBeTruthy();
+  expect(table.getByText("港币 300.00")).toBeTruthy();
   expect(table.getByText("计划20 / 计划30")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "未付款", exact: true }));
   expect(table.getByRole("button", { name: "查看UNPAID-001" })).toBeTruthy();
-  expect(table.queryByRole("button", { name: "查看VOID-001" })).toBeNull();
+  expect(table.queryByRole("button", { name: "查看已作废-001" })).toBeNull();
 });
 
 test("已付款按钮只打开凭证弹窗，保留原收款、转配、退款及差额；关闭恢复焦点并释放预览", async () => {
@@ -135,7 +135,7 @@ test("收款第3步按当前账单打开凭证，不产生付款写入", async (
   trigger.focus(); fireEvent.click(trigger);
   const modal = within(screen.getByRole("dialog", { name: "已付款 · 付款凭证" }));
   expect(await modal.findByRole("img", { name: "付款凭证 #77" })).toBeTruthy();
-  expect(modal.getByText("MIXED-001 · 客户甲 · 2026 Q1")).toBeTruthy();
+  expect(modal.getByText("MIXED-001 · 客户甲 · 2026年第1季度")).toBeTruthy();
   expect(writes).toHaveLength(0);
   fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
   expect(document.activeElement).toBe(trigger);
@@ -146,12 +146,12 @@ test("未付款按钮进入确认流程，缺凭证拒绝提交，有凭证才�
   fireEvent.click(await screen.findByRole("button", { name: "未付款，登记付款 MIXED-001" }));
   const save = await screen.findByRole("button", { name: "确认已付款" });
   const form = save.closest("form")!;
-  fireEvent.change(within(form).getByLabelText("实际现金 (HKD)"), { target: { value: "300.00" } });
+  fireEvent.change(within(form).getByLabelText("实际现金（港币）"), { target: { value: "300.00" } });
   fireEvent.submit(form);
   await screen.findByText("必须选择付款凭证文件");
   expect(writes).toHaveLength(0);
   const currentForm = screen.getByRole("button", { name: "确认已付款" }).closest("form")!;
-  expect((within(currentForm).getByLabelText("实际现金 (HKD)") as HTMLInputElement).value).toBe("300.00");
+  expect((within(currentForm).getByLabelText("实际现金（港币）") as HTMLInputElement).value).toBe("300.00");
   fireEvent.change(currentForm.querySelector('[name="proof"]')!, { target: { files: [new File(["proof"], "proof.png", { type: "image/png" })] } });
   const originalGet = FormData.prototype.get;
   // jsdom does not populate FileList into FormData from fireEvent's synthetic files.
@@ -181,34 +181,34 @@ test("切换客户账单清空全部付款输入和凭证，重新填写后只�
   const { writes } = setup({ unpaid: true, separateUnpaidClient: true });
   fireEvent.click(await screen.findByRole("button", { name: "查看MIXED-001" }));
   const formA = (await screen.findByRole("button", { name: "确认已付款" })).closest("form")!;
-  const dateA = within(formA).getByLabelText("Payment Date") as HTMLInputElement;
+  const dateA = within(formA).getByLabelText("收款日期") as HTMLInputElement;
   const defaultDate = dateA.value;
   fireEvent.change(dateA, { target: { value: "2026-01-02" } });
-  fireEvent.change(within(formA).getByLabelText("实际现金 (HKD)"), { target: { value: "280.00" } });
+  fireEvent.change(within(formA).getByLabelText("实际现金（港币）"), { target: { value: "280.00" } });
   fireEvent.change(within(formA).getByLabelText(/^公司承担差额/), { target: { value: "20.00" } });
   fireEvent.change(within(formA).getByLabelText(/^差额原因/), { target: { value: "客户甲差额" } });
-  fireEvent.change(within(formA).getByLabelText("Method"), { target: { value: "CHEQUE" } });
-  fireEvent.change(within(formA).getByLabelText("Remark"), { target: { value: "客户甲付款备注" } });
+  fireEvent.change(within(formA).getByLabelText("付款方式"), { target: { value: "CHEQUE" } });
+  fireEvent.change(within(formA).getByLabelText("备注"), { target: { value: "客户甲付款备注" } });
   fireEvent.change(within(formA).getByLabelText("付款凭证"), {
     target: { files: [new File(["proof-A"], "customer-A.png", { type: "image/png" })] },
   });
 
   fireEvent.click(screen.getByRole("button", { name: "查看UNPAID-001" }));
   const formB = screen.getByRole("button", { name: "确认已付款" }).closest("form")!;
-  expect((within(formB).getByLabelText("实际现金 (HKD)") as HTMLInputElement).value).toBe("");
-  expect((within(formB).getByLabelText("Payment Date") as HTMLInputElement).value).toBe(defaultDate);
+  expect((within(formB).getByLabelText("实际现金（港币）") as HTMLInputElement).value).toBe("");
+  expect((within(formB).getByLabelText("收款日期") as HTMLInputElement).value).toBe(defaultDate);
   expect((within(formB).getByLabelText(/^公司承担差额/) as HTMLInputElement).value).toBe("0.00");
   expect(within(formB).queryByLabelText(/^差额原因/)).toBeNull();
-  expect((within(formB).getByLabelText("Method") as HTMLSelectElement).value).toBe("BANK_TRANSFER");
-  expect((within(formB).getByLabelText("Remark") as HTMLInputElement).value).toBe("");
+  expect((within(formB).getByLabelText("付款方式") as HTMLSelectElement).value).toBe("BANK_TRANSFER");
+  expect((within(formB).getByLabelText("备注") as HTMLInputElement).value).toBe("");
   const proofB = within(formB).getByLabelText("付款凭证") as HTMLInputElement;
   expect(proofB.files).toHaveLength(0);
 
-  fireEvent.change(within(formB).getByLabelText("实际现金 (HKD)"), { target: { value: "300.00" } });
+  fireEvent.change(within(formB).getByLabelText("实际现金（港币）"), { target: { value: "300.00" } });
   fireEvent.submit(formB);
   await screen.findByText("必须选择付款凭证文件");
   expect(writes).toHaveLength(0);
-  fireEvent.change(within(formB).getByLabelText("Remark"), { target: { value: "客户乙付款备注" } });
+  fireEvent.change(within(formB).getByLabelText("备注"), { target: { value: "客户乙付款备注" } });
   fireEvent.change(proofB, { target: { files: [new File(["proof-B"], "customer-B.png", { type: "image/png" })] } });
   const originalGet = FormData.prototype.get;
   // Bridge jsdom's synthetic FileList only; amounts and other fields use real FormData.

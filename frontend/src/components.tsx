@@ -5,7 +5,7 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle: strin
   return (
     <div className="page-header">
       <div>
-        <span className="page-eyebrow">FINANCIAL FEE / WORKSPACE</span>
+        <span className="page-eyebrow">金融计划收费系统／工作台</span>
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>
@@ -86,13 +86,17 @@ export function StatusBadge({ value }: { value: string }) {
     error: "连接异常",
     checking: "检查中",
     matched: "识别一致",
+    issuing: "出具中",
+    failed: "失败",
+    open: "处理中",
+    completed: "已完成",
   };
   return <span className={`status status-${key}`}>{labels[key] || value}</span>;
 }
 
 export function Money({ value, emphasis = false }: { value: string | number; emphasis?: boolean }) {
   const numeric = Number(value || 0);
-  return <span className={emphasis ? "money emphasis" : "money"}>HKD {numeric.toLocaleString("en-HK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
+  return <span className={emphasis ? "money emphasis" : "money"}>港币 {numeric.toLocaleString("en-HK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
 }
 
 export function Loading() {

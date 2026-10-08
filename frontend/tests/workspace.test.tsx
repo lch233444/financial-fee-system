@@ -13,7 +13,7 @@ test("客户查询分页及状态筛选重置页码，与新增确认入口分�
   const directory = screen.getByRole("region", { name: "客户与账户清单" });
   await within(directory).findByText("客户01");
   expect(within(directory).queryByText("客户11")).toBeNull();
-  expect(screen.queryByRole("textbox", { name: "Client Name", exact: true })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "客户姓名", exact: true })).toBeNull();
   fireEvent.click(within(directory).getByRole("button", { name: "下一页" }));
   expect(within(directory).getByText("客户11")).toBeTruthy();
   fireEvent.change(screen.getByRole("combobox", { name: "客户状态" }), { target: { value: "CLOSED" } });
@@ -21,7 +21,7 @@ test("客户查询分页及状态筛选重置页码，与新增确认入口分�
   expect(within(directory).queryByRole("button", { name: "下一页" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
   expect(screen.queryByRole("region", { name: "客户与账户清单" })).toBeNull();
-  expect(screen.getByRole("textbox", { name: "Client Name", exact: true })).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "客户姓名", exact: true })).toBeTruthy();
 
 });
 
@@ -38,11 +38,11 @@ test("结算选齐客户、平台和计划后才显示相应账户及可辨认�
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
   fireEvent.focus(screen.getByRole("combobox", { name: "结算客户" }));
   fireEvent.click(await screen.findByRole("option", { name: "测试客户" }));
-  fireEvent.change(screen.getByRole("combobox", { name: "Platform", exact: true }), { target: { value: "1" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "投资平台", exact: true }), { target: { value: "1" } });
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
-  fireEvent.change(screen.getByRole("combobox", { name: "Fee Plan", exact: true }), { target: { value: "1" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "收费计划", exact: true }), { target: { value: "1" } });
   expect(screen.getByRole("checkbox", { name: /QA-001/ })).toBeTruthy();
-  expect(screen.getByLabelText("QA-001 Original HWM")).toBeTruthy();
+  expect(screen.getByLabelText("QA-001 期初高水位线")).toBeTruthy();
 });
 
 test("建立Invoice草稿的重复点击只产生一个请求", async () => {
@@ -53,11 +53,11 @@ test("建立Invoice草稿的重复点击只产生一个请求", async () => {
     return new Response(JSON.stringify(path === "/api/settlements" ? [{ id: 1, client_id: 1, client_name: "测试客户", company_id: null, fc_id: 1, fee_plan_id: 1, fee_plan_name: "20%", year: 2026, quarter: 1, status: "FINALIZED", service_fee: "120.00", account_lines: [] }] : path === "/api/companies" ? [{ id: 5, name: "本次收款公司" }] : []));
   }));
   render(<InvoicesPage notify={vi.fn()} />);
-  const combo = screen.getByRole("combobox", { name: "客户季度Invoice组合" });
+  const combo = screen.getByRole("combobox", { name: "客户季度账单组合" });
   await waitFor(() => expect((combo as HTMLInputElement).disabled).toBe(false));
   fireEvent.focus(combo);
   fireEvent.click(screen.getByRole("option", { name: /测试客户/ }));
-  const form = screen.getByRole("button", { name: "建立Draft" }).closest("form")!;
+  const form = screen.getByRole("button", { name: "建立草稿" }).closest("form")!;
   fireEvent.submit(form);
   expect(writes).toHaveLength(0);
   fireEvent.change(screen.getByRole("combobox", { name: /^本次账单收款公司/ }), { target: { value: "5" } });
@@ -66,7 +66,7 @@ test("建立Invoice草稿的重复点击只产生一个请求", async () => {
   expect(writes[0]).toMatchObject({ payee_company_id: 5 });
   expect((screen.getByRole("button", { name: "正在建立…" }) as HTMLButtonElement).disabled).toBe(true);
   finish(new Response(JSON.stringify({ id: 1 })));
-  await screen.findByRole("button", { name: "建立Draft" });
+  await screen.findByRole("button", { name: "建立草稿" });
 });
 
 test("页面异常提供明确恢复入口，避免整个工作台空白", () => {

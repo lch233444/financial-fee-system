@@ -37,12 +37,12 @@ export default function GeneratedBills({ invoices }: { invoices: Invoice[] }) {
   return <Panel id="generated-bills" title="已生成账单" subtitle="正式签发的客户缴费单及其作废历史；每张账单汇总同一客户季度的已锁定收费。">
     <div className="settlement-controls">
       <Field label="已生成账单年份"><select value={year} onChange={(e) => setYear(e.target.value)}><option value="">全部年份</option>{years.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
-      <Field label="已生成账单季度"><select value={quarter} onChange={(e) => setQuarter(e.target.value)}><option value="">全部季度</option>{[1,2,3,4].map((value) => <option key={value} value={value}>Q{value}</option>)}</select></Field>
+      <Field label="已生成账单季度"><select value={quarter} onChange={(e) => setQuarter(e.target.value)}><option value="">全部季度</option>{[1,2,3,4].map((value) => <option key={value} value={value}>第{value}季度</option>)}</select></Field>
       <Field group label="客户"><SearchableSelect label="已生成账单客户" value={clientId} onChange={setClientId} options={clients} placeholder="全部客户" /></Field>
       <Field label="生成账单状态"><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="ISSUED">账单已生成</option><option value="VOID">账单已作废</option></select></Field>
     </div>
     {filtered.length ? <div className="table-wrap" tabIndex={0} role="region" aria-label="已生成账单"><table><thead><tr><th>账单编号</th><th>客户 / 期间</th><th>出具日期</th><th>应付服务费</th><th>状态</th><th>操作</th></tr></thead><tbody>{pages.rows.map((item) => <tr key={item.id}>
-      <td>{item.invoice_number}</td><td>{item.client_name}<small className="cell-note">{item.year} Q{item.quarter}</small></td><td>{formatDate(item.issue_date)}</td><td><Money value={item.amount} /></td>
+      <td>{item.invoice_number}</td><td>{item.client_name}<small className="cell-note">{item.year}年第{item.quarter}季度</small></td><td>{formatDate(item.issue_date)}</td><td><Money value={item.amount} /></td>
       <td><span className={`status status-${item.lifecycle_status.toLowerCase()}`}>{item.lifecycle_status === "ISSUED" ? "账单已生成" : "账单已作废"}</span></td>
       <td><a className="text-link" href={`#/invoices/${item.id}`}>查看账单及PDF</a><InvoiceHistoryLinks invoice={item} /></td>
     </tr>)}</tbody></table></div> : <EmptyState title="暂无已生成账单" detail="完成计算并锁定后，在账单出具页面签发缴费单。" />}

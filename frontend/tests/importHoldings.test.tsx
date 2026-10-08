@@ -45,7 +45,7 @@ async function openFirst() {
 test("历史持仓差异不阻断新确认，提交仅保存结余及身份资料", async () => {
   const submitted = mockImports();
   const save = await openFirst();
-  expect(screen.getByText("本地OCR最高置信度：0%")).toBeTruthy();
+  expect(screen.getByText("本地文字识别最高置信度：0%")).toBeTruthy();
   expect(screen.queryByText(/Infinity/)).toBeNull();
   expect(save.disabled).toBe(false);
   expect(screen.queryByText(/持仓/)).toBeNull();
@@ -56,7 +56,7 @@ test("历史持仓差异不阻断新确认，提交仅保存结余及身份资�
   expect(submitted[0]).not.toHaveProperty("holdings_difference_reason");
   expect(submitted[0]).not.toHaveProperty("eligible_for_closing");
   expect(submitted[0]).toMatchObject({ total_balance: "1000.00", as_of_date: "2026-06-30" });
-  expect((screen.getByLabelText(/^As-of Date/) as HTMLInputElement).value).toBe("2026-06-30");
+  expect((screen.getByLabelText(/^结余日期/) as HTMLInputElement).value).toBe("2026年06月30日");
   expect(screen.queryByRole("region", { name: "待核对异常" })).toBeNull();
 });
 

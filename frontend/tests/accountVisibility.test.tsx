@@ -61,9 +61,9 @@ test("资金记录、结余及账户在未选客户时隐藏，切客清除更�
 });
 test("历史结算和批量导出保留汇总，未选客户时不显示账户；清空恢复隐藏", async () => {
   setup(); render(<SettlementsPage notify={vi.fn()} />);
-  await screen.findByRole("button", { name: /查看2026 Q1 客户1/ });
+  await screen.findByRole("button", { name: /查看2026年第1季度 客户1/ });
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /查看2026 Q1 客户1/ }));
+  fireEvent.click(screen.getByRole("button", { name: /查看2026年第1季度 客户1/ }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   await choose("历史结算客户", "客户1");
   const history = within(screen.getByRole("region", { name: "计算记录" }));

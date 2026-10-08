@@ -73,7 +73,7 @@ test("切换原件清空客户选择，手工改名保留所选客户但姓名�
   fireEvent.click(screen.getByRole("button", { name: /客户归属测试2/ }));
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toBe("");
   chooseCustomer(12);
-  fireEvent.change(screen.getByRole("textbox", { name: /^Client Name/ }), { target: { value: "ANOTHER PERSON" } });
+  fireEvent.change(screen.getByRole("textbox", { name: /^客户姓名/ }), { target: { value: "ANOTHER PERSON" } });
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toContain("EXISTING-12");
   expect(screen.getByRole("alert").textContent).toContain("复核姓名");
   expect((screen.getByRole("button", { name: /生成历史结余/ }) as HTMLButtonElement).disabled).toBe(true);
@@ -96,7 +96,7 @@ test("先选客户才可匹配已有账户，切换客户清空账户并只显�
   expect(screen.queryByRole("option", { name: /EXISTING-11/ })).toBeNull();
   expect(screen.getByRole("option", { name: /EXISTING-12/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("option", { name: /EXISTING-12/ }));
-  fireEvent.change(screen.getByRole("textbox", { name: /^Account Number/ }), { target: { value: "CHANGED" } });
+  fireEvent.change(screen.getByRole("textbox", { name: /^账户号码/ }), { target: { value: "CHANGED" } });
   expect(input.value).toBe("");
 });
 

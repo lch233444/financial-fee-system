@@ -23,24 +23,24 @@ test("切换Draft重置签发日期、到期日期和语言，仅向当前账单
     return new Response(JSON.stringify(path === "/api/invoices" ? drafts : []));
   }));
   render(<InvoicesPage notify={vi.fn()} />);
-  fireEvent.click(await screen.findByRole("button", { name: "查看Draft #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看草稿 #1" }));
   const formA = within(screen.getByRole("region", { name: "正式出具" }));
-  fireEvent.change(formA.getByLabelText("Issue Date"), { target: { value: "2026-01-15" } });
-  fireEvent.change(formA.getByLabelText(/^Due Date/), { target: { value: "2026-01-30" } });
+  fireEvent.change(formA.getByLabelText("出具日期"), { target: { value: "2026-01-15" } });
+  fireEvent.change(formA.getByLabelText(/^到期日期/), { target: { value: "2026-01-30" } });
   fireEvent.change(formA.getByLabelText("Language"), { target: { value: "zh" } });
 
-  expect((formA.getByLabelText("Issue Date") as HTMLInputElement).value).toBe("2026-01-15");
-  expect((formA.getByLabelText(/^Due Date/) as HTMLInputElement).value).toBe("2026-01-30");
+  expect((formA.getByLabelText("出具日期") as HTMLInputElement).value).toBe("2026-01-15");
+  expect((formA.getByLabelText(/^到期日期/) as HTMLInputElement).value).toBe("2026-01-30");
   expect((formA.getByLabelText("Language") as HTMLSelectElement).value).toBe("zh");
   expect(posts).toHaveLength(0);
 
-  fireEvent.click(screen.getByRole("button", { name: "查看Draft #2" }));
+  fireEvent.click(screen.getByRole("button", { name: "查看草稿 #2" }));
   const formB = within(screen.getByRole("region", { name: "正式出具" }));
-  expect.soft((formB.getByLabelText("Issue Date") as HTMLInputElement).value).toBe(todayIso());
-  expect.soft((formB.getByLabelText(/^Due Date/) as HTMLInputElement).value).toBe("");
+  expect.soft((formB.getByLabelText("出具日期") as HTMLInputElement).value).toBe(todayIso());
+  expect.soft((formB.getByLabelText(/^到期日期/) as HTMLInputElement).value).toBe("");
   expect.soft((formB.getByLabelText("Language") as HTMLSelectElement).value).toBe("en");
-  fireEvent.click(formB.getByRole("button", { name: "Issued并分配编号" }));
+  fireEvent.click(formB.getByRole("button", { name: "已出具并分配编号" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts).toEqual([{ path: "/api/invoices/2/issue", body: { issue_date: todayIso(), due_date: null, language: "en" } }]);
-  await waitFor(() => expect((formB.getByRole("button", { name: "Issued并分配编号" }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect((formB.getByRole("button", { name: "已出具并分配编号" }) as HTMLButtonElement).disabled).toBe(false));
 });

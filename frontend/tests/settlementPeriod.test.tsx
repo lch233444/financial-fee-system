@@ -54,10 +54,10 @@ test("Closing选项按同账户日期判断，旧资格为false也可选；非�
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   await chooseClient();
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
-  const closing = screen.getByLabelText("Q1-ONLY Closing Snapshot");
+  const closing = screen.getByLabelText("Q1-ONLY 期末结余");
   expect(within(closing).getByRole("option", { name: /1100.00/ })).toBeTruthy();
   expect(within(closing).queryByRole("option", { name: /9999.00/ })).toBeNull();
-  fireEvent.change(screen.getByLabelText("Q1-ONLY Closing Date"), { target: { value: "2026-03-30" } });
+  fireEvent.change(screen.getByLabelText("Q1-ONLY 结算日期"), { target: { value: "2026-03-30" } });
   expect(within(closing).queryByRole("option", { name: /1099.00/ })).toBeNull();
 });
 
@@ -75,20 +75,20 @@ test("组合总览先按年季选择，只有明确选定客户才显示其账�
   expect(overview.queryByText("PRIVATE-B")).toBeNull();
   expect(overview.queryByText("Q2-ONLY")).toBeNull();
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
-  fireEvent.change(screen.getByLabelText("Q1-ONLY Original HWM"), { target: { value: "1234.56" } });
-  fireEvent.change(screen.getByLabelText("Q1-ONLY Beginning Snapshot"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Q1-ONLY 期初高水位线"), { target: { value: "1234.56" } });
+  fireEvent.change(screen.getByLabelText("Q1-ONLY 期初结余"), { target: { value: "1" } });
   fireEvent.change(overview.getByLabelText("结算季度"), { target: { value: "2" } });
   expect(overview.queryByText("Q1-ONLY")).toBeNull();
   expect(overview.getByText("Q2-ONLY")).toBeTruthy();
-  expect(screen.queryByLabelText("Q1-ONLY Original HWM")).toBeNull();
-  expect((screen.getByLabelText("Platform") as HTMLSelectElement).value).toBe("");
+  expect(screen.queryByLabelText("Q1-ONLY 期初高水位线")).toBeNull();
+  expect((screen.getByLabelText("投资平台") as HTMLSelectElement).value).toBe("");
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
-  expect((screen.getByLabelText("Q2-ONLY Starting Date") as HTMLInputElement).value).toBe("2026-04-01");
-  expect((screen.getByLabelText("Q2-ONLY Original HWM") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Q2-ONLY 开始日期") as HTMLInputElement).value).toBe("2026-04-01");
+  expect((screen.getByLabelText("Q2-ONLY 期初高水位线") as HTMLInputElement).value).toBe("");
   fireEvent.change(overview.getByLabelText("结算季度"), { target: { value: "1" } });
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
-  expect((screen.getByLabelText("Q1-ONLY Original HWM") as HTMLInputElement).value).toBe("1000.00");
-  expect((screen.getByLabelText("Q1-ONLY Beginning Snapshot") as HTMLSelectElement).value).toBe("1");
+  expect((screen.getByLabelText("Q1-ONLY 期初高水位线") as HTMLInputElement).value).toBe("1000.00");
+  expect((screen.getByLabelText("Q1-ONLY 期初结余") as HTMLSelectElement).value).toBe("1");
 });
 
 test("换年清除旧计算结果和可提交账户，清空客户后总览恢复隐藏", async () => {
@@ -99,11 +99,11 @@ test("换年清除旧计算结果和可提交账户，清空客户后总览恢�
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   await chooseClient();
   fireEvent.click(overview.getByRole("button", { name: "查看结算" }));
-  expect(screen.getByRole("region", { name: "计算结果 · v1" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "计算结果 · 版本1" })).toBeTruthy();
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2027" } });
-  expect(screen.queryByRole("region", { name: "计算结果 · v1" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "计算结果 · 版本1" })).toBeNull();
   expect(overview.getByText("本季没有可计算账户")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "计算并保存Draft" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "计算并保存草稿" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   expect(overview.getByText("Q1-ONLY")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "清空结算客户" }));

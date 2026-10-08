@@ -27,8 +27,8 @@ test("Excel按计划与年季客户联合筛选，切换清空旧勾选，提交
   render(<SettlementsPage notify={vi.fn()} />);
   const panel = within(screen.getByRole("region", { name: "公司内部财务Excel" }));
   await waitFor(() => expect(panel.getAllByRole("checkbox").length).toBeGreaterThan(1));
-  fireEvent.change(panel.getByLabelText("Year"), { target: { value: "2026" } });
-  fireEvent.change(panel.getByLabelText("Quarter"), { target: { value: "1" } });
+  fireEvent.change(panel.getByLabelText("年份"), { target: { value: "2026" } });
+  fireEvent.change(panel.getByLabelText("季度"), { target: { value: "1" } });
   fireEvent.click(panel.getByRole("checkbox", { name: "选择当前筛选结果" }));
   fireEvent.click(panel.getByRole("button", { name: "导出所选内部Excel" }));
   await waitFor(() => expect(download).toHaveBeenLastCalledWith("/api/exports/excel?settlement_ids=1,2,3", expect.any(String), { method: "POST" }));
@@ -41,12 +41,12 @@ test("Excel按计划与年季客户联合筛选，切换清空旧勾选，提交
   fireEvent.click(panel.getByRole("checkbox", { name: "选择当前筛选结果" }));
   fireEvent.click(panel.getByRole("button", { name: "导出所选内部Excel" }));
   await waitFor(() => expect(download).toHaveBeenLastCalledWith("/api/exports/excel?settlement_ids=2&fee_plan_id=30", expect.any(String), { method: "POST" }));
-  fireEvent.change(panel.getByLabelText("Quarter"), { target: { value: "2" } });
+  fireEvent.change(panel.getByLabelText("季度"), { target: { value: "2" } });
   expect((panel.getByRole("button", { name: "导出所选内部Excel" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(panel.getByRole("checkbox", { name: "选择当前筛选结果" }));
-  fireEvent.change(panel.getByLabelText("Year"), { target: { value: "2025" } });
+  fireEvent.change(panel.getByLabelText("年份"), { target: { value: "2025" } });
   expect(panel.getByText("没有可导出的结算")).toBeTruthy();
-  fireEvent.change(panel.getByLabelText("Quarter"), { target: { value: "1" } });
+  fireEvent.change(panel.getByLabelText("季度"), { target: { value: "1" } });
   expect((panel.getByRole("button", { name: "导出所选内部Excel" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(panel.getByRole("button", { name: "清空导出收费计划" }));
   expect((panel.getByRole("button", { name: "导出所选内部Excel" }) as HTMLButtonElement).disabled).toBe(true);

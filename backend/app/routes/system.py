@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import LOOPBACK_HOSTS, get_settings
@@ -134,6 +134,7 @@ def dashboard(
     year = year or date.today().year
     query = select(QuarterlySettlement).where(
         QuarterlySettlement.status == "FINALIZED",
+        _generated_fee_is_current(),
         QuarterlySettlement.year == year,
     )
     if quarter:
@@ -215,6 +216,24 @@ def dashboard(
     }
 
 
+def _generated_fee_is_current():
+    """Keep unbilled fees; a voided bill stays excluded until reissued.
+
+    Correlated EXISTS prevents counting a settlement more than once across
+    invoice history and applies to every source of a combined invoice.
+    """
+    def linked_invoice(status: str):
+        query = select(InvoiceSource.id).join(Invoice).where(
+            InvoiceSource.settlement_id == QuarterlySettlement.id,
+            Invoice.lifecycle_status == status,
+        )
+        if status == "ISSUED":
+            query = query.where(InvoiceSource.active.is_(True))
+        return query.exists()
+
+    return or_(~linked_invoice("VOID"), linked_invoice("ISSUED"))
+
+
 @router.get("/reports/fc")
 def fc_report(
     year: int | None = None,
@@ -233,6 +252,7 @@ def fc_report(
         ).where(
             QuarterlySettlement.fc_id == fc.id,
             QuarterlySettlement.status == "FINALIZED",
+            _generated_fee_is_current(),
             QuarterlySettlement.service_fee_cents > 0,
         )
         if year is not None:

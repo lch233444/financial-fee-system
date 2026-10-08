@@ -1,3 +1,4 @@
+import { systemMessage, validationMessage } from "./uiText";
 import type { AiAssistantStatus, StatementImport } from "./types";
 
 const SAFE_REQUEST_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -11,19 +12,18 @@ async function apiErrorMessage(response: Response, fallback: string): Promise<st
   } catch {
     return fallback;
   }
-  if (typeof payload.detail === "string") return payload.detail;
+  if (typeof payload.detail === "string") return systemMessage(payload.detail);
   if (Array.isArray(payload.detail)) {
     const messages = payload.detail
       .map((issue) => {
         if (!issue.msg) return "";
-        const field = issue.loc?.filter((part) => part !== "body").join(".");
-        return field ? `${field}: ${issue.msg}` : issue.msg;
+        return validationMessage(issue.msg, issue.loc);
       })
       .filter(Boolean);
     if (messages.length) return messages.join("；");
   }
   if (payload.detail && typeof payload.detail === "object" && "message" in payload.detail
-    && typeof payload.detail.message === "string") return payload.detail.message;
+    && typeof payload.detail.message === "string") return systemMessage(payload.detail.message);
   return fallback;
 }
 

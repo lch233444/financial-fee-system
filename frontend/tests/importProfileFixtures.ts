@@ -7,8 +7,8 @@ export const profileRecords: Record<string, unknown[]> = {
 };
 
 export function completeProfile() {
-  for (const [label, value] of [["客户FC", "1"], ["客户开始管理日期", "2026-01-01"],
-    ["账户Platform", "1"], ["账户收费计划", "1"], ["账户开始管理日期", "2026-01-01"]]) {
+  for (const [label, value] of [["客户中介人", "1"], ["客户开始管理日期", "2026-01-01"],
+    ["账户投资平台", "1"], ["账户收费计划", "1"], ["账户开始管理日期", "2026-01-01"]]) {
     const field = screen.queryByLabelText(label);
     if (field) fireEvent.change(field, { target: { value } });
   }

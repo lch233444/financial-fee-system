@@ -94,7 +94,7 @@ test("新增账户页面通过搜索选择客户ID，分页切换不影响输入
   fireEvent.focus(input);
   fireEvent.change(input, { target: { value: "mei" } });
   fireEvent.click(await screen.findByRole("option", { name: "Chan Mei Ling" }));
-  const form = screen.getByRole("button", { name: "保存Sub Account" }).closest("form")!;
+  const form = screen.getByRole("button", { name: "保存子账户" }).closest("form")!;
   for (const [name, value] of Object.entries({ platform_id: "1", fee_plan_id: "1", account_number: "SAMPLE", start_date: "2026-01-01" })) fireEvent.change(form.querySelector(`[name="${name}"]`)!, { target: { value } });
   fireEvent.submit(form);
   expect(requests).toHaveLength(1);

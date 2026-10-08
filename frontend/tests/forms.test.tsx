@@ -50,16 +50,16 @@ function fill(form: HTMLElement, values: Record<string, string>) {
 
 describe("保存成功后立即更新页面", () => {
   test.each([
-    { tab: "Company", button: "保存Company", path: "/api/companies", title: "现有Company", values: { name: "新公司", code: "NEW" }, text: "新公司" },
-    { tab: "FC", button: "保存FC", path: "/api/fcs", title: "现有FC", values: { name: "新FC" }, text: "新FC" },
-    { tab: "Platform", button: "保存Platform", path: "/api/platforms", title: "现有Platform", values: { name: "新平台", code: "NEWPL" }, text: "新平台" },
-    { tab: "Fee Plan", button: "保存Fee Plan", path: "/api/fee-plans", title: "现有Fee Plan", values: { name: "新计划", rate: "20" }, text: "新计划" },
+    { tab: "收款公司", button: "保存收款公司", path: "/api/companies", title: "现有收款公司", values: { name: "新公司", code: "NEW" }, text: "新公司" },
+    { tab: "中介人", button: "保存中介人", path: "/api/fcs", title: "现有中介人", values: { name: "新FC" }, text: "新FC" },
+    { tab: "投资平台", button: "保存投资平台", path: "/api/platforms", title: "现有投资平台", values: { name: "新平台", code: "NEWPL" }, text: "新平台" },
+    { tab: "收费计划", button: "保存收费计划", path: "/api/fee-plans", title: "现有收费计划", values: { name: "新计划", rate: "20" }, text: "新计划" },
   ])("$tab：异步完成后重置表单并显示新记录", async ({ tab, button, path, title, values, text }) => {
     const db = mockDatabase();
     const notify = vi.fn();
     render(<SetupPage notify={notify} />);
     await screen.findByText("原公司");
-    fireEvent.click(screen.getByRole("button", { name: ({ Company: "收款公司 Company", FC: "中介人 FC", Platform: "投资平台 Platform", "Fee Plan": "收费计划 Fee Plan" } as Record<string, string>)[tab], exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: tab, exact: true }));
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe(values.name);
@@ -70,7 +70,7 @@ describe("保存成功后立即更新页面", () => {
     await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe("");
     expect(db.requests).toEqual([path]);
-    if (tab === "FC" || tab === "Fee Plan") {
+    if (tab === "FC" || tab === "收费计划") {
       expect(form.querySelector('[name="code"]')).toBeNull();
       expect(db.records[path][1]).not.toHaveProperty("code");
     }
@@ -79,8 +79,8 @@ describe("保存成功后立即更新页面", () => {
   });
 
   test.each([
-    { button: "保存Client", path: "/api/clients", values: { fc_id: "1", name: "新客户", start_date: "2026-01-01" }, text: "新客户" },
-    { button: "保存Sub Account", path: "/api/accounts", values: { client_id: "1", platform_id: "1", fee_plan_id: "1", account_number: "NEW-ACCOUNT", start_date: "2026-01-01" }, text: "NEW-ACCOUNT" },
+    { button: "保存客户", path: "/api/clients", values: { fc_id: "1", name: "新客户", start_date: "2026-01-01" }, text: "新客户" },
+    { button: "保存子账户", path: "/api/accounts", values: { client_id: "1", platform_id: "1", fee_plan_id: "1", account_number: "NEW-ACCOUNT", start_date: "2026-01-01" }, text: "NEW-ACCOUNT" },
   ])("$button：列表和依赖选项同时更新", async ({ button, path, values, text }) => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
@@ -106,7 +106,7 @@ describe("保存成功后立即更新页面", () => {
     const db = mockDatabase();
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
-    const form = screen.getByRole("button", { name: "保存Company" }).closest("form")!;
+    const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "新公司", code: "NEW" });
     fireEvent.submit(form);
     fireEvent.submit(form);
@@ -122,10 +122,10 @@ describe("保存成功后立即更新页面", () => {
       : originalFetch(input, options));
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
-    const form = screen.getByRole("button", { name: "保存Company" }).closest("form")!;
+    const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "重复公司", code: "OLD" });
     fireEvent.submit(form);
-    await screen.findByText("Company名称或Code已存在");
+    await screen.findByText("收款公司名称或编码已存在");
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe("重复公司");
   });
 
@@ -137,7 +137,7 @@ describe("保存成功后立即更新页面", () => {
       : originalFetch(input, options));
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
-    const form = screen.getByRole("button", { name: "保存Company" }).closest("form")!;
+    const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "新公司", code: "NEW" });
     fireEvent.submit(form);
     await act(async () => db.pending.resolve());

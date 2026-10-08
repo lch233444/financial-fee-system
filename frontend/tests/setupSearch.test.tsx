@@ -21,37 +21,37 @@ test("基础资料搜索的结果和空状态一致，切换类别时清空上�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SetupPage notify={vi.fn()} />);
 
-  const company = within(screen.getByRole("region", { name: "现有Company" }));
+  const company = within(screen.getByRole("region", { name: "现有收款公司" }));
   await company.findByText("Alpha Company");
-  fireEvent.change(company.getByRole("searchbox", { name: "搜索Company" }), { target: { value: "BC" } });
+  fireEvent.change(company.getByRole("searchbox", { name: "搜索收款公司" }), { target: { value: "BC" } });
   expect(company.queryByText("Alpha Company")).toBeNull();
   expect(company.getByText("Beta Company")).toBeTruthy();
-  fireEvent.change(company.getByRole("searchbox", { name: "搜索Company" }), { target: { value: "missing" } });
+  fireEvent.change(company.getByRole("searchbox", { name: "搜索收款公司" }), { target: { value: "missing" } });
   expect(company.getByText("没有匹配项")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "中介人 FC", exact: true }));
-  const fc = within(screen.getByRole("region", { name: "现有FC" }));
+  fireEvent.click(screen.getByRole("button", { name: "中介人", exact: true }));
+  const fc = within(screen.getByRole("region", { name: "现有中介人" }));
   await fc.findByText("Tony Wu");
-  expect((fc.getByRole("searchbox", { name: "搜索FC" }) as HTMLInputElement).value).toBe("");
-  fireEvent.change(fc.getByRole("searchbox", { name: "搜索FC" }), { target: { value: "Alice" } });
+  expect((fc.getByRole("searchbox", { name: "搜索中介人" }) as HTMLInputElement).value).toBe("");
+  fireEvent.change(fc.getByRole("searchbox", { name: "搜索中介人" }), { target: { value: "Alice" } });
   expect(fc.queryByText("Tony Wu")).toBeNull();
   expect(fc.getByText("Alice Lee")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "投资平台 Platform", exact: true }));
-  const platform = within(screen.getByRole("region", { name: "现有Platform" }));
+  fireEvent.click(screen.getByRole("button", { name: "投资平台", exact: true }));
+  const platform = within(screen.getByRole("region", { name: "现有投资平台" }));
   await platform.findByText("Alpha Platform");
-  expect((platform.getByRole("searchbox", { name: "搜索Platform" }) as HTMLInputElement).value).toBe("");
-  fireEvent.change(platform.getByRole("searchbox", { name: "搜索Platform" }), { target: { value: "PB" } });
+  expect((platform.getByRole("searchbox", { name: "搜索投资平台" }) as HTMLInputElement).value).toBe("");
+  fireEvent.change(platform.getByRole("searchbox", { name: "搜索投资平台" }), { target: { value: "PB" } });
   expect(platform.queryByText("Alpha Platform")).toBeNull();
   expect(platform.getByText("Beta Platform")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "收费计划 Fee Plan", exact: true }));
-  const plan = within(screen.getByRole("region", { name: "现有Fee Plan" }));
+  fireEvent.click(screen.getByRole("button", { name: "收费计划", exact: true }));
+  const plan = within(screen.getByRole("region", { name: "现有收费计划" }));
   await plan.findByText("Alpha Plan");
-  expect((plan.getByRole("searchbox", { name: "搜索Fee Plan" }) as HTMLInputElement).value).toBe("");
-  fireEvent.change(plan.getByRole("searchbox", { name: "搜索Fee Plan" }), { target: { value: "Beta" } });
+  expect((plan.getByRole("searchbox", { name: "搜索收费计划" }) as HTMLInputElement).value).toBe("");
+  fireEvent.change(plan.getByRole("searchbox", { name: "搜索收费计划" }), { target: { value: "Beta" } });
   expect(plan.queryByText("Alpha Plan")).toBeNull();
   expect(plan.getByText("Beta Plan")).toBeTruthy();
-  fireEvent.change(plan.getByRole("searchbox", { name: "搜索Fee Plan" }), { target: { value: "missing" } });
+  fireEvent.change(plan.getByRole("searchbox", { name: "搜索收费计划" }), { target: { value: "missing" } });
   await waitFor(() => expect(plan.getByText("没有匹配项")).toBeTruthy());
 });

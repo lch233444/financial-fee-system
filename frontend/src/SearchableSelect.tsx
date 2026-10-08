@@ -122,7 +122,7 @@ export default function SearchableSelect({
         {!visible.length ? <div className="combobox-empty">没有匹配项，请更换关键词</div> : null}
       </div>
       <div id={`${id}-hint`} className="combobox-hint" role="status">
-        {matches.length > optionLimit ? `找到 ${matches.length} 项，显示前${optionLimit}项；输入更多关键词缩小范围。` : `${matches.length} 个选项 · ↑↓ 移动，Enter 选择`}
+        {matches.length > optionLimit ? `找到 ${matches.length} 项，显示前${optionLimit}项；输入更多关键词缩小范围。` : `${matches.length} 个选项 · ↑↓ 移动，回车选择`}
         {selected ? <span>当前选择已保留：{selected.label}</span> : null}
       </div>
     </div>, document.body) : null}

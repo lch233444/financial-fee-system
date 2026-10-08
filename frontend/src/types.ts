@@ -49,7 +49,7 @@ export function accountIdentityDetail(account: Pick<Account, "platform_name" | "
   const platform = account.platform_name?.trim();
   const scheme = account.scheme_name?.trim();
   return [
-    platform || "待确认Platform",
+    platform || "待确认投资平台",
     account.account_number,
     scheme && scheme !== platform ? scheme : null,
     account.fee_plan_name ? `收费计划 ${account.fee_plan_name}` : "未分配收费计划",
@@ -65,7 +65,7 @@ const comparableIdentity = (value: string) => value.trim().normalize("NFKC").toL
 
 function clientIdentityLabelInGroup(client: ClientIdentity, sameName: readonly ClientIdentity[], accountsFor: (clientId: number) => readonly Account[]) {
   if (sameName.length < 2) return client.name;
-  const details = (item: ClientIdentity) => [item.name, item.fc_name?.trim() ? `FC ${item.fc_name.trim()}` : null, item.contact?.trim()].filter(Boolean).join(" · ");
+  const details = (item: ClientIdentity) => [item.name, item.fc_name?.trim() ? `中介人 ${item.fc_name.trim()}` : null, item.contact?.trim()].filter(Boolean).join(" · ");
   const basicLabel = details(client);
   const sameDetails = sameName.filter((item) => comparableIdentity(details(item)) === comparableIdentity(basicLabel));
   if (sameDetails.length < 2) return basicLabel;

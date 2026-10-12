@@ -57,20 +57,24 @@ test("资金记录、结余及账户在未选客户时隐藏，切客清除更�
   expect(screen.queryByText(/ACCOUNT-1/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空资金与余额客户" }));
   expect(screen.queryByText(/ACCOUNT-2/)).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: /登记资金变动/ }));
   expect((screen.getByRole("button", { name: "保存记录与凭证" }) as HTMLButtonElement).disabled).toBe(true);
 });
 test("历史结算和批量导出保留汇总，未选客户时不显示账户；清空恢复隐藏", async () => {
   setup(); render(<SettlementsPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /历史记录/ }));
   await screen.findByRole("button", { name: /查看2026年第1季度 客户1/ });
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /查看2026年第1季度 客户1/ }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: /历史记录/ }));
   await choose("历史结算客户", "客户1");
   const history = within(screen.getByRole("region", { name: "计算记录" }));
   expect(history.getByText("ACCOUNT-1")).toBeTruthy();
   expect(history.queryByText("ACCOUNT-2")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清空历史结算客户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: /导出 Excel/ }));
   await choose("导出客户", "客户2");
   const excel = within(screen.getByRole("region", { name: "公司内部财务Excel" }));
   expect(excel.getByText("ACCOUNT-2")).toBeTruthy();

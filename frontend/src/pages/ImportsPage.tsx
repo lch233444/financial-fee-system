@@ -1,4 +1,5 @@
 import ChineseDateInput from "../ChineseDateInput";
+import DocumentPreviewDialog, { type PreviewDocument } from "../DocumentPreviewDialog";
 import { systemMessage } from "../uiText";
 import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -244,11 +245,12 @@ function DocumentRoutingNotice({ record }: { record: StatementImport }) {
   </div>;
 }
 
-export default function ImportsPage({ notify, embedded = false, guided = false, onConfirmed, title = "导入季度结余" }: {
+export default function ImportsPage({ notify, embedded = false, guided = false, onConfirmed, onBusyChange, title = "导入季度结余" }: {
   notify: (message: string) => void;
   embedded?: boolean;
   guided?: boolean;
   onConfirmed?: () => void | Promise<void>;
+  onBusyChange?: (busy: boolean) => void;
   title?: string;
 }) {
   const imports = useApiList<StatementImport>("/api/statement-imports");
@@ -263,6 +265,8 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
   const filteredImports = imports.data.filter((item) => matchesSearch(item.original_name, importSearch) && (!importStatus || item.status === importStatus));
   const importPages = usePagination(filteredImports, `${importSearch}:${importStatus}`, 12);
   const [selected, setSelected] = useState<StatementImport | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<PreviewDocument | null>(null);
+  useEffect(() => { setPreviewDocument(null); }, [selected?.id]);
   const [uploading, setUploading] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -306,6 +310,8 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
   const needsAccountSelection = Boolean(selectedClient && !selectedExistingAccount
     && accounts.data.some((item) => item.client_id === selectedClient.id && item.account_number === reviewValues.account_number));
   const statementWriteBusy = uploading || recognizing || reviewing || deletingId !== null;
+  useEffect(() => { onBusyChange?.(statementWriteBusy); }, [onBusyChange, statementWriteBusy]);
+  useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
 
   useEffect(() => {
     getAiAssistantStatus()
@@ -615,7 +621,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
         </Panel>
 
         <Panel title="原始文件" subtitle={selected ? selected.original_name : "选择一条记录查看"}>
-          {selected ? <><div className="document-open"><a className="text-link" href={`/api/statement-imports/${selected.id}/file`} target="_blank" rel="noreferrer">打开原件 ↗</a><small>预览未显示时，可直接打开文件查看。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <iframe className="document-preview" src={`/api/statement-imports/${selected.id}/file`} title="原始账单预览" sandbox="" />}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
+          {selected ? <><div className="document-open"><button type="button" className="secondary" onClick={() => setPreviewDocument({ path: `/api/statement-imports/${selected.id}/file`, title: "原始文件预览", filename: selected.original_name })}>打开文件</button><small>在弹窗中查看完整原件，图片可放大核对。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <div className="document-placeholder"><FileSearch size={40} aria-hidden="true" /><strong>PDF 原始文件</strong><p>点击“打开文件”查看完整内容。</p></div>}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
         </Panel>
 
         <Panel id="statement-review" step={guided ? "第3步 · 核对并确认" : undefined} title="识别结果与财务复核" subtitle="智能识别只提供待确认结果，不会直接保存历史结余或资金记录">
@@ -700,6 +706,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
           </form> : <EmptyState title="等待选择" detail="从导入记录选择文件后，在此核对识别字段。" />}
         </Panel>
       </div>
+      {previewDocument ? <DocumentPreviewDialog key={previewDocument.path} document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
     </>
   );
 }

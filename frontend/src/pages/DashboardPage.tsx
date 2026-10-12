@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
 import { api } from "../api";
 import { ErrorBanner, Field, Loading, Money, PageHeader, WorkflowSection } from "../components";
+import { useApiList } from "../hooks";
+import { ArrowRight, Calculator, FileInput, WalletCards } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 
 type Dashboard = {
@@ -15,6 +17,9 @@ type Dashboard = {
 };
 
 export default function DashboardPage() {
+  const fcs = useApiList<{ id: number }>("/api/fcs");
+  const platforms = useApiList<{ id: number }>("/api/platforms");
+  const plans = useApiList<{ id: number }>("/api/fee-plans");
   const years = Array.from({ length: 201 }, (_, index) => 2000 + index);
   const [year, setYear] = useState(2026);
   const [quarter, setQuarter] = useState("");
@@ -41,10 +46,21 @@ export default function DashboardPage() {
 
   return (
     <div className="workflow-page dashboard-workflow">
-      <PageHeader title="经营概览" subtitle="先选统计期间，再核对经营数据，按需要进入对应页面处理。" />
-      <div className="workflow-intro"><strong>从所选期间开始查看经营情况</strong>首次建账先准备基础资料，再建立客户与账户；日常查询按下方步骤查看。<a className="text-link" href="#/setup">前往基础设置</a></div>
-
-      <WorkflowSection id="dashboard-period" title="第1步 · 选择统计期间" description="选择年度及全年或季度；年份需点击候选确认，仅输入搜索文字不会改变统计期间。">
+      <PageHeader title="工作台" subtitle="选择今天要办理的任务，或查看本期经营情况。" />
+      <section className="workbench-start" aria-labelledby="workbench-title">
+        <div className="workbench-heading"><div><span className="eyebrow">日常办理</span><h2 id="workbench-title">今天从哪里开始？</h2><p>新客户先建档，已有客户从本次需要的环节继续。</p></div><a className="text-link" href="#/setup">基础资料设置 <ArrowRight size={17} aria-hidden="true" /></a></div>
+        <div className="task-cards">
+          <a href="#/clients"><FileInput aria-hidden="true" /><strong>客户建档与查询</strong><span>导入原件或手动建立客户、账户。</span><b>进入客户与账户 <ArrowRight size={16} aria-hidden="true" /></b></a>
+          <a href="#/transactions"><WalletCards aria-hidden="true" /><strong>准备本季资料</strong><span>补充结余、供款、加款及取款凭证。</span><b>进入资金与余额 <ArrowRight size={16} aria-hidden="true" /></b></a>
+          <a href="#/settlements"><Calculator aria-hidden="true" /><strong>计算收费 / 导出 Excel</strong><span>逐账户计算，复核锁定后导出明细。</span><b>进入账单计算 <ArrowRight size={16} aria-hidden="true" /></b></a>
+        </div>
+        <div className="workbench-secondary"><a href="#/invoices">出具客户账单 <ArrowRight size={16} aria-hidden="true" /></a><a href="#/payments">登记收款 / 查看凭证 <ArrowRight size={16} aria-hidden="true" /></a></div>
+        {fcs.error || platforms.error || plans.error ? <p className="workbench-readiness" role="status">基础资料状态读取失败，请到基础设置核对后开始办理。</p>
+          : fcs.loading || platforms.loading || plans.loading ? <p className="workbench-readiness" role="status">正在检查基础资料…</p>
+          : !fcs.data.length || !platforms.data.length || !plans.data.length ? <p className="workbench-readiness" role="status"><strong>首次使用，先补充：</strong>{[!fcs.data.length && "中介人", !platforms.data.length && "投资平台", !plans.data.length && "收费计划"].filter(Boolean).join("、")}。<a href="#/setup">去设置</a>。收款公司可在出具账单前确认。</p> : null}
+      </section>
+      <div className="overview-heading"><h2>经营概览</h2><span>选择期间查看统计</span></div>
+      <WorkflowSection id="dashboard-period" title="统计期间" description="选择并确认年度，可进一步按季度查看。">
       <div className="dashboard-period">
         <div className="settlement-controls dashboard-period-controls">
           <Field group label="统计年度"><SearchableSelect label="统计年度" required value={String(year)} onChange={(value) => setYear(Number(value))} options={years.map((value) => ({ value: String(value), label: `${value}年` }))} optionLimit={years.length} centerSelectedOnOpen searchPlaceholder="输入年份搜索" /></Field>
@@ -52,7 +68,7 @@ export default function DashboardPage() {
         </div>
       </div>
       </WorkflowSection>
-      <WorkflowSection id="dashboard-summary" title="第2步 · 查看本期概况" description={`当前期间：${year}年${quarter ? `第${quarter}季度` : "全年"}。核对服务费、已收、未收及逾期情况；点击在管客户数字可查看对应期间客户。`}>
+      <WorkflowSection id="dashboard-summary" title="本期概况" description={`当前期间：${year}年${quarter ? `第${quarter}季度` : "全年"}。核对服务费、已收、未收及逾期情况；点击在管客户数字可查看对应期间客户。`}>
       {error ? <ErrorBanner message={error} /> : null}
       {!dashboard && !error ? <Loading /> : null}
       {dashboard ? <><div className="stats-grid dashboard-stats">
@@ -66,12 +82,9 @@ export default function DashboardPage() {
       {dashboard.accounts_with_incomplete_management_dates > 0 ? <p role="status">有{dashboard.accounts_with_incomplete_management_dates}个账户缺少完整管理日期，未纳入期间统计；请在客户与账户中补齐后核对。</p> : null}
       </> : null}
       </WorkflowSection>
-      <WorkflowSection id="dashboard-next" title="第3步 · 按需要前往处理" description="选择与本次任务对应的入口。客户查询会带入本页年季；其他页面进入后仍需选择并核对客户、期间或账单。">
+      <WorkflowSection id="dashboard-next" title="相关查询" description="查询会带入本页所选年季。">
         <div className="workflow-links">
           <a href={`#/clients?year=${year}${quarter ? `&quarter=${quarter}` : ""}`}><strong>查看本期客户与账户</strong><span>核对在管客户及管理日期；新增客户使用该页的新增入口。</span></a>
-          <a href="#/settlements"><strong>计算本季收费</strong><span>先备齐结余、资金记录和凭证，再计算并人工复核锁定。</span></a>
-          <a href="#/invoices"><strong>出具客户账单</strong><span>核对已锁定来源及收款公司，再正式出具缴费单。</span></a>
-          <a href="#/payments"><strong>处理收款与凭证</strong><span>按账单核对收款、查看已付款凭证，或处理错单更正。</span></a>
         </div>
       </WorkflowSection>
     </div>

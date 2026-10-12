@@ -27,17 +27,16 @@ test("底部下一步仅在点击后按业务顺序跳转，收款页结束流�
   expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
 });
 
-test.each([false, true])("初始化慢请求不覆盖用户导航（已导航=%s）", async (navigate) => {
-  let resolve!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((done) => { resolve = done; })));
+test("没有收款公司也停留工作台，功能导航不依赖公司初始化请求", async () => {
+  const fetcher = vi.fn(async () => new Response("[]"));
+  vi.stubGlobal("fetch", fetcher);
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   render(<App />);
   expect(await screen.findByText("概览页面")).toBeTruthy();
-  if (navigate) fireEvent.click(screen.getByRole("button", { name: /客户与账户/ }));
-  await act(async () => resolve(new Response("[]")));
-  expect(await screen.findByText(navigate ? "客户页面" : "设置页面")).toBeTruthy();
-  expect(screen.queryByText("本地数据库已连接")).toBeNull();
-  expect(screen.queryByRole("button", { name: "安全退出系统" })).toBeNull();
+  expect(screen.queryByText("设置页面")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "客户与账户", exact: true }));
+  expect(await screen.findByText("客户页面")).toBeTruthy();
+  expect(fetcher).not.toHaveBeenCalled();
 });
 
 test("直接打开功能地址及前进后退不被首次设置检查覆盖", async () => {

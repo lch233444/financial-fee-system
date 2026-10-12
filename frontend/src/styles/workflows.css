@@ -34,7 +34,7 @@
 
 .client-card-copy span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 3px;
    }
 
@@ -55,13 +55,13 @@
 
 .client-account-table th, .client-account-table td {
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .client-account-empty {
   padding: 16px 14px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .check-field {
@@ -69,7 +69,7 @@
   align-items: center;
   gap: 8px;
   color: #536771;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .check-field input {
@@ -106,7 +106,7 @@
 
 .upload-box span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 3px;
    }
 
@@ -192,13 +192,13 @@
    }
 
 .import-list strong {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .import-list small {
   color: var(--muted);
   margin-top: 2px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .document-preview {
@@ -216,7 +216,7 @@
   justify-content: space-between;
   align-items: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .warning-list {
@@ -231,7 +231,7 @@
   border-left: 3px solid #e2a23d;
   padding: 8px 10px;
   border-radius: 0 7px 7px 0;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .readonly-grid {
@@ -253,11 +253,11 @@
 
 .readonly-grid small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .readonly-grid b {
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 4px;
    }
 
@@ -293,13 +293,13 @@
    }
 
 .confirmed-receipt > header strong {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .confirmed-receipt > header span {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .confirmed-trace-grid {
@@ -322,14 +322,14 @@
 
 .confirmed-trace-grid small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .confirmed-trace-grid b {
   margin-top: 4px;
   overflow-wrap: anywhere;
   color: #334f5e;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .confirmed-next-step {
@@ -339,20 +339,20 @@
   background: #f4f8fa;
   border-left: 3px solid #5a93ad;
   border-radius: 0 8px 8px 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
    }
 
 .confirmed-audit-reference {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .review-holdings {
   display: grid;
   gap: 7px;
   color: #425b68;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .review-holdings .table-wrap {
@@ -362,7 +362,7 @@
 
 .review-holdings th, .review-holdings td {
   padding: 7px 8px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .text-link {
@@ -423,7 +423,7 @@
 .ai-assistant-copy span {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-not-run, .ai-failure {
@@ -432,7 +432,7 @@
   gap: 8px;
   padding: 10px 11px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
    }
 
@@ -480,13 +480,13 @@
 
 .ai-comparison-heading strong {
   color: #304c5b;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-comparison-heading div > span {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-comparison-table {
@@ -499,7 +499,7 @@
   grid-template-columns: 1.1fr 1.2fr 1.2fr 1.5fr;
   align-items: center;
   border-top: 1px solid #e8edef;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-comparison-row > * {
@@ -514,7 +514,7 @@
   color: var(--muted);
   background: #f9fbfc;
   text-transform: uppercase;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
    }
 
@@ -565,7 +565,7 @@
   padding: 3px 5px;
   color: #536974;
   background: white;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .comparison-actions button:hover {
@@ -579,7 +579,7 @@
   color: var(--muted);
   background: #f8fafb;
   border-top: 1px solid #e4eaed;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
    }
 
@@ -605,13 +605,13 @@
    }
 
 .conflict-acknowledgement strong {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .conflict-acknowledgement small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-review-register {
@@ -632,11 +632,11 @@
    }
 
 .ai-review-register-heading strong {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-review-register-heading span {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-review-register-row {
@@ -645,7 +645,7 @@
   grid-template-columns: 1.35fr 1.15fr 1.15fr 1.35fr;
   align-items: center;
   border-top: 1px solid #eee3cd;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-review-register-row > * {
@@ -664,7 +664,7 @@
   color: #876a3e;
   background: #fffaf0;
   text-transform: uppercase;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
    }
 
@@ -674,19 +674,19 @@
 
 .ai-review-register-row strong {
   color: #3c5663;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .ai-review-register-row small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   word-break: break-all;
    }
 
 .ai-review-register-row b {
   color: #9c5b15;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holdings-source-review {
@@ -711,13 +711,13 @@
 
 .holdings-source-toolbar strong {
   color: #304c5b;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holdings-source-toolbar span {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holdings-source-buttons {
@@ -736,7 +736,7 @@
   background: #fff;
   border: 1px solid #d2dde2;
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
    }
 
@@ -793,13 +793,13 @@
 
 .holding-source-card-heading strong {
   color: #36505e;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holding-source-card-heading span {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holding-source-card-heading > b {
@@ -807,7 +807,7 @@
   align-items: center;
   gap: 4px;
   color: #26735a;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
    }
 
@@ -822,7 +822,7 @@
 
 .holding-source-card th, .holding-source-card td {
   padding: 7px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .holding-source-empty {
@@ -831,7 +831,7 @@
   place-items: center;
   padding: 16px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   text-align: center;
    }
 
@@ -845,7 +845,7 @@
 .settlement-instructions {
   margin: 0 20px 18px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
 }
 
@@ -865,7 +865,7 @@
   min-height: 54px;
   padding: 8px 10px;
   border-bottom: 1px solid #edf1f3;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .account-entry:last-child {
@@ -876,7 +876,7 @@
   min-height: 36px;
   background: #f5f8fa;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   text-transform: uppercase;
   font-weight: 700;
    }
@@ -926,7 +926,7 @@
 
 .calculation-grid small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   margin-bottom: 5px;
    }
 
@@ -962,7 +962,7 @@
   background: #f7fafb;
   border: 1px solid #dfe7eb;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .internal-export-toolbar label {
@@ -1009,7 +1009,7 @@
 
 .invoice-summary header span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 3px;
    }
 
@@ -1033,7 +1033,7 @@
 
 .invoice-source-summary small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-source-summary strong {
@@ -1052,7 +1052,7 @@
 
 .invoice-amount small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-amount .money {
@@ -1065,7 +1065,7 @@
   gap: 12px;
   align-items: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-balance .status {
@@ -1084,7 +1084,7 @@
 
 .invoice-account-lines th, .invoice-account-lines td {
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-group-preview {
@@ -1115,13 +1115,13 @@
 
 .invoice-group-preview header strong {
   color: #2d4a59;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-group-preview header span, .invoice-group-preview header small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-group-preview .invoice-account-lines {
@@ -1136,7 +1136,7 @@
   background: #fff7e8;
   border: 1px solid #ebd0a2;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
    }
 
@@ -1165,7 +1165,7 @@
 .invoice-recovery span {
   margin-top: 4px;
   color: #786b95;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-recovery .invoice-actions {
@@ -1220,7 +1220,7 @@
   background: #eef6f9;
   border: 1px solid #cfe2ea;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-chain {
@@ -1244,13 +1244,13 @@
 
 .correction-chain small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-chain strong {
   margin: 4px 0 8px;
   color: #324e5d;
-  font-size: 13px;
+  font-size: 14px;
   overflow-wrap: anywhere;
    }
 
@@ -1270,7 +1270,7 @@
   background: #f5f1fb;
   border: 1px solid #e1d8f2;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-payment {
@@ -1291,12 +1291,12 @@
 .correction-payment > div:first-child span {
   margin: 4px 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-payment > div:first-child small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-refund-fields {
@@ -1312,7 +1312,7 @@
   grid-column: 1 / -1;
   padding: 7px 9px;
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .correction-balance-note.balanced {
@@ -1348,7 +1348,7 @@
   background: #f7fafb;
   border: 1px solid #dfe7eb;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
   text-align: center;
    }
 
@@ -1398,7 +1398,7 @@
 
 .system-grid small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .system-grid strong {
@@ -1462,7 +1462,7 @@
 .assistant-settings-main p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
    }
 
@@ -1487,7 +1487,7 @@
 
 .assistant-facts small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .assistant-facts strong {
@@ -1500,7 +1500,7 @@
 .assistant-facts em {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   font-style: normal;
   overflow-wrap: anywhere;
    }
@@ -1524,7 +1524,7 @@
    }
 
 .device-code span {
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .device-code strong {
@@ -1557,13 +1557,13 @@
 .document-routing-notice p {
   margin: 6px 0;
   color: #7b6545;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
    }
 
 .document-routing-notice>div>span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .document-routing-details {
@@ -1587,13 +1587,13 @@
 
 .document-routing-details small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .document-routing-details b {
   margin-top: 3px;
   color: #594a35;
-  font-size: 13px;
+  font-size: 14px;
   overflow-wrap: anywhere;
    }
 
@@ -1614,7 +1614,7 @@
 
 .correction-record-table th, .correction-record-table td {
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
    }
 
 .invoice-list-filters {
@@ -1659,7 +1659,7 @@
 .document-preview-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .document-preview-actions a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; text-decoration: none; padding: 8px 12px; border: 1px solid #bfd0dd; border-radius: 8px; background: #edf3f7; color: #225576; }
 .document-preview-dialog header > div:first-child { min-width: 0; }
-.snapshot-source-link { font-size: 12px; text-align: left; }
+.snapshot-source-link { font-size: 14px; text-align: left; }
 .snapshot-source-link, .cash-ledger-table td .text-link, .record-archive td .text-link { white-space: nowrap; border: 0; background: transparent; padding: 0; min-height: 44px; }
 @media (max-width: 900px) { .invoice-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .invoice-list-filters { grid-template-columns: 1fr; } .payment-evidence-dialog { padding: 16px; } }

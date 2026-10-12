@@ -25,6 +25,7 @@ test("Excel按计划与年季客户联合筛选，切换清空旧勾选，提交
   vi.mocked(download).mockClear();
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /导出 Excel/ }));
   const panel = within(screen.getByRole("region", { name: "公司内部财务Excel" }));
   await waitFor(() => expect(panel.getAllByRole("checkbox").length).toBeGreaterThan(1));
   fireEvent.change(panel.getByLabelText("年份"), { target: { value: "2026" } });

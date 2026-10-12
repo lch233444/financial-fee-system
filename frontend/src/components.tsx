@@ -5,7 +5,6 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle: strin
   return (
     <div className="page-header">
       <div>
-        <span className="page-eyebrow">金融计划收费系统／工作台</span>
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>

@@ -49,6 +49,7 @@ function scenario(paid = false, open = false) {
 test("未收款Invoice明确选择另一家公司后提交，刷新后保留原来源可建立替代单", async () => {
   const db = scenario();
   render(<InvoicesPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /查询已有账单/ }));
   fireEvent.click(await screen.findByRole("button", { name: "查看原公司-FC-20260908-1" }));
   fireEvent.click(screen.getByRole("button", { name: "更正账单", exact: true }));
   const select = screen.getByRole("combobox", { name: /^收款公司/ });
@@ -59,6 +60,7 @@ test("未收款Invoice明确选择另一家公司后提交，刷新后保留原�
   await screen.findByRole("button", { name: "建立或查看替代账单" });
   expect(db.posts).toEqual([{ path: "/api/invoices/1/corrections", body: { target_company_id: 2, recalculate_settlements: false, reason: "更正本张账单收款公司" } }]);
   expect(screen.queryByText(/请先在结算页按版本链作废/)).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: /建立新账单/ }));
   fireEvent.focus(screen.getByRole("combobox", { name: "客户季度账单组合" }));
   expect(screen.getByRole("option", { name: /陳大文.*120.00/ })).toBeTruthy();
 });
@@ -66,6 +68,7 @@ test("未收款Invoice明确选择另一家公司后提交，刷新后保留原�
 test("已收款Invoice统一更正表单锁定收款公司", async () => {
   const db = scenario(true);
   render(<InvoicesPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /查询已有账单/ }));
   fireEvent.click(await screen.findByRole("button", { name: "查看原公司-FC-20260908-1" }));
   const button = screen.getByRole("button", { name: "更正账单", exact: true });
   fireEvent.click(button);
@@ -92,6 +95,7 @@ test("原Settlement保持不变的公司替代单可以完成关联，完成前�
 test("同一次更正可选择新公司并重新核算", async () => {
   const db = scenario();
   render(<InvoicesPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /查询已有账单/ }));
   fireEvent.click(await screen.findByRole("button", { name: "查看原公司-FC-20260908-1" }));
   fireEvent.click(screen.getByRole("button", { name: "更正账单", exact: true }));
   expect(screen.queryByRole("button", { name: "更正收款公司", exact: true })).toBeNull();
@@ -110,6 +114,7 @@ test("处理中普通更正可在同一表单改公司并携带原版本号保�
   db.records["/api/invoices"] = db.records["/api/invoices"].slice(0, 1);
   Object.assign(db.records["/api/invoice-corrections"][0] as object, { target_company_id: null, target_company_name: null, recalculate_settlements: true });
   render(<InvoicesPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /查询已有账单/ }));
   fireEvent.click(await screen.findByRole("button", { name: "查看原公司-FC-20260908-1" }));
   fireEvent.click(screen.getByRole("button", { name: "调整本次更正" }));
   const recalc = screen.getByRole("checkbox", { name: "需要重新核算费用／结算来源" });
@@ -127,6 +132,7 @@ test("处理中普通更正可在同一表单改公司并携带原版本号保�
 test("未选择实际更正内容时禁止提交，取消不写入", async () => {
   const db = scenario();
   render(<InvoicesPage notify={vi.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: /查询已有账单/ }));
   fireEvent.click(await screen.findByRole("button", { name: "查看原公司-FC-20260908-1" }));
   fireEvent.click(screen.getByRole("button", { name: "更正账单", exact: true }));
   fireEvent.change(screen.getByLabelText("更正原因"), { target: { value: "尚未选择更正内容" } });

@@ -1,3 +1,4 @@
+import { TaskTabs, TaskView } from "../TaskTabs";
 import ChineseDateInput from "../ChineseDateInput";
 import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -19,6 +20,8 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   const platforms = useApiList<Platform>("/api/platforms");
   const plans = useApiList<FeePlan>("/api/fee-plans");
   const [accountClientId, setAccountClientId] = useState("");
+  const [importerBusy, setImporterBusy] = useState(false);
+  const [creationMode, setCreationMode] = useState<"client-auto" | "client-manual-entry">("client-auto");
   const [view, setView] = useState<"query" | "create">("query");
   const [filters, setFilters] = useState({ ...defaultRecordFilters, year: initialYear, quarter: initialQuarter });
   const [queryScope, setQueryScope] = useState<"period" | "all">("period");
@@ -117,8 +120,8 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
 
   return (
     <div className="workflow-page">
-      <PageHeader title="客户与账户" subtitle="查已有资料请选择“查询信息”；建立客户及账户请选择“新增客户”。一个客户可有多个独立收费账户。" />
-      <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
+      <PageHeader title="客户与账户" subtitle="管理客户资料与独立收费账户。首次办理先新增客户，已有客户可直接查询。" />
+      <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
       {error ? <ErrorBanner message={error} /> : null}
       {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；中介人及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
         <WorkflowStep number={1} title="选择查询范围与条件" detail="查看当前在管客户可按年季筛选；查找无账户或待补全客户，请切换到全部档案。" />
@@ -145,8 +148,14 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
       </Panel> : null}
 
       <div hidden={view !== "create"}>
-      <p className="workflow-intro"><strong>先选择一种建档方式</strong>有原始账单可使用自动导入；需要直接填写资料可使用手动导入。已有客户新增账户可直接进入手动导入第2步。</p>
-      {view === "create" ? <WorkflowSection id="client-import" title="自动导入" description="上传原件 → 选择导入记录 → 核对资料并确认。确认成功后，可在查询信息中查看客户及账户。"><ImportsPage notify={notify} embedded guided title="新增客户自动导入" onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></WorkflowSection> : null}
+      <TaskTabs label="建档方式" value={creationMode} onChange={setCreationMode} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} items={[
+        { id: "client-auto", label: "自动导入", detail: "有原始账单，识别后人工核对" },
+        { id: "client-manual-entry", label: "手动导入", detail: "直接填写客户与账户资料" },
+      ]} />
+      <TaskView id="client-auto" active={creationMode === "client-auto"}>
+      {view === "create" ? <WorkflowSection id="client-import" title="自动导入" description="上传原件 → 选择导入记录 → 核对资料并确认。确认成功后，可在查询信息中查看客户及账户。"><ImportsPage notify={notify} onBusyChange={setImporterBusy} embedded guided title="新增客户自动导入" onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></WorkflowSection> : null}
+      </TaskView>
+      <TaskView id="client-manual-entry" active={creationMode === "client-manual-entry"}>
       <WorkflowSection id="client-manual" title="手动导入" description="新客户先建立客户档案，再建立账户；已有客户可直接选择其档案新增账户。">
       <div className="split-layout">
         <Panel id="client-create" title="新增客户" step="第1步 · 建立客户档案" subtitle="填写中介人、姓名及管理开始日期；建立受管账户后才计为在管客户。">
@@ -175,6 +184,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
         </Panel>
       </div>
       </WorkflowSection>
+      </TaskView>
       </div>
     </div>
   );

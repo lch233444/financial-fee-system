@@ -85,6 +85,7 @@ describe("保存成功后立即更新页面", () => {
     const db = mockDatabase();
     render(<ClientsPage notify={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
+    fireEvent.click(screen.getByRole("tab", { name: /手动导入/ }));
     await screen.findByRole("option", { name: "原FC" });
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);

@@ -27,6 +27,8 @@ test.each(["结算客户", "导出客户", "历史结算客户"])("%s用实际�
   };
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(data[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
+  if (label === "导出客户") fireEvent.click(screen.getByRole("tab", { name: /导出 Excel/ }));
+  if (label === "历史结算客户") fireEvent.click(screen.getByRole("tab", { name: /历史记录/ }));
   const input = screen.getByRole("combobox", { name: label });
   fireEvent.focus(input);
   const chosen = await screen.findByRole("option", { name: /SAME-NAME-2/ });

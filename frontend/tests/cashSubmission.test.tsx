@@ -37,6 +37,7 @@ async function setup(onWrite?: (path: string, options: RequestInit) => Response 
 }
 
 async function fillTransaction() {
+  fireEvent.click(screen.getByRole("tab", { name: /登记资金变动/ }));
   const panel = screen.getByRole("region", { name: "导入供款加款取款", exact: true });
   fireEvent.focus(within(panel).getByRole("combobox", { name: "资金记录账户" }));
   fireEvent.click(await within(screen.getByRole("listbox")).findByRole("option", { name: /SYN-001/ }));
@@ -86,6 +87,7 @@ test("上传失败不创建资金记录，已填写金额保持", async () => {
 test("手动结余多张图片同次关联，不提供资格复选框或关联记录选择器", async () => {
   let id = 80;
   const fetcher = await setup(() => new Response(JSON.stringify({ id: ++id })));
+  fireEvent.click(screen.getByRole("tab", { name: /导入季度结余/ }));
   fireEvent.click(screen.getByRole("button", { name: "手动填写并附图" }));
   const panel = screen.getByRole("region", { name: "导入季度结余", exact: true });
   fireEvent.focus(within(panel).getByRole("combobox", { name: "季度结余账户" }));
@@ -104,16 +106,19 @@ test("手动结余多张图片同次关联，不提供资格复选框或关联�
 test("两张录入表单分别选择账户，填写结余不会改变已填资金记录的户口或金额", async () => {
   const fetcher = await setup(undefined, true);
   const cashPanel = await fillTransaction();
+  fireEvent.click(screen.getByRole("tab", { name: /导入季度结余/ }));
   fireEvent.click(screen.getByRole("button", { name: "手动填写并附图" }));
   const balancePanel = screen.getByRole("region", { name: "导入季度结余", exact: true });
   fireEvent.focus(within(balancePanel).getByRole("combobox", { name: "季度结余账户" }));
   fireEvent.click(within(screen.getByRole("listbox", { name: "季度结余账户候选" })).getByRole("option", { name: /SYN-002/ }));
+  fireEvent.change(within(balancePanel).getByLabelText("结余金额（港币）"), { target: { value: "987.65" } });
+  fireEvent.click(screen.getByRole("tab", { name: /登记资金变动/ }));
   expect((within(cashPanel).getByRole("combobox", { name: "资金记录账户" }) as HTMLInputElement).value).toContain("SYN-001");
   expect((within(cashPanel).getByLabelText("金额（港币）") as HTMLInputElement).value).toBe("200.00");
-  fireEvent.change(within(balancePanel).getByLabelText("结余金额（港币）"), { target: { value: "987.65" } });
   fireEvent.change(within(cashPanel).getByLabelText(/原始凭证（必填/), { target: { files: [new File(["cash"], "cash.png")] } });
   fireEvent.submit(cashPanel.querySelector("form")!);
   await waitFor(() => expect(fetcher.mock.calls.some(([path, options]) => path === "/api/transactions" && options?.method)).toBe(true));
+  fireEvent.click(screen.getByRole("tab", { name: /导入季度结余/ }));
   expect((within(balancePanel).getByRole("combobox", { name: "季度结余账户" }) as HTMLInputElement).value).toContain("SYN-002");
   expect((within(balancePanel).getByLabelText("结余金额（港币）") as HTMLInputElement).value).toBe("987.65");
 });

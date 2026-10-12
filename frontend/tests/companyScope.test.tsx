@@ -12,6 +12,7 @@ test("客户不再选公司，账户计划包含原属其他公司的档案", as
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<ClientsPage notify={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
+    fireEvent.click(screen.getByRole("tab", { name: /手动导入/ }));
   const create = screen.getByRole("region", { name: "新增客户" });
   expect(within(create).queryByRole("combobox", { name: "收款公司" })).toBeNull();
   await within(create).findByRole("option", { name: /独立FC/ });

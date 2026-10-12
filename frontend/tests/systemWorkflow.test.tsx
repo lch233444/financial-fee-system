@@ -27,7 +27,9 @@ test("选择检查批次后，只在明确导出时发送对应请求", async ()
   expect((screen.getByLabelText("检查年度") as HTMLInputElement).value).toBe("2025");
   expect((screen.getByLabelText("检查季度") as HTMLSelectElement).value).toBe("2");
   expect(writes).toHaveLength(0);
+  fireEvent.click(screen.getByRole("tab", { name: /辅助识别/ }));
   expect((screen.getByRole("button", { name: "登录ChatGPT Pro" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("tab", { name: /备份与交接/ }));
   const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   const revoke = vi.fn();
   vi.stubGlobal("URL", class extends URL {
@@ -45,6 +47,7 @@ test("选择检查批次后，只在明确导出时发送对应请求", async ()
 
 test("选择导入文件后，取消覆盖确认不发送请求，确认后才安排恢复", async () => {
   const { writes, notify } = setup();
+  fireEvent.click(await screen.findByRole("tab", { name: /恢复数据/ }));
   const fileInput = await screen.findByLabelText("选择完整数据包ZIP") as HTMLInputElement;
   const file = new File(["synthetic zip"], "synthetic.zip", { type: "application/zip" });
   fireEvent.change(fileInput, { target: { files: [file] } });

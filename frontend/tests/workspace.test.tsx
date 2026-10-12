@@ -20,6 +20,7 @@ test("客户查询分页及状态筛选重置页码，与新增确认入口分�
   expect(within(directory).getByText("客户24")).toBeTruthy();
   expect(within(directory).queryByRole("button", { name: "下一页" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
+    fireEvent.click(screen.getByRole("tab", { name: /手动导入/ }));
   expect(screen.queryByRole("region", { name: "客户与账户清单" })).toBeNull();
   expect(screen.getByRole("textbox", { name: "客户姓名", exact: true })).toBeTruthy();
 
@@ -66,7 +67,11 @@ test("建立Invoice草稿的重复点击只产生一个请求", async () => {
   expect(writes[0]).toMatchObject({ payee_company_id: 5 });
   expect((screen.getByRole("button", { name: "正在建立…" }) as HTMLButtonElement).disabled).toBe(true);
   finish(new Response(JSON.stringify({ id: 1 })));
-  await screen.findByRole("button", { name: "建立草稿" });
+  await waitFor(() => expect(screen.getByRole("tab", { name: /查询已有账单/ }).getAttribute("aria-selected")).toBe("true"));
+  await waitFor(() => expect((screen.getByRole("tab", { name: /建立新账单/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("tab", { name: /建立新账单/ }));
+  expect((screen.getByRole("combobox", { name: "客户季度账单组合" }) as HTMLInputElement).value).toBe("");
+  expect(writes).toHaveLength(1);
 });
 
 test("页面异常提供明确恢复入口，避免整个工作台空白", () => {

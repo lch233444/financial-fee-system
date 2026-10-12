@@ -1,10 +1,11 @@
+import { TaskTabs, TaskView, TaskHelp } from "../TaskTabs";
 import { clientIdentityLabel, formatDate } from "../types";
 import GeneratedBills, { SettlementBillingStatus } from "../GeneratedBills";
 import SearchableSelect, { matchesSearch } from "../SearchableSelect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Calculator, CheckCircle2, Download, Trash2 } from "lucide-react";
 import { api, download, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, Loading, Pagination, WorkflowSection } from "../components";
+import { EmptyState, ErrorBanner, Field, Money, PageHeader, Panel, Loading, Pagination } from "../components";
 import { hwmBasis } from "../hwmBasis";
 import { settlementGroups } from "../settlementWorkspace";
 import { quarterDates, useApiList, usePagination } from "../hooks";
@@ -38,6 +39,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const settlements = useApiList<Settlement>("/api/settlements");
   const invoices = useApiList<Invoice>("/api/invoices");
   const currentYear = new Date().getFullYear();
+  const [task, setTask] = useState<"fee-work" | "fee-export" | "fee-history">("fee-work");
   const [clientId, setClientId] = useState("");
   const [platformId, setPlatformId] = useState("");
   const [planId, setPlanId] = useState("");
@@ -310,6 +312,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
   function showHistoricalResult(item: Settlement) {
     if (calculateBusyRef.current || finalizeBusyRef.current || deleteBusyRef.current || voidBusyRef.current) return;
+    setTask("fee-work");
     resultRevisionRef.current += 1;
     setError("");
     setResult(item);
@@ -352,9 +355,15 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
   return (
     <div className="workflow-page settlement-workflow">
-      <PageHeader title="账单计算" subtitle="先选客户和季度，再逐组计算，核对后锁定；完成本季所需组合后，继续到账单出具。" />
-      <div className="workflow-intro"><strong>开始前：备齐历史结余、资金记录和原始凭证</strong>客户及账户应已启用并分配收费计划；已有前序季度时，须先完成其锁定。仅查询旧记录或导出文件，可直接进入“查询与导出”。</div>
+      <PageHeader title="账单计算" subtitle="按客户和季度计算服务费，人工复核后锁定；可先导出 Excel，稍后出具账单。" />
+      <TaskTabs label="收费任务" value={task} onChange={setTask} disabled={settlementMutationBusy || exportBusy} items={[
+        { id: "fee-work", label: "计算与复核", detail: "选择客户季度，逐账户核算" },
+        { id: "fee-export", label: "导出 Excel", detail: "导出已锁定的收费明细" },
+        { id: "fee-history", label: "历史记录", detail: "查计算结果与已生成账单" },
+      ]} />
+      <TaskHelp title="计算前需要准备什么？">客户及账户须已启用并分配收费计划，备齐期初、期末结余和期间资金凭证；已有前序季度时，先完成其锁定。收款公司可在出具账单时再选择。</TaskHelp>
       {error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error ? <ErrorBanner message={error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error} /> : null}
+      <TaskView id="fee-work" active={task === "fee-work"}>
       <Panel id="settlement-groups" step="第1步 · 选择客户季度与组合" title="本季账户组合总览" subtitle={`${year}年第${quarter}季度 · 按客户、平台和收费计划分组。点击“建立此组合”进入第2步；已有计算可直接查看结果。已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>
         <div className="settlement-controls">
           <Field label="结算年份"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { resetCombination(); setYear(Number(e.target.value) || currentYear); }} /></Field>
@@ -423,7 +432,8 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         <div className="form-actions">{result.status === "DRAFT" ? <><button className="primary" disabled={settlementMutationBusy} onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />{finalizeBusy ? "锁定中..." : "确认并锁定"}</button><button className="danger" disabled={settlementMutationBusy} onClick={() => void deleteDraft(result)}><Trash2 size={17} />{deleteBusy ? "删除中..." : "删除草稿"}</button></> : result.status === "FINALIZED" ? <><button className="ghost" disabled={settlementMutationBusy} onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button><button className="danger" disabled={settlementMutationBusy} onClick={() => void voidFinalized(result)}><Ban size={17} />{voidBusy ? "作废处理中..." : "作废结算"}</button></> : null}</div>
       </Panel> : <Panel id="settlement-result" step="第3步 · 核对结果并锁定" title="等待计算结果"><EmptyState title="完成第2步后，在这里复核" detail="也可从本季组合或计算记录打开已有结果。计算保存草稿与正式锁定是两个独立操作。" /></Panel>}
 
-      <WorkflowSection id="settlement-records" title="查询与导出" description="已有结算和账单可直接查询；导出内部Excel无需重新计算。作废、更正请先核对历史依赖与原始凭证。">
+      </TaskView>
+      <TaskView id="fee-export" active={task === "fee-export"}>
       <Panel id="settlement-export" title="公司内部财务Excel" subtitle="筛选并选择已锁定结算；系统按公司原Excel模板批量导出，逐子账户保留独立高水位线与服务费">
         <div className="settlement-controls internal-export-filters">
           <Field label="年份"><select value={exportYear} onChange={(e) => setExportYear(Number(e.target.value))}>{exportYears.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
@@ -442,9 +452,11 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         </> : <EmptyState title="没有可导出的结算" detail="当前筛选条件下没有已锁定结算。草稿和已作废不会进入内部财务Excel。" />}
       </Panel>
 
+      </TaskView>
+      <TaskView id="fee-history" active={task === "fee-history"}>
       <GeneratedBills invoices={invoices.data} />
       <Panel id="settlement-history" title="计算记录"><div className="list-search"><Field group label="客户"><SearchableSelect label="历史结算客户" value={historyClientId} disabled={settlementMutationBusy} onChange={(value) => { setHistoryClientId(value); invalidateResult(); }} placeholder="搜索并选定客户后显示账户" options={clients.data.map((item) => ({ value: String(item.id), label: clientIdentityLabel(item, clients.data, accounts.data) }))} /></Field><Field label="搜索结算客户、平台、计划或账户"><input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="客户、平台、计划、账户或2026年第2季度" /></Field><Field label="计算锁定状态"><select value={historyStatus} onChange={(event) => setHistoryStatus(event.target.value)}><option value="">全部状态</option><option value="DRAFT">待锁定</option><option value="FINALIZED">已锁定</option><option value="VOID">已作废</option></select></Field></div>{settlements.loading ? <Loading /> : history.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>期间／版本</th><th>客户</th><th>投资平台／收费计划</th><th>子账户 / 平台计划</th><th>口径</th><th>期末结余</th><th>服务费</th><th>状态</th></tr></thead><tbody>{historyPages.rows.map((item) => <tr key={item.id} onClick={() => showHistoricalResult(item)} onKeyDown={(event) => { if (!settlementMutationBusy && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); showHistoricalResult(item); } }} role="button" tabIndex={settlementMutationBusy ? -1 : 0} aria-label={`查看${item.year}年第${item.quarter}季度 ${item.client_name} ${item.platform_name} ${item.fee_plan_name} 结算 版本${item.version_no}`} className={settlementMutationBusy ? "" : "clickable"}><td>{item.year}年第{item.quarter}季度<small className="cell-note">版本{item.version_no}{item.replaces_settlement_id ? ` · replaces #${item.replaces_settlement_id}` : ""}</small></td><td>{item.client_name}</td><td>{item.platform_name}<small className="cell-note">{item.fee_plan_name}</small></td><td><SettlementAccountList item={item} accountById={accountById} clientId={historyClientId} /></td><td>{item.calculation_mode === "ACCOUNT_HWM" ? "账户级" : "历史组合"}</td><td><Money value={item.closing} /></td><td><Money value={item.service_fee} /></td><td><SettlementBillingStatus settlement={item} invoices={invoices.data} />{item.status === "VOID" && item.void_reason ? <small className="cell-note">{item.void_reason}</small> : null}</td></tr>)}</tbody></table></div> : <EmptyState title="暂无结算" detail="调整搜索和状态筛选，或上方建立第一份季度结算。" />}<Pagination {...historyPages} /></Panel>
-      </WorkflowSection>
+      </TaskView>
     </div>
   );
 }

@@ -47,6 +47,7 @@ test("流水筛选改变时清除已选账户但保留已输入金额，不能�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<TransactionsPage notify={vi.fn()} />);
   await choose("资金与余额客户", "客户甲");
+  fireEvent.click(screen.getByRole("tab", { name: /登记资金变动/ }));
   const form = within(screen.getByRole("region", { name: "导入供款加款取款", exact: true }));
   const account = form.getByRole("combobox", { name: "资金记录账户", exact: true });
   fireEvent.focus(account);

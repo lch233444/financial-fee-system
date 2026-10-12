@@ -44,6 +44,7 @@ export default function DocumentPreviewDialog({ document: initialSource, documen
     </header>
     {documents && documents.length > 1 ? <nav className="proof-document-list" aria-label="原始凭证列表">{documents.map((item, index) => <button className="ghost" type="button" key={item.path} aria-pressed={item.path === source.path} onClick={() => setSelectedPath(item.path)}>{item.label || item.filename || `凭证 ${index + 1}`}</button>)}</nav> : null}
     {error ? <ErrorBanner message={error} /> : !preview ? <Loading /> : <div className="payment-proof-preview">
+      {preview.type === "application/pdf" && source.filename ? <p className="image-zoom-hint">PDF由浏览器显示；若下方为空白，请点击右上角“下载”后查看。</p> : null}
       {/^image\/(png|jpeg)$/.test(preview.type) ? <ZoomableImage key={preview.url} src={preview.url} alt={source.title} />
         : preview.type === "application/pdf" ? <object data={`${preview.url}#toolbar=0`} type="application/pdf" aria-label={`${source.title} PDF`}><p>浏览器暂不能显示此PDF。{source.filename ? "请使用下载按钮查看。" : "请使用支持PDF预览的浏览器查看。"}</p></object>
         : <p>此文件格式暂不支持弹窗预览。{source.filename ? "请使用下载按钮查看。" : ""}</p>}

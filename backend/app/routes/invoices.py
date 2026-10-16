@@ -451,8 +451,8 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         source.locked_amount_cents = source_total_cents
         invoice_total_cents += source_total_cents
 
-    if invoice_total_cents <= 0:
-        raise HTTPException(status_code=400, detail="该组Service Fee合计为0，只生成结算单，不生成Invoice")
+    if invoice_total_cents < 0:
+        raise HTTPException(status_code=400, detail="账单服务费合计不能为负数")
     item.amount_cents = invoice_total_cents
     try:
         db.commit()
@@ -1056,6 +1056,8 @@ def create_payment(invoice_id: int, payload: PaymentCreate, db: Session = Depend
     item = _reload_invoice(db, invoice_id)
     if item.lifecycle_status != "ISSUED":
         raise HTTPException(status_code=409, detail="只有Issued Invoice可以登记付款")
+    if item.amount_cents == 0:
+        raise HTTPException(status_code=409, detail="零金额账单无需付款，不能登记收款或公司差额")
     pending_replacement = _pending_replacement_correction(db, item)
     if pending_replacement is not None:
         raise HTTPException(

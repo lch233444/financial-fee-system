@@ -25,6 +25,20 @@ def _notice(*, bank="Bank: Example Bank\nAccount: 000-123-456", cheque=None):
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
+def test_zero_notice_marks_no_payment_without_bank_instructions(tmp_path, language):
+    notice = _notice(cheque="Payable to Example Company")
+    notice.amount_cents = 0
+    path = generate_invoice_pdf(invoice=notice, output_path=tmp_path / "zero.pdf", language=language)
+    pages = PdfReader(path).pages
+    assert len(pages) == 1
+    text = pages[0].extract_text()
+    assert "HKD 0.00" in text and notice.invoice_number in text
+    assert ("No payment" if language == "en" else "無需付款") in text
+    assert "000-123-456" not in text and "Payable to Example Company" not in text
+    assert "30 Sep 2026" not in text and "30/09/2026" not in text
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
 def test_notice_uses_total_without_calculation_data(tmp_path, language) -> None:
     path = generate_invoice_pdf(
         invoice=_notice(), output_path=tmp_path / "notice.pdf", language=language,

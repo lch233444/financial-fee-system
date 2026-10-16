@@ -74,6 +74,7 @@ export function StatusBadge({ value }: { value: string }) {
     "needs-review": "待复核",
     paid: "已付清",
     unpaid: "未付款",
+    "not-required": "无需付款",
     "partially-paid": "部分付款",
     overdue: "已逾期",
     closed: "已结束",

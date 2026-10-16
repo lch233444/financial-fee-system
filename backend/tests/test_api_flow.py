@@ -209,7 +209,7 @@ def test_full_settlement_invoice_and_payment_flow() -> None:
         assert duplicate.status_code == 409
 
 
-def test_zero_fee_settlement_cannot_create_invoice() -> None:
+def test_zero_fee_settlement_can_create_no_payment_invoice() -> None:
     with TestClient(app, headers=WRITE_HEADERS) as client:
         # 使用不同编码以免与前一个测试共享唯一键冲突。
         company = client.post("/api/companies", json={"name": "Beta Limited", "code": "BBB"}).json()
@@ -269,4 +269,6 @@ def test_zero_fee_settlement_cannot_create_invoice() -> None:
                 "language": "zh",
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 201, response.text
+        assert response.json()["amount"] == "0.00"
+        assert response.json()["payment_status"] == "NOT_REQUIRED"

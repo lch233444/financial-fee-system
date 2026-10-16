@@ -160,6 +160,8 @@ def _active_payment_allocations(item: Invoice) -> list:
 
 def invoice_payment_status(item: Invoice, today: date | None = None) -> str:
     _ = today  # Kept for callers from earlier versions; overdue is now a separate flag.
+    if item.amount_cents == 0:
+        return "NOT_REQUIRED"
     _, _, outstanding_cents = invoice_accounting_cents(item)
     return "PAID" if outstanding_cents == 0 else "UNPAID"
 

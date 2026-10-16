@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from app.services.backup import validate_database_structure
+from app.services.backup import CURRENT_DATABASE_REVISION, validate_database_structure
 from app.services.finance_meeting_contract import MEETING_REVISION, meeting_schema_is_current
 from test_deletion_guard_migration import _alembic_config, _settings, _trigger_sql
 
@@ -36,7 +36,7 @@ def test_migration_removes_only_codes_and_keeps_legacy_financial_rows(tmp_path, 
             assert db.execute(f'SELECT * FROM {table}').fetchall() == rows
         assert db.execute('SELECT * FROM fcs').fetchall() == fc
         assert db.execute('SELECT * FROM fee_plans').fetchall() == plan
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone() == (MEETING_REVISION,)
+        assert db.execute('SELECT version_num FROM alembic_version').fetchone() == (CURRENT_DATABASE_REVISION,)
 
 
 def test_meeting_migration_ddl_failure_rolls_back_schema_and_retries(tmp_path, monkeypatch):

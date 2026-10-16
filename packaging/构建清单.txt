@@ -1,10 +1,10 @@
-金融计划收费计算系统 MVP 1.1.5 Windows运行版构建清单
-文档修订：2026-10-12。本批仅更新前端资源及文档，沿用10月9日构建的1.1.5 EXE；未重新编译Windows程序。最新验证、备份与交付限制以docs/项目说明书.md第12.35节为准，原EXE完整构建验收见12.32节。
+金融计划收费计算系统 MVP 1.1.6 Windows运行版构建清单
+文档修订：2026-10-16。本批重新构建1.1.6 Windows程序，包含零金额账单迁移、无需付款状态及原件窗口拖动。最新验证、备份与交付状态以docs/项目说明书.md第12.36节为准。
 
 一、当前构建契约
-- 应用版本：1.1.5；Windows ProductVersion：1.1.5；FileVersion：1.1.5.0。
-- 数据库目标head：c921f0181100；目标60个Trigger；结构数量不能替代业务验收。
-- 常规完整构建输出：release/FinancialFeeSystem。10月12日前端候选独立位于release/frontend-20261012/FinancialFeeSystem；验收及恢复临时根F:\ui12-b73e，历史受阻目录不重试。
+- 应用版本：1.1.6；Windows ProductVersion：1.1.6；FileVersion：1.1.6.0。
+- 数据库目标head：d016f0ee1160；目标60个Trigger；结构数量不能替代业务验收。
+- 常规完整构建输出：release/FinancialFeeSystem。本轮候选独立位于release/zero-fee-20261016/FinancialFeeSystem；验收及恢复临时根F:\zf16，历史受阻目录不重试。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -12,13 +12,13 @@
 - Tesseract版本5.5.3.20260724；tools/Tesseract-OCR/tesseract.exe：C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - packaging/tesseract-runtime.json固定95个实际OCR运行文件哈希，包括所有DLL、eng/osd语言及配置；复制为运行包Tesseract-OCR/runtime-manifest.json。安装文件不符即停止，不以修改清单绕过。
 - scripts/check-ocr-runtime.py先核对源组件及语言启动，打包后实际启动EXE，合成PNG/JPG/扫描PDF经上传接口验证账户、日期和余额仍为待复核；覆盖仅剩EXE、再次缺DLL缓存修复及原件reparse，不运行Sol。报告存docs/build-dependencies/ocr-smoke.json。
-- 10月9日完整构建的OCR及临时目录位于F:\p9；10月12日使用F:\ui12-b73e，已实际验证最长恢复路径创建、解压、复制，本轮未重跑OCR。
+- 本轮使用F:\zf16，实际验证240字符恢复路径创建、解压和复制；冻结EXE完成合成PNG/JPG/扫描PDF识别及缓存修复验收，不调用AI。
 - 唯一Excel母版：新收费计划计算纯净版模板.xlsx；SHA-256：16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 - 客户PDF在Windows优先使用系统微软正黑体常规/粗体，回退微软雅黑及原有字体候选；不另行打包商业字体。英文含中文公司/客户资料时也须验证原名完整显示。
 
 二、执行顺序和产物
-- 常规完整构建入口scripts/build-windows.ps1。10月12日仅运行前端全套测试与生产构建，沿用已有1.1.5 EXE，在独立候选及正式包检查运行、资源和数据一致性；不把10月9日后端658项成绩重复计入本轮。
+- 常规完整构建入口scripts/build-windows.ps1。本轮使用该脚本的独立输出副本F:\zf16\build.ps1，保留依赖、签名、模板及冻结EXE OCR检查；测试独立先行，避开脚本对既有release父目录的清理。实际执行脚本及日志随验收证据归档。
 - 先test_system_backup.py，再按文件名执行其余完整后端测试；前端交互测试和生产构建由同一脚本先行执行。
 - Codex两个EXE、Tesseract、模板和版本任一校验失败即停止。不得通过更改文档哈希掩盖实际组件变更。
 - 包含完整运行依赖、前端资源、迁移文件、Tesseract、Codex、启动脚本，以及当前README、AGENTS、docs、发布说明和构建清单。
@@ -28,7 +28,7 @@
 
 三、交付门槛
 - 候选只连隔离合成数据；核对loopback、版本、API、全部静态文件、对应业务成功/拒绝路径及退出状态。
-- 八页375/768/1024/1440像素核对步骤、选择、页内定位、弹窗、键盘与窄屏；编译不替代实际视觉验收。
+- 涉及整套界面调整时，八页375/768/1024/1440像素核对步骤、选择、弹窗、键盘与窄屏；本轮针对账单与原件弹窗验证实际EXE操作、1920宽桌面拖动及375宽边界。编译不替代实际视觉验收。
 - 当前正式版本完整备份并严格验证，同版本恢复后以新版隔离启动；再核对正式未变化并切换新独立目录。
 - 核对旧程序配置并沿用F:\备份，启动时移除数据根环境覆盖；升级前后账目与业务文件逐项对照。
 - 最终文档既核对源码/包内字节一致，也核对当前版本、路径、规则、链接及接手提示词内容时效。

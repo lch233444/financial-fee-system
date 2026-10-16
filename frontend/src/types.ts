@@ -312,7 +312,7 @@ export type Invoice = {
   last_issue_status?: string | null;
   replacement_invoice_id?: number | null;
   original_invoice_id?: number | null;
-  payment_status: "UNPAID" | "PAID";
+  payment_status: "UNPAID" | "PAID" | "NOT_REQUIRED";
   is_overdue: boolean;
   issue_date: string | null;
   due_date: string | null;

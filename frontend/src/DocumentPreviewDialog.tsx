@@ -3,6 +3,7 @@ import { Download, X } from "lucide-react";
 import { fetchBlob } from "./api";
 import { ErrorBanner, Loading } from "./components";
 import ZoomableImage from "./ZoomableImage";
+import { useDraggableDialog } from "./useDraggableDialog";
 
 export type PreviewDocument = { path: string; title: string; filename?: string; label?: string };
 
@@ -12,6 +13,7 @@ export default function DocumentPreviewDialog({ document: initialSource, documen
   const [selectedPath, setSelectedPath] = useState(initialSource.path);
   const source = documents?.find((item) => item.path === selectedPath) || initialSource;
   const dialog = useRef<HTMLDialogElement>(null);
+  const { headerProps, center } = useDraggableDialog(dialog);
   const titleId = useId();
   const [loadedPreview, setPreview] = useState<{ path: string; url: string; type: string } | null>(null);
   const preview = loadedPreview?.path === source.path ? loadedPreview : null;
@@ -36,8 +38,9 @@ export default function DocumentPreviewDialog({ document: initialSource, documen
   }, [source.path]);
   return <dialog className="payment-evidence-dialog document-preview-dialog" ref={dialog} aria-labelledby={titleId}
     onCancel={(event) => { event.preventDefault(); onClose(); }}>
-    <header><div><h2 id={titleId}>{source.title}</h2>{source.filename ? <p>{source.filename}</p> : null}</div>
+    <header {...headerProps}><div><h2 id={titleId}>{source.title}</h2>{source.filename ? <p>{source.filename}</p> : null}<small>按住标题栏可拖动窗口</small></div>
       <div className="document-preview-actions">
+        <button className="ghost" type="button" onClick={center}>窗口居中</button>
         {preview && source.filename ? <a className="secondary" href={preview.url} download={source.filename}><Download size={17} aria-hidden="true" />下载</a> : null}
         <button className="ghost icon-button" type="button" aria-label="关闭预览" onClick={onClose}><X size={20} /></button>
       </div>

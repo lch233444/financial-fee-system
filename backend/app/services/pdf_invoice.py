@@ -271,6 +271,9 @@ def generate_invoice_pdf(
         invoice.due_date.strftime("%d %b %Y" if is_english else "%d/%m/%Y")
         if invoice.due_date else "-"
     )
+    no_payment = invoice.amount_cents == 0
+    if no_payment:
+        due_date = "No payment required" if is_english else "無需付款"
     doc = SimpleDocTemplate(
         str(output_path), pagesize=A4,
         leftMargin=22 * mm, rightMargin=22 * mm,
@@ -343,13 +346,19 @@ def generate_invoice_pdf(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6 * mm),
     ]))
     method_min_height = method_heading.leading + method_heading.spaceAfter + 2 * body.leading + 4 * mm
-    story.extend([
-        fee_row, Spacer(1, 11 * mm),
+    story.extend([fee_row, Spacer(1, 11 * mm)])
+    if no_payment:
+        story.append(p(
+            "The service fee for this period is zero. No payment is required."
+            if is_english else "本期服務費為零，無需付款。", heading,
+        ))
+    else:
+        story.extend([
         CondPageBreak(payment_heading.leading + payment_heading.spaceAfter + 5 * mm + method_min_height),
         p(copy["payment"], payment_heading),
         HRFlowable(width="100%", thickness=0.5, color=INVOICE_RULE),
         Spacer(1, 5 * mm),
-    ])
+        ])
     # Company payment instructions remain free text. Align only explicitly
     # labelled bank fields; never infer missing bank data or alter prose/URLs.
     bank_labels = {
@@ -383,10 +392,10 @@ def generate_invoice_pdf(
         return p(line, payment_prose)
 
     has_payment_method = False
-    for label, text in (
+    for label, text in (() if no_payment else (
         (copy["bank"], company.bank_information),
         (copy["cheque"], company.cheque_information),
-    ):
+    )):
         if text and text.strip():
             if has_payment_method:
                 story.extend([
@@ -400,7 +409,7 @@ def generate_invoice_pdf(
             story.extend([CondPageBreak(method_min_height), p(label, method_heading)])
             for line in text.splitlines():
                 story.append(payment_line(line) if line.strip() else Spacer(1, body.leading))
-    if not has_payment_method:
+    if not no_payment and not has_payment_method:
         story.append(p(copy["contact"]))
 
     def page_furniture(canvas, document) -> None:

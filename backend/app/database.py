@@ -65,12 +65,14 @@ def init_db() -> None:
         if "superseded" in attachment_columns:
             from .services.backup import validate_database_structure
             from .services.finance_meeting_contract import MEETING_REVISION
+            from .services.zero_fee_invoice_contract import ZERO_FEE_REVISION, zero_fee_schema_is_current
             # Stamp only inside the transaction that validates the complete
             # current schema. A partial unversioned shape remains untouched.
             with engine.begin() as connection:
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
                 connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
-                connection.exec_driver_sql("INSERT INTO alembic_version VALUES (?)", (MEETING_REVISION,))
+                revision = ZERO_FEE_REVISION if zero_fee_schema_is_current(connection) else MEETING_REVISION
+                connection.exec_driver_sql("INSERT INTO alembic_version VALUES (?)", (revision,))
                 try:
                     validate_database_structure(connection.connection.driver_connection)
                 except ValueError as exc:

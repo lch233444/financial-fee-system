@@ -16,6 +16,7 @@ test("客户不再选公司，账户计划包含原属其他公司的档案", as
   const create = screen.getByRole("region", { name: "新增客户" });
   expect(within(create).queryByRole("combobox", { name: "收款公司" })).toBeNull();
   await within(create).findByRole("option", { name: /独立FC/ });
+  fireEvent.click(screen.getByRole("tab", { name: "2 · 建立账户" }));
   fireEvent.focus(screen.getByRole("combobox", { name: "新增账户客户" }));
   fireEvent.click(await screen.findByRole("option", { name: "客户", exact: true }));
   const form = screen.getByRole("region", { name: "新增子账户" });

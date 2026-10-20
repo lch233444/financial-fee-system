@@ -19,7 +19,7 @@ test("底部下一步仅在点击后按业务顺序跳转，收款页结束流�
   expect(await screen.findByText("客户页面")).toBeTruthy();
   expect(window.location.hash).toBe("#/clients");
   for (const [label, content, route] of [["资金与余额", "资金页面", "transactions"], ["账单计算", "计算页面", "settlements"], ["账单出具", "出具页面", "invoices"], ["收款情况", "收款页面", "payments"]]) {
-    fireEvent.click(screen.getByRole("button", { name: `下一步：${label}` }));
+    fireEvent.click(screen.getByRole("button", { name: `前往${label}` }));
     expect(await screen.findByText(content)).toBeTruthy();
     expect(window.location.hash).toBe(`#/${route}`);
   }

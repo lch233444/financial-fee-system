@@ -1,0 +1,67 @@
+/* Quiet, task-focused layer on the existing sidebar workspace. */
+.page-header { margin-bottom: 18px; }
+.page-header h1 { font-size: 24px; }
+.page-header h1, .panel-heading h2, .workflow-section-heading h2, .workflow-step h3 { display: flex; align-items: center; gap: 8px; }
+.panel { margin-bottom: 18px; padding: 0; }
+.panel-heading { margin-bottom: 0; }
+.panel-heading h2, .workflow-section-heading h2 { font-size: 18px; }
+.help-tip { display: inline-flex; vertical-align: middle; flex: 0 0 auto; }
+button.help-trigger { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-height: 32px; padding: 0; color: #64748b; background: transparent; border: 0; border-radius: 6px; box-shadow: none; }
+button.help-trigger:hover, button.help-trigger[aria-expanded="true"] { color: #2459ce; background: #edf3ff; }
+.help-popover { position: fixed; z-index: 1500; width: min(360px, calc(100vw - 16px)); max-height: min(400px, calc(100vh - 16px)); overflow: auto; padding: 16px; color: #334155; background: white; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 8px 28px #0f172a26; font-size: 14px; line-height: 1.65; font-weight: 400; }
+.help-popover > strong { display: block; margin-bottom: 6px; color: #102547; }
+.help-popover p { margin: 6px 0; }
+.task-help-inline { display: flex; align-items: center; gap: 2px; margin: -4px 0 12px; color: #64748b; font-size: 13px; }
+.task-tabs { gap: 8px; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #dce4ef; }
+.task-tabs > button { flex: 0 1 auto; min-height: 44px; padding: 10px 18px; border-radius: 7px; }
+.task-tabs > button strong { font-size: 15px; }
+.detail-back { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 0 0 18px; }
+.detail-back h2 { margin: 0; font-size: 18px; color: #243d60; scroll-margin-top: 24px; }
+.detail-back button { min-height: 44px; }
+.empty-state { min-height: 72px; padding: 18px; flex-direction: row; gap: 10px; background: #f8fafc; border-radius: 8px; }
+.empty-state-icon { width: 30px; height: 30px; margin: 0; background: transparent; }
+.empty-state strong { font-size: 14px; font-weight: 500; }
+.workflow-section { margin-bottom: 18px; }
+.workflow-section-heading { margin-bottom: 12px; }
+.workflow-step { margin: 14px 0 10px; padding: 0; border: 0; background: transparent; }
+.workflow-step-label { border-radius: 50%; min-width: 24px; text-align: center; }
+.workflow-form-heading { margin: 14px 0 8px; font-size: 15px; }
+.settlement-scope { padding: 12px 16px; margin: 16px 24px; }
+.workflow-map-disclosure { margin-bottom: 18px; color: #52627a; }
+.workflow-map-disclosure > summary { cursor: pointer; padding: 8px 0; font-size: 14px; }
+.workflow-map-disclosure .workflow-map { margin: 8px 0 0; }
+.module-next { padding: 12px 16px; }
+.module-next > p { display: none; }
+.workflow-page .panel { padding: 0; }
+.workflow-page .panel-heading { margin-bottom: 0; padding: 18px 24px 14px; }
+.workflow-page .panel-heading h2 { font-size: 18px; }
+.workflow-current { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 14px; margin: 0 24px 12px; border-left: 0; }
+.workflow-current p { margin: 0; }
+.list-count { color: #64748b; font-size: 13px; margin: 10px 24px; }
+.panel > .task-help-inline { margin: 0 24px 12px; }
+.panel > .compact-next { margin: 12px 24px; }
+.detail-back h2 { scroll-margin-top: 90px; }
+.workbench-heading p { margin: 6px 0 0; }
+.workbench-start { padding: 22px; }
+.task-cards a { min-height: 170px; padding: 20px; }
+.task-cards b { margin-top: 18px; }
+.client-card-copy > span { font-size: 14px; }
+.import-layout.review-layout { display: grid; grid-template-columns: minmax(230px, .7fr) minmax(0, 1.7fr); align-items: start; }
+.import-layout .document-preview { max-height: 420px; object-fit: contain; }
+.import-layout:not(.review-layout) { display: block; }
+.record-type-tabs { margin-bottom: 16px; }
+.filter-more { grid-column: 1 / -1; width: 100%; }
+.filter-more > summary { cursor: pointer; font-size: 14px; padding: 10px 0; color: #52627a; }
+.filter-more > .record-filters { margin-top: 12px; }
+.system-grid { margin-top: 16px; }
+.system-location { margin: 0 0 18px; }
+.system-location > summary { cursor: pointer; padding: 12px 0; }
+.compact-next { margin: 12px 0; color: #52627a; font-size: 14px; }
+@media (max-width: 800px) {
+  .import-layout.review-layout { grid-template-columns: minmax(0, 1fr); }
+  .task-tabs > button { padding: 10px 12px; }
+  .workflow-page .panel-heading { padding: 16px; }
+  .detail-back { gap: 8px; }
+  .detail-back h2 { font-size: 16px; overflow-wrap: anywhere; }
+}
+@media (pointer: coarse) { button.help-trigger { width: 44px; height: 44px; } }

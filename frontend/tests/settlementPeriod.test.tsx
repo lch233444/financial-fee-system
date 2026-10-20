@@ -37,7 +37,7 @@ test.each(["结算客户", "导出客户", "历史结算客户"])("%s用实际�
   fireEvent.click(chosen);
   expect((input as HTMLInputElement).value).toContain("SAME-NAME-2");
   if (label === "结算客户") {
-    const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+    const overview = within(screen.getByRole("region", { name: "1 · 选择客户与季度" }));
     expect(overview.getByText("SAME-NAME-2")).toBeTruthy();
     expect(overview.queryByText("SAME-NAME-1")).toBeNull();
   }
@@ -52,7 +52,7 @@ test("Closing选项按同账户日期判断，旧资格为false也可选；非�
   ] };
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(data[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
-  const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+  const overview = within(screen.getByRole("region", { name: "1 · 选择客户与季度" }));
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   await chooseClient();
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
@@ -66,7 +66,7 @@ test("Closing选项按同账户日期判断，旧资格为false也可选；非�
 test("组合总览先按年季选择，只有明确选定客户才显示其账户，换季清除旧组合及输入", async () => {
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
-  const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+  const overview = within(screen.getByRole("region", { name: "1 · 选择客户与季度" }));
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   await waitFor(() => expect((screen.getByRole("combobox", { name: "结算客户" }) as HTMLInputElement).disabled).toBe(false));
   expect(overview.queryByText("Q1-ONLY")).toBeNull();
@@ -79,6 +79,7 @@ test("组合总览先按年季选择，只有明确选定客户才显示其账�
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
   fireEvent.change(screen.getByLabelText("Q1-ONLY 期初高水位线"), { target: { value: "1234.56" } });
   fireEvent.change(screen.getByLabelText("Q1-ONLY 期初结余"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "返回选择" }));
   fireEvent.change(overview.getByLabelText("结算季度"), { target: { value: "2" } });
   expect(overview.queryByText("Q1-ONLY")).toBeNull();
   expect(overview.getByText("Q2-ONLY")).toBeTruthy();
@@ -87,6 +88,7 @@ test("组合总览先按年季选择，只有明确选定客户才显示其账�
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
   expect((screen.getByLabelText("Q2-ONLY 开始日期") as HTMLInputElement).value).toBe("2026-04-01");
   expect((screen.getByLabelText("Q2-ONLY 期初高水位线") as HTMLInputElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "返回选择" }));
   fireEvent.change(overview.getByLabelText("结算季度"), { target: { value: "1" } });
   fireEvent.click(overview.getByRole("button", { name: "建立此组合" }));
   expect((screen.getByLabelText("Q1-ONLY 期初高水位线") as HTMLInputElement).value).toBe("1000.00");
@@ -97,18 +99,20 @@ test("换年清除旧计算结果和可提交账户，清空客户后总览恢�
   const settlement = { id: 1, client_id: 1, client_name: "客户甲", platform_id: 1, platform_name: "平台甲", fee_plan_id: 1, fee_plan_name: "计划20", year: 2026, quarter: 1, status: "DRAFT", version_no: 1, calculation_mode: "ACCOUNT_HWM", fee_rate: 0.2, account_lines: [], service_fee: "20.00" };
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/settlements" ? [settlement] : records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
-  const overview = within(screen.getByRole("region", { name: "本季账户组合总览" }));
+  const overview = within(screen.getByRole("region", { name: "1 · 选择客户与季度" }));
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   await chooseClient();
   fireEvent.click(overview.getByRole("button", { name: "查看结算" }));
   expect(screen.getByRole("region", { name: "计算结果 · 版本1" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回选择" }));
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2027" } });
   expect(screen.queryByRole("region", { name: "计算结果 · 版本1" })).toBeNull();
   expect(overview.getByText("本季没有可计算账户")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "计算并保存草稿" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "计算并保存草稿" })).toBeNull();
   fireEvent.change(overview.getByLabelText("结算年份"), { target: { value: "2026" } });
   expect(overview.getByText("Q1-ONLY")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "清空结算客户" }));
   expect(overview.queryByText("Q1-ONLY")).toBeNull();
-  expect(overview.getByText("先搜索并选定客户")).toBeTruthy();
+  expect(overview.queryByText("先搜索并选定客户")).toBeNull();
+  expect(screen.queryByRole("region", { name: "2 · 核对账户并计算" })).toBeNull();
 });

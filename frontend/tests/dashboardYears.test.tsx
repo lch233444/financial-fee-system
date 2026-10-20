@@ -6,6 +6,7 @@ function setup() {
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ managed_clients: 0, client_overview: [], accounts_with_incomplete_management_dates: 0, generated_service_fee: "0.00", paid_amount: "0.00", outstanding_amount: "0.00", overdue_invoices: 0 })));
   vi.stubGlobal("fetch", fetcher);
   render(<DashboardPage />);
+  fireEvent.click(screen.getByRole("tab", { name: "经营概览" }));
   return fetcher;
 }
 

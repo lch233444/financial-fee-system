@@ -44,6 +44,7 @@ test("结算凭证先弹窗展示，下载单独提供，关闭释放预览并�
 
 test("历史结余显示查看原始凭证，弹窗预览PDF不提供下载入口，Escape关闭", async () => {
   const fetcher = await setup(async () => new Response("%PDF-synthetic", { headers: { "Content-Type": "application/pdf" } }));
+  fireEvent.click(screen.getByRole("tab", { name: "历史结余" }));
   const ledger = within(screen.getByRole("region", { name: "历史结余表", exact: true }));
   expect(ledger.queryByText(/Statement Import/)).toBeNull();
   fireEvent.click(ledger.getByRole("button", { name: "查看原始凭证" }));

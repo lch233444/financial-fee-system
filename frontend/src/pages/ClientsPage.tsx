@@ -1,10 +1,11 @@
+import { DetailBack } from "../Progressive";
 import { TaskTabs, TaskView } from "../TaskTabs";
 import ChineseDateInput from "../ChineseDateInput";
 import SearchableSelect from "../SearchableSelect";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api, postJson } from "../api";
-import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, Pagination, Loading, WorkflowStep, WorkflowSection } from "../components";
+import { EmptyState, ErrorBanner, Field, PageHeader, Panel, StatusBadge, Pagination, Loading, WorkflowSection } from "../components";
 import { useApiList, usePagination } from "../hooks";
 import { useFormAction } from "../useFormAction";
 import { accountIdentityLabel, clientIdentityLabel, formatDate } from "../types";
@@ -22,6 +23,8 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   const [accountClientId, setAccountClientId] = useState("");
   const [importerBusy, setImporterBusy] = useState(false);
   const [creationMode, setCreationMode] = useState<"client-auto" | "client-manual-entry">("client-auto");
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [manualStep, setManualStep] = useState<"manual-client" | "manual-account">("manual-client");
   const [view, setView] = useState<"query" | "create">("query");
   const [filters, setFilters] = useState({ ...defaultRecordFilters, year: initialYear, quarter: initialQuarter });
   const [queryScope, setQueryScope] = useState<"period" | "all">("period");
@@ -47,6 +50,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
         management_start_date: data.get("start_date"), contact: data.get("contact") || null,
         remark: data.get("remark") || null, status: "ACTIVE",
       }),
+      afterSave: () => setManualStep("manual-account"),
       refresh: clients.reload,
       message: "客户已建立",
     });
@@ -80,6 +84,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
     try {
       await api<Record<string, unknown>>(`${path}/${id}`, { method: "DELETE" });
       if (kind === "客户") {
+        if (detailId === id) setDetailId(null);
         if (accountClientId === String(id)) setAccountClientId("");
         if (filters.clientId === String(id)) setFilters((current) => ({ ...current, clientId: "" }));
       }
@@ -123,29 +128,33 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
       <PageHeader title="客户与账户" subtitle="管理客户资料与独立收费账户。首次办理先新增客户，已有客户可直接查询。" />
       <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
       {error ? <ErrorBanner message={error} /> : null}
+      <div hidden={view !== "query" || detailId !== null}>
       {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；中介人及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
-        <WorkflowStep number={1} title="选择查询范围与条件" detail="查看当前在管客户可按年季筛选；查找无账户或待补全客户，请切换到全部档案。" />
+
         <Field label="查询范围"><select value={queryScope} disabled={Boolean(deletingKey)} onChange={(event) => { setQueryScope(event.target.value as "period" | "all"); setFilters((current) => ({ ...current, clientId: "" })); }}><option value="period">所选期间在管客户</option><option value="all">全部档案</option></select></Field>
         <RecordFilters showPeriod={queryScope === "period"} value={filters} onChange={setFilters} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} clientLabel="查询客户账户" disabled={Boolean(deletingKey)}>
           <Field label="客户状态"><select value={clientStatus} disabled={Boolean(deletingKey)} onChange={(event) => setClientStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">已启用</option><option value="DRAFT">待补全</option><option value="CLOSED">已结束</option></select></Field>
-          <small role="status">显示 {visibleClients.length} / {queryScope === "all" ? clients.data.length : managedClientIds.size} 位{queryScope === "all" ? "客户" : "在管客户"}</small>
+
         </RecordFilters>
-        <WorkflowStep number={2} title="查看客户与账户" detail="点击客户的“查看账户”，展开该客户在当前筛选条件下的账户资料。" />
+        <p className="list-count" role="status">显示 {visibleClients.length} / {queryScope === "all" ? clients.data.length : managedClientIds.size} 位{queryScope === "all" ? "客户" : "在管客户"}</p>
+
         {clients.loading || accounts.loading ? <Loading /> : visibleClients.length ? (
           <div className="client-list">
             {clientPages.rows.map((client) => {
               const rows = filteredAccounts.filter((account) => account.client_id === client.id);
               const planNames = [...new Set(rows.map((account) => account.fee_plan_name || "待补全收费计划"))];
-              const periods = [...new Set(rows.map((account) => `${formatDate(account.start_date)} 至 ${account.end_date ? formatDate(account.end_date) : "持续管理"}`))];
+
               return <article className="client-card" key={client.id}>
-                <header><div className="client-card-copy"><strong>{client.name}</strong><span>中介人：{client.fc_name || "待确认中介人"}</span><span>收费计划：{planNames.join("、") || "尚无账户"}</span>{periods.map((period) => <span key={period}>管理期间：{period}</span>)}</div><div className="client-card-actions"><StatusBadge value={client.status} /><button type="button" onClick={() => setFilters((current) => ({ ...current, clientId: String(client.id) }))}>查看账户</button>{queryScope === "all" ? deleteButton("客户", "/api/clients", client.id, clientIdentityLabel(client, clients.data, accounts.data)) : null}</div></header>
-                {filters.clientId === String(client.id) ? accountTable(rows) : null}
+                <header><div className="client-card-copy"><strong>{client.name}</strong><span>中介人：{client.fc_name || "待确认中介人"}</span><span>收费计划：{planNames.join("、") || "尚无账户"}</span></div><div className="client-card-actions"><StatusBadge value={client.status} /><button type="button" onClick={() => setDetailId(client.id)}>查看账户</button>{queryScope === "all" ? deleteButton("客户", "/api/clients", client.id, clientIdentityLabel(client, clients.data, accounts.data)) : null}</div></header>
+
               </article>;
             })}
           </div>
         ) : <EmptyState title={queryScope === "all" ? "所选条件下没有客户档案" : "所选条件下没有在管客户"} detail={queryScope === "all" ? "请调整客户、中介人、收费计划或状态筛选。" : "客户须有管理期间与所选年季重叠的受管账户；待补全、未开始管理及无账户客户可切换到全部档案查看。"} />}
         <Pagination {...clientPages} />
       </Panel> : null}
+      </div>
+      {view === "query" && detailId !== null ? <><DetailBack title={clients.data.find((item) => item.id === detailId)?.name || "客户账户"} disabled={Boolean(deletingKey)} onBack={() => setDetailId(null)} /><Panel title="账户资料">{accountTable(filteredAccounts.filter((item) => item.client_id === detailId))}</Panel></> : null}
 
       <div hidden={view !== "create"}>
       <TaskTabs label="建档方式" value={creationMode} onChange={setCreationMode} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} items={[
@@ -153,11 +162,12 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
         { id: "client-manual-entry", label: "手动导入", detail: "直接填写客户与账户资料" },
       ]} />
       <TaskView id="client-auto" active={creationMode === "client-auto"}>
-      {view === "create" ? <WorkflowSection id="client-import" title="自动导入" description="上传原件 → 选择导入记录 → 核对资料并确认。确认成功后，可在查询信息中查看客户及账户。"><ImportsPage notify={notify} onBusyChange={setImporterBusy} embedded guided title="新增客户自动导入" onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></WorkflowSection> : null}
+      {view === "create" ? <WorkflowSection compact id="client-import" title="自动导入" description="上传原件 → 选择导入记录 → 核对资料并确认。确认成功后，可在查询信息中查看客户及账户。"><ImportsPage notify={notify} onBusyChange={setImporterBusy} embedded guided title="新增客户自动导入" onConfirmed={async () => { await Promise.all([clients.reload(), accounts.reload()]); }} /></WorkflowSection> : null}
       </TaskView>
       <TaskView id="client-manual-entry" active={creationMode === "client-manual-entry"}>
-      <WorkflowSection id="client-manual" title="手动导入" description="新客户先建立客户档案，再建立账户；已有客户可直接选择其档案新增账户。">
-      <div className="split-layout">
+      <WorkflowSection compact id="client-manual" title="手动导入" description="新客户先建立客户档案，再建立账户；已有客户可直接选择其档案新增账户。">
+      <TaskTabs label="手动建档步骤" value={manualStep} onChange={setManualStep} disabled={formAction.pending} items={[{ id: "manual-client", label: "1 · 建立客户" }, { id: "manual-account", label: "2 · 建立账户" }]} />
+      <TaskView id="manual-client" active={manualStep === "manual-client"}>
         <Panel id="client-create" title="新增客户" step="第1步 · 建立客户档案" subtitle="填写中介人、姓名及管理开始日期；建立受管账户后才计为在管客户。">
           <form className="form-grid" onSubmit={(e) => void submitClient(e)}>
             <Field label="中介人"><select name="fc_id" defaultValue="" required><option value="" disabled>请选择</option>{fcs.data.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
@@ -169,6 +179,8 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
             <p className="workflow-next">保存成功后：在第2步选择该客户，继续建立账户。</p>
           </form>
         </Panel>
+      </TaskView>
+      <TaskView id="manual-account" active={manualStep === "manual-account"}>
         <Panel id="account-create" title="新增子账户" step="第2步 · 建立客户账户" subtitle="先选择已有客户，再填写平台、收费计划及账户资料；币种为港币。">
           <form className="form-grid" onSubmit={(e) => void submitAccount(e)}>
             <Field group label="客户"><SearchableSelect label="新增账户客户" name="client_id" value={accountClientId} required onChange={setAccountClientId} options={clients.data.filter((x) => x.status === "ACTIVE").map(clientOption)} /></Field>
@@ -182,7 +194,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
             <p className="workflow-next">保存成功后：在“查询信息”核对账户，再到“资金与余额”录入结余及资金记录。</p>
           </form>
         </Panel>
-      </div>
+      </TaskView>
       </WorkflowSection>
       </TaskView>
       </div>

@@ -80,11 +80,11 @@ test("收款情况不显示建单入口，账单出具不显示付款确认表�
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")));
   const view = render(<InvoicesPage mode="payment" notify={vi.fn()} />);
   expect(screen.getByRole("heading", { name: "收款情况", exact: true })).toBeTruthy();
-  expect(screen.queryByRole("region", { name: "建立账单 草稿" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "1 · 选择账单来源" })).toBeNull();
   view.unmount();
   render(<InvoicesPage mode="issue" notify={vi.fn()} />);
   expect(screen.getByRole("heading", { name: "账单出具", exact: true })).toBeTruthy();
-  expect(screen.getByRole("region", { name: "建立账单 草稿" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "1 · 选择账单来源" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "确认已付款" })).toBeNull();
 });
 

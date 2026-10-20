@@ -60,6 +60,7 @@ describe("保存成功后立即更新页面", () => {
     render(<SetupPage notify={notify} />);
     await screen.findByText("原公司");
     fireEvent.click(screen.getByRole("button", { name: tab, exact: true }));
+    if (path.startsWith("/api/") && !["/api/clients", "/api/accounts"].includes(path)) fireEvent.click(screen.getByRole("button", { name: `新增${tab}`, exact: true }));
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     expect((form.querySelector('[name="name"]') as HTMLInputElement).value).toBe(values.name);
@@ -87,6 +88,8 @@ describe("保存成功后立即更新页面", () => {
     fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
     fireEvent.click(screen.getByRole("tab", { name: /手动导入/ }));
     await screen.findByRole("option", { name: "原FC" });
+    if (path === "/api/accounts") fireEvent.click(screen.getByRole("tab", { name: "2 · 建立账户" }));
+
     const form = screen.getByRole("button", { name: button }).closest("form")!;
     fill(form, values);
     fireEvent.submit(form);
@@ -97,9 +100,9 @@ describe("保存成功后立即更新页面", () => {
     fireEvent.focus(screen.getByRole("combobox", { name: "查询客户账户" }));
     fireEvent.click(screen.getByRole("option", { name: path === "/api/accounts" ? "原客户" : "新客户", exact: true }));
     if (path === "/api/accounts") {
-      expect(within(panel).getByText(text)).toBeTruthy();
-    }
-    await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
+      fireEvent.click(within(panel).getByRole("button", { name: "查看账户" }));
+      expect(within(screen.getByRole("region", { name: "账户资料" })).getByText(text)).toBeTruthy();
+    } else await waitFor(() => expect(within(panel).getByText(text)).toBeTruthy());
     expect(db.requests).toEqual([path]);
   });
 
@@ -107,6 +110,7 @@ describe("保存成功后立即更新页面", () => {
     const db = mockDatabase();
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
+    fireEvent.click(screen.getByRole("button", { name: "新增收款公司", exact: true }));
     const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "新公司", code: "NEW" });
     fireEvent.submit(form);
@@ -123,6 +127,7 @@ describe("保存成功后立即更新页面", () => {
       : originalFetch(input, options));
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
+    fireEvent.click(screen.getByRole("button", { name: "新增收款公司", exact: true }));
     const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "重复公司", code: "OLD" });
     fireEvent.submit(form);
@@ -138,6 +143,7 @@ describe("保存成功后立即更新页面", () => {
       : originalFetch(input, options));
     render(<SetupPage notify={vi.fn()} />);
     await screen.findByText("原公司");
+    fireEvent.click(screen.getByRole("button", { name: "新增收款公司", exact: true }));
     const form = screen.getByRole("button", { name: "保存收款公司" }).closest("form")!;
     fill(form, { name: "新公司", code: "NEW" });
     fireEvent.submit(form);
@@ -167,6 +173,7 @@ describe("保存成功后立即更新页面", () => {
     render(<TransactionsPage notify={notify} />);
     fireEvent.focus(screen.getByRole("combobox", { name: "资金与余额客户" }));
     fireEvent.click(await screen.findByRole("option", { name: "原客户" }));
+    fireEvent.click(screen.getByRole("tab", { name: "历史结余" }));
     fireEvent.click(within(await screen.findByRole("region", { name: "历史结余表" })).getByRole("button", { name: "补存凭证" }));
     const form = screen.getByRole("button", { name: "上传到本条记录" }).closest("form")!;
     const file = new File(["synthetic"], "凭证.png", { type: "image/png" });

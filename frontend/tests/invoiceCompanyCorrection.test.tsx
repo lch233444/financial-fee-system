@@ -60,6 +60,7 @@ test("未收款Invoice明确选择另一家公司后提交，刷新后保留原�
   await screen.findByRole("button", { name: "建立或查看替代账单" });
   expect(db.posts).toEqual([{ path: "/api/invoices/1/corrections", body: { target_company_id: 2, recalculate_settlements: false, reason: "更正本张账单收款公司" } }]);
   expect(screen.queryByText(/请先在结算页按版本链作废/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   fireEvent.click(screen.getByRole("tab", { name: /建立新账单/ }));
   fireEvent.focus(screen.getByRole("combobox", { name: "客户季度账单组合" }));
   expect(screen.getByRole("option", { name: /陳大文.*120.00/ })).toBeTruthy();
@@ -82,6 +83,7 @@ test("原Settlement保持不变的公司替代单可以完成关联，完成前�
   render(<InvoicesPage mode="payment" notify={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "查看新公司-FC-20260908-1" }));
   expect(screen.queryByRole("button", { name: "确认已付款" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   fireEvent.click(screen.getByRole("button", { name: "查看原公司-FC-20260908-1" }));
   fireEvent.change(screen.getByRole("combobox", { name: "替代账单" }), { target: { value: "2" } });
   fireEvent.click(screen.getByRole("button", { name: "完成更正并锁定" }));

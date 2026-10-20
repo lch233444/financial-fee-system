@@ -1,10 +1,10 @@
 金融计划收费计算系统 MVP 1.1.6 Windows运行版构建清单
-文档修订：2026-10-16。本批重新构建1.1.6 Windows程序，包含零金额账单迁移、无需付款状态及原件窗口拖动。最新验证、备份与交付状态以docs/项目说明书.md第12.36节为准。
+文档修订：2026-10-20。本轮复用10月16日已冻结的1.1.6 EXE，核对哈希并重新构建前端；未修改后端或额外迁移。最新验证与交付状态见docs/项目说明书.md第12.37节；后端和OCR历史全量验证见12.36节。
 
 一、当前构建契约
 - 应用版本：1.1.6；Windows ProductVersion：1.1.6；FileVersion：1.1.6.0。
 - 数据库目标head：d016f0ee1160；目标60个Trigger；结构数量不能替代业务验收。
-- 常规完整构建输出：release/FinancialFeeSystem。本轮候选独立位于release/zero-fee-20261016/FinancialFeeSystem；验收及恢复临时根F:\zf16，历史受阻目录不重试。
+- 常规完整构建输出：release/FinancialFeeSystem。本轮候选独立位于release/progressive-20261020/FinancialFeeSystem；验收及恢复临时根F:\ui20a，历史受阻目录不重试。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -12,13 +12,13 @@
 - Tesseract版本5.5.3.20260724；tools/Tesseract-OCR/tesseract.exe：C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - packaging/tesseract-runtime.json固定95个实际OCR运行文件哈希，包括所有DLL、eng/osd语言及配置；复制为运行包Tesseract-OCR/runtime-manifest.json。安装文件不符即停止，不以修改清单绕过。
 - scripts/check-ocr-runtime.py先核对源组件及语言启动，打包后实际启动EXE，合成PNG/JPG/扫描PDF经上传接口验证账户、日期和余额仍为待复核；覆盖仅剩EXE、再次缺DLL缓存修复及原件reparse，不运行Sol。报告存docs/build-dependencies/ocr-smoke.json。
-- 本轮使用F:\zf16，实际验证240字符恢复路径创建、解压和复制；冻结EXE完成合成PNG/JPG/扫描PDF识别及缓存修复验收，不调用AI。
+- 本轮使用F:\ui20a，预检226字符ASCII路径创建、解压及复制。10月16日冻结EXE完成合成PNG/JPG/扫描PDF识别及缓存修复；本轮不重复计作全量OCR验收。
 - 唯一Excel母版：新收费计划计算纯净版模板.xlsx；SHA-256：16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 - 客户PDF在Windows优先使用系统微软正黑体常规/粗体，回退微软雅黑及原有字体候选；不另行打包商业字体。英文含中文公司/客户资料时也须验证原名完整显示。
 
 二、执行顺序和产物
-- 常规完整构建入口scripts/build-windows.ps1。本轮使用该脚本的独立输出副本F:\zf16\build.ps1，保留依赖、签名、模板及冻结EXE OCR检查；测试独立先行，避开脚本对既有release父目录的清理。实际执行脚本及日志随验收证据归档。
+- 常规完整构建入口scripts/build-windows.ps1。10月16日使用该脚本的独立输出副本F:\zf16\build.ps1，保留依赖、签名、模板及冻结EXE OCR检查；测试独立先行，避开脚本对既有release父目录的清理。实际执行脚本及日志随验收证据归档。
 - 先test_system_backup.py，再按文件名执行其余完整后端测试；前端交互测试和生产构建由同一脚本先行执行。
 - Codex两个EXE、Tesseract、模板和版本任一校验失败即停止。不得通过更改文档哈希掩盖实际组件变更。
 - 包含完整运行依赖、前端资源、迁移文件、Tesseract、Codex、启动脚本，以及当前README、AGENTS、docs、发布说明和构建清单。

@@ -44,6 +44,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
   const attachments = useApiList<Attachment>("/api/attachments");
   const settlements = useApiList<Settlement>("/api/settlements");
   const [importerBusy, setImporterBusy] = useState(false);
+  const [recordType, setRecordType] = useState<"ledger-funds" | "ledger-balances">("ledger-funds");
   const [task, setTask] = useState<"cash-query" | "cash-balance" | "cash-entry">("cash-query");
   const [filters, setFilters] = useState(defaultRecordFilters);
   const [platformId, setPlatformId] = useState("");
@@ -158,9 +159,10 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
         <Field label="子账户"><select disabled={!filters.clientId || busy} value={accountId} onChange={(event) => { setAccountId(event.target.value); clearEntryAccounts(); setEditingTransaction(null); setSupplement(null); }}><option value="">全部账户</option>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{accountIdentityLabel(item)}</option>)}</select></Field>
       </RecordFilters>
     </Panel>
-    <TaskView id="cash-query" active={task === "cash-query"}>
+    <TaskView id="cash-query" active={task === "cash-query" && Boolean(filters.clientId)}>
     <Panel id="cash-records" title="记录查询" subtitle="所选期间的资金记录、历史结余及适用期初。">
-      <section className="record-section" aria-labelledby="cash-ledger-heading"><h3 id="cash-ledger-heading">供款、加款、取款记录</h3>
+      <TaskTabs label="记录类型" value={recordType} onChange={setRecordType} disabled={busy} items={[{ id: "ledger-funds", label: "资金变动" }, { id: "ledger-balances", label: "历史结余" }]} />
+      <TaskView id="ledger-funds" active={recordType === "ledger-funds"}><section className="record-section" aria-labelledby="cash-ledger-heading"><h3 id="cash-ledger-heading">供款、加款、取款记录</h3>
         {transactions.loading || accounts.loading ? <Loading /> : visibleTransactions.length ? <div tabIndex={0} role="region" aria-label="供款、加款、取款记录表" className="table-wrap cash-ledger-table"><table><thead><tr><th>日期</th><th>客户／平台／账户</th><th>类型</th><th>金额</th><th>凭证</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={item.id}>
           <td>{formatDate(item.transaction_date)}</td><td>{identity(item.account_id, item.account_number)}</td><td>{transactionLabels[item.transaction_type] || item.transaction_type}</td><td><Money value={item.amount} /></td>
           <td>{recordProofs("TRANSACTION", item.id).length ? <button className="text-link" type="button" onClick={() => showProofs("TRANSACTION", item.id)}>查看原件</button> : "待补凭证"}</td>
@@ -169,12 +171,14 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
             {!item.evidence_complete ? <button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "TRANSACTION", id: item.id, label: `${formatDate(item.transaction_date)} · ${item.account_number} · 港币 ${item.amount}` })}>补存凭证</button> : null}</td>
         </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有资金记录" : "请先搜索并选定客户"} detail="选定客户和期间后查看供款、加款、取款记录。" />}
       </section>
-      <section className="record-section" aria-labelledby="balance-ledger-heading"><h3 id="balance-ledger-heading">历史结余</h3>
+      </TaskView>
+      <TaskView id="ledger-balances" active={recordType === "ledger-balances"}><section className="record-section" aria-labelledby="balance-ledger-heading"><h3 id="balance-ledger-heading">历史结余</h3>
         {snapshots.loading || accounts.loading || settlements.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="历史结余表" className="table-wrap balance-ledger-table"><table><thead><tr><th>结余日期</th><th>客户／平台／账户</th><th>结余金额</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((item) => <tr key={item.id}>
           <td>{formatDate(item.as_of_date)}{item.opening ? <small className="cell-note">期初结余</small> : null}</td><td>{identity(item.account_id, item.account_number)}</td><td><Money value={item.total_balance} /></td>
           <td>{item.statement_import_id || recordProofs("SNAPSHOT", item.id).length ? <button className="text-link snapshot-source-link" type="button" onClick={() => showProofs("SNAPSHOT", item.id, item.statement_import_id)}>查看原始凭证</button> : <><span>待补凭证</span><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "SNAPSHOT", id: item.id, label: `${formatDate(item.as_of_date)} · ${item.account_number} · 港币 ${item.total_balance}` })}>补存凭证</button></>}</td>
         </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有历史结余" : "请先搜索并选定客户"} detail="显示本季结余及按账户结算规则适用的期初结余。" />}
       </section>
+      </TaskView>
       {visibleAttachments.length ? <details className="record-archive"><summary>结算凭证归档 · {visibleAttachments.length}份</summary><div tabIndex={0} role="region" aria-label="结算凭证归档" className="table-wrap"><table><thead><tr><th>记录</th><th>文件</th><th>归档时间</th><th>操作</th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{item.entity_type === "SNAPSHOT" ? "历史结余" : item.entity_type === "TRANSACTION" ? "资金记录" : "历史账户凭证"} #{item.entity_id}{item.superseded ? <small className="cell-note">旧凭证（已替换，保留追溯）</small> : null}</td><td>{item.original_name}</td><td>{formatDateTime(item.created_at)}</td><td><button className="text-link" type="button" onClick={() => setPreviewDocuments([{ path: `/api/attachments/${item.id}/file`, title: "结算凭证原件", filename: item.original_name }])}>查看原件</button></td></tr>)}</tbody></table></div></details> : null}
       {editingTransaction ? <section className="record-section" aria-labelledby="correction-heading"><h3 id="correction-heading">更正资金记录</h3><p>原凭证继续保留；如选择新凭证，保存成功后作为当前凭证。</p><form className="form-grid" key={editingTransaction.id} onSubmit={(event) => void submitCorrection(event)}>
         <Field label="资金生效日期"><input name="date" type="date" defaultValue={editingTransaction.transaction_date} required disabled={busy} /></Field>

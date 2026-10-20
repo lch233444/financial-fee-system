@@ -35,6 +35,7 @@ test("切换Draft重置签发日期、到期日期和语言，仅向当前账单
   expect((formA.getByLabelText("账单语言") as HTMLSelectElement).value).toBe("zh");
   expect(posts).toHaveLength(0);
 
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   fireEvent.click(screen.getByRole("button", { name: "查看草稿 #2" }));
   const formB = within(screen.getByRole("region", { name: "正式出具" }));
   expect.soft((formB.getByLabelText("出具日期") as HTMLInputElement).value).toBe(todayIso());

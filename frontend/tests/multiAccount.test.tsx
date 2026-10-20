@@ -26,6 +26,7 @@ test("结算按客户联动平台和计划，切换后不会沿用其他客户�
   vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(records[path] ?? []))));
   render(<SettlementsPage notify={vi.fn()} />);
   await choose("结算客户", "客户甲");
+  fireEvent.click(screen.getAllByRole("button", { name: "建立此组合" })[0]);
   const platform = screen.getByRole("combobox", { name: "投资平台", exact: true });
   expect(within(platform).queryByRole("option", { name: "平台乙" })).toBeNull();
   fireEvent.change(platform, { target: { value: "1" } });
@@ -34,11 +35,12 @@ test("结算按客户联动平台和计划，切换后不会沿用其他客户�
   fireEvent.change(plan, { target: { value: "2" } });
   expect(screen.getByLabelText("A-10 期初高水位线")).toBeTruthy();
   expect(screen.queryByLabelText("A-20 期初高水位线")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "返回选择" }));
   await choose("结算客户", "客户乙");
   expect((platform as HTMLSelectElement).value).toBe("");
   expect((plan as HTMLSelectElement).value).toBe("");
   expect(screen.queryByLabelText("A-10 期初高水位线")).toBeNull();
-  const overview = screen.getByRole("region", { name: "本季账户组合总览" });
+  const overview = screen.getByRole("region", { name: "1 · 选择客户与季度" });
   expect(within(overview).getByText("B-15")).toBeTruthy();
   expect(within(overview).queryByText("A-10")).toBeNull();
 });
@@ -74,7 +76,7 @@ test("同客户两计划只出现一个缴费单候选，总额准确且提示�
   expect(options[0].textContent).toContain("50.02");
   fireEvent.click(options[0]);
   expect(screen.getByText(/A-PENDING/)).toBeTruthy();
-  const preview = screen.getByRole("region", { name: "建立账单 草稿" });
+  const preview = screen.getByRole("region", { name: "1 · 选择账单来源" });
   expect(within(preview).getByText("A-20")).toBeTruthy();
   expect(within(preview).getByText("A-10")).toBeTruthy();
   expect(within(preview).queryByText("B-15")).toBeNull();

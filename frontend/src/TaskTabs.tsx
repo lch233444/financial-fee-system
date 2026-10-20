@@ -1,4 +1,5 @@
 import { type PropsWithChildren } from "react";
+import { HelpTip } from "./Progressive";
 
 /** Switch tasks without discarding the forms mounted inside TaskView. */
 export function TaskTabs<T extends string>({ label, value, onChange, items, disabled = false }: {
@@ -15,7 +16,7 @@ export function TaskTabs<T extends string>({ label, value, onChange, items, disa
         if (next < 0 || disabled) return;
         event.preventDefault(); onChange(items[next].id);
         document.getElementById(`${items[next].id}-tab`)?.focus();
-      }}><strong>{item.label}</strong>{item.detail ? <span>{item.detail}</span> : null}</button>
+      }} title={item.detail}><strong>{item.label}</strong></button>
   )}</div>;
 }
 
@@ -24,5 +25,5 @@ export function TaskView({ id, active, children }: PropsWithChildren<{ id: strin
 }
 
 export function TaskHelp({ title, children }: PropsWithChildren<{ title: string }>) {
-  return <details className="task-help"><summary>{title}</summary><div>{children}</div></details>;
+  return <div className="task-help-inline"><HelpTip title={title}>{children}</HelpTip><span>{title}</span></div>;
 }

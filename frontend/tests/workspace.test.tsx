@@ -39,6 +39,7 @@ test("结算选齐客户、平台和计划后才显示相应账户及可辨认�
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
   fireEvent.focus(screen.getByRole("combobox", { name: "结算客户" }));
   fireEvent.click(await screen.findByRole("option", { name: "测试客户" }));
+  fireEvent.click(screen.getByRole("button", { name: "建立此组合" }));
   fireEvent.change(screen.getByRole("combobox", { name: "投资平台", exact: true }), { target: { value: "1" } });
   expect(screen.queryByRole("checkbox", { name: /QA-001/ })).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "收费计划", exact: true }), { target: { value: "1" } });

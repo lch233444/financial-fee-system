@@ -1,3 +1,4 @@
+import { DetailBack } from "../Progressive";
 import { TaskHelp } from "../TaskTabs";
 import { matchesSearch } from "../SearchableSelect";
 import { FormEvent, useRef, useState } from "react";
@@ -12,6 +13,7 @@ type Tab = "company" | "fc" | "platform" | "plan";
 type DeletableMaster = "收款公司" | "中介人" | "投资平台" | "收费计划";
 
 export default function SetupPage({ notify }: { notify: (message: string) => void }) {
+  const [editorOpen, setEditorOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("company");
   const companies = useApiList<Company>("/api/companies");
   const fcs = useApiList<FC>("/api/fcs");
@@ -71,6 +73,7 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
         contact: data.get("contact") || null, bank_information: data.get("bank") || null,
         cheque_information: data.get("cheque") || null, payment_terms_days: Number(data.get("terms") || 14),
       }),
+      afterSave: () => setEditorOpen(false),
       refresh: companies.reload,
       message: "收款公司已保存",
     });
@@ -79,6 +82,7 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
   function submitFC(event: FormEvent<HTMLFormElement>) {
     return formAction.submit(event, {
       save: (data) => postJson("/api/fcs", { name: data.get("name") }),
+      afterSave: () => setEditorOpen(false),
       refresh: fcs.reload,
       message: "中介人已保存",
     });
@@ -87,6 +91,7 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
   function submitPlatform(event: FormEvent<HTMLFormElement>) {
     return formAction.submit(event, {
       save: (data) => postJson("/api/platforms", { name: data.get("name"), code: data.get("code"), trustee: data.get("trustee") || null }),
+      afterSave: () => setEditorOpen(false),
       refresh: platforms.reload,
       message: "投资平台已保存",
     });
@@ -98,6 +103,7 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
         name: data.get("name"),
         fee_rate_percent: data.get("rate"), calculation_method: "HIGH_WATER_MARK",
       }),
+      afterSave: () => setEditorOpen(false),
       refresh: plans.reload,
       message: "收费计划已保存",
     });
@@ -110,30 +116,30 @@ export default function SetupPage({ notify }: { notify: (message: string) => voi
       {error ? <ErrorBanner message={error} /> : null}
       <WorkflowSection id="setup-category" title="选择资料类别" description="按本次需要选择收款公司、中介人、投资平台或收费计划；切换类别会清空搜索及未保存表单，填写后请先保存。">
       <div className="tabs workflow-tabs" role="group" aria-label="基础资料类别">
-        <button aria-pressed={tab === "company"} className={tab === "company" ? "active" : ""} onClick={() => { setTab("company"); setSearch(""); }}>收款公司</button>
-        <button aria-pressed={tab === "fc"} className={tab === "fc" ? "active" : ""} onClick={() => { setTab("fc"); setSearch(""); }}>中介人</button>
-        <button aria-pressed={tab === "platform"} className={tab === "platform" ? "active" : ""} onClick={() => { setTab("platform"); setSearch(""); }}>投资平台</button>
-        <button aria-pressed={tab === "plan"} className={tab === "plan" ? "active" : ""} onClick={() => { setTab("plan"); setSearch(""); }}>收费计划</button>
+        <button disabled={formAction.pending || Boolean(deletingKey)} aria-pressed={tab === "company"} className={tab === "company" ? "active" : ""} onClick={() => { setTab("company"); setSearch(""); setEditorOpen(false); }}>收款公司</button>
+        <button disabled={formAction.pending || Boolean(deletingKey)} aria-pressed={tab === "fc"} className={tab === "fc" ? "active" : ""} onClick={() => { setTab("fc"); setSearch(""); setEditorOpen(false); }}>中介人</button>
+        <button disabled={formAction.pending || Boolean(deletingKey)} aria-pressed={tab === "platform"} className={tab === "platform" ? "active" : ""} onClick={() => { setTab("platform"); setSearch(""); setEditorOpen(false); }}>投资平台</button>
+        <button disabled={formAction.pending || Boolean(deletingKey)} aria-pressed={tab === "plan"} className={tab === "plan" ? "active" : ""} onClick={() => { setTab("plan"); setSearch(""); setEditorOpen(false); }}>收费计划</button>
       </div>
       </WorkflowSection>
 
       {tab === "company" && <>
-        <Panel id="setup-existing" step="查询已有资料" title="现有收款公司"><div className="list-search"><Field label="搜索收款公司"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称或编号…" /></Field></div>{companies.loading ? <Loading /> : companies.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>编码</th><th>名称</th><th>付款期限</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visibleCompanies.map((x) => <tr key={x.id}><td><strong>{x.code}</strong></td><td>{x.name}</td><td>{x.payment_terms_days}天</td><td className="master-actions-column">{deleteButton("收款公司", "/api/companies", x.id, `${x.code} · ${x.name}`)}</td></tr>)}</tbody></table>{visibleCompanies.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无收款公司" detail="请先建立公司主体。" />}</Panel>
-        <details className="setup-editor"><summary>新增收款公司</summary><Panel id="setup-create" step="新增资料" title="新增收款公司" subtitle="收款公司全名用于账单收款资料；编码仅作内部标识"><form className="form-grid" onSubmit={(e) => void submitCompany(e)}><Field label="收款公司全名"><input name="name" required /></Field><Field label="公司内部编码"><input name="code" required maxLength={20} /></Field><Field label="地址"><input name="address" /></Field><Field label="联系方式"><input name="contact" /></Field><Field label="默认付款天数"><input name="terms" type="number" defaultValue="14" min="0" max="365" /></Field><Field label="银行收款信息"><textarea name="bank" rows={3} /></Field><Field label="支票信息"><textarea name="cheque" rows={3} /></Field><p className="workflow-next">确认现有资料中没有本项后再保存。保存成功后，在现有资料中搜索核对新记录，再继续客户建档或账单出具。</p><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存收款公司"}</button></form></Panel></details>
+        <div hidden={editorOpen}><Panel id="setup-existing" step="查询已有资料" title="现有收款公司"><div className="list-search"><Field label="搜索收款公司"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称或编号…" /></Field></div>{companies.loading ? <Loading /> : companies.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>编码</th><th>名称</th><th>付款期限</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visibleCompanies.map((x) => <tr key={x.id}><td><strong>{x.code}</strong></td><td>{x.name}</td><td>{x.payment_terms_days}天</td><td className="master-actions-column">{deleteButton("收款公司", "/api/companies", x.id, `${x.code} · ${x.name}`)}</td></tr>)}</tbody></table>{visibleCompanies.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无收款公司" detail="请先建立公司主体。" />}</Panel>
+        <button className="primary" type="button" onClick={() => setEditorOpen(true)}>新增收款公司</button></div><div hidden={!editorOpen}>{editorOpen ? <DetailBack title="新增收款公司" disabled={formAction.pending} onBack={() => setEditorOpen(false)} /> : null}<Panel id="setup-create" step="新增资料" title="新增收款公司" subtitle="收款公司全名用于账单收款资料；编码仅作内部标识"><form className="form-grid" onSubmit={(e) => void submitCompany(e)}><Field label="收款公司全名"><input name="name" required /></Field><Field label="公司内部编码"><input name="code" required maxLength={20} /></Field><Field label="地址"><input name="address" /></Field><Field label="联系方式"><input name="contact" /></Field><Field label="默认付款天数"><input name="terms" type="number" defaultValue="14" min="0" max="365" /></Field><Field label="银行收款信息"><textarea name="bank" rows={3} /></Field><Field label="支票信息"><textarea name="cheque" rows={3} /></Field><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存收款公司"}</button></form></Panel></div>
       </>}
       {tab === "fc" && <>
-        <Panel id="setup-existing" step="查询已有资料" title="现有中介人"><div className="list-search"><Field label="搜索中介人"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称…" /></Field></div>{fcs.loading ? <Loading /> : fcs.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>中介人</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visibleFcs.map((x) => <tr key={x.id}><td>{x.name}<small className="cell-note">档案 #{x.id}</small></td><td className="master-actions-column">{deleteButton("中介人", "/api/fcs", x.id, x.name)}</td></tr>)}</tbody></table>{visibleFcs.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无中介人" detail="建立后可关联客户并统计服务费。" />}</Panel>
-        <details className="setup-editor"><summary>新增中介人</summary><Panel id="setup-create" step="新增资料" title="新增中介人"><form className="form-grid" onSubmit={(e) => void submitFC(e)}><Field label="中介人姓名" hint="填写完整英文姓名，例如Tony Wu；账单编号自动取各单词首字母TW"><input name="name" required /></Field><p className="workflow-next">确认现有资料中没有本项后再保存。保存成功后，在现有资料中搜索核对新记录，再继续客户建档或账单出具。</p><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存中介人"}</button></form></Panel></details>
+        <div hidden={editorOpen}><Panel id="setup-existing" step="查询已有资料" title="现有中介人"><div className="list-search"><Field label="搜索中介人"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称…" /></Field></div>{fcs.loading ? <Loading /> : fcs.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>中介人</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visibleFcs.map((x) => <tr key={x.id}><td>{x.name}<small className="cell-note">档案 #{x.id}</small></td><td className="master-actions-column">{deleteButton("中介人", "/api/fcs", x.id, x.name)}</td></tr>)}</tbody></table>{visibleFcs.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无中介人" detail="建立后可关联客户并统计服务费。" />}</Panel>
+        <button className="primary" type="button" onClick={() => setEditorOpen(true)}>新增中介人</button></div><div hidden={!editorOpen}>{editorOpen ? <DetailBack title="新增中介人" disabled={formAction.pending} onBack={() => setEditorOpen(false)} /> : null}<Panel id="setup-create" step="新增资料" title="新增中介人"><form className="form-grid" onSubmit={(e) => void submitFC(e)}><Field label="中介人姓名" hint="填写完整英文姓名，例如Tony Wu；账单编号自动取各单词首字母TW"><input name="name" required /></Field><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存中介人"}</button></form></Panel></div>
       </>}
       {tab === "platform" && <>
-        <Panel id="setup-existing" step="查询已有资料" title="现有投资平台"><div className="list-search"><Field label="搜索投资平台"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称或编号…" /></Field></div>{platforms.loading ? <Loading /> : platforms.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>编码</th><th>投资平台</th><th>受托机构（强积金受托机构）</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visiblePlatforms.map((x) => <tr key={x.id}><td>{x.code}</td><td>{x.name}</td><td>{x.trustee || "-"}</td><td className="master-actions-column">{deleteButton("投资平台", "/api/platforms", x.id, `${x.code} · ${x.name}`)}</td></tr>)}</tbody></table>{visiblePlatforms.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无投资平台" detail="账单导入也可创建待确认投资平台。" />}</Panel>
-        <details className="setup-editor"><summary>新增投资平台</summary><Panel id="setup-create" step="新增资料" title="新增投资平台" subtitle="受托机构是强积金计划受托机构，不是中介人，也不参与账单编号"><form className="form-grid" onSubmit={(e) => void submitPlatform(e)}><Field label="平台名称"><input name="name" required /></Field><Field label="平台编码"><input name="code" required /></Field><Field label="受托机构（强积金计划受托机构）"><input name="trustee" /></Field><p className="workflow-next">确认现有资料中没有本项后再保存。保存成功后，在现有资料中搜索核对新记录，再继续客户建档或账单出具。</p><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存投资平台"}</button></form></Panel></details>
+        <div hidden={editorOpen}><Panel id="setup-existing" step="查询已有资料" title="现有投资平台"><div className="list-search"><Field label="搜索投资平台"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称或编号…" /></Field></div>{platforms.loading ? <Loading /> : platforms.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>编码</th><th>投资平台</th><th>受托机构（强积金受托机构）</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visiblePlatforms.map((x) => <tr key={x.id}><td>{x.code}</td><td>{x.name}</td><td>{x.trustee || "-"}</td><td className="master-actions-column">{deleteButton("投资平台", "/api/platforms", x.id, `${x.code} · ${x.name}`)}</td></tr>)}</tbody></table>{visiblePlatforms.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无投资平台" detail="账单导入也可创建待确认投资平台。" />}</Panel>
+        <button className="primary" type="button" onClick={() => setEditorOpen(true)}>新增投资平台</button></div><div hidden={!editorOpen}>{editorOpen ? <DetailBack title="新增投资平台" disabled={formAction.pending} onBack={() => setEditorOpen(false)} /> : null}<Panel id="setup-create" step="新增资料" title="新增投资平台" subtitle="受托机构是强积金计划受托机构，不是中介人，也不参与账单编号"><form className="form-grid" onSubmit={(e) => void submitPlatform(e)}><Field label="平台名称"><input name="name" required /></Field><Field label="平台编码"><input name="code" required /></Field><Field label="受托机构（强积金计划受托机构）"><input name="trustee" /></Field><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存投资平台"}</button></form></Panel></div>
       </>}
       {tab === "plan" && <>
-        <Panel id="setup-existing" step="查询已有资料" title="现有收费计划"><div className="list-search"><Field label="搜索收费计划"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称…" /></Field></div>{plans.loading ? <Loading /> : plans.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>收费计划</th><th>费率</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visiblePlans.map((x) => <tr key={x.id}><td>{x.name}<small className="cell-note">档案 #{x.id}</small></td><td>{Number(x.fee_rate_percent).toFixed(2)}%</td><td className="master-actions-column">{deleteButton("收费计划", "/api/fee-plans", x.id, x.name)}</td></tr>)}</tbody></table>{visiblePlans.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无收费计划" detail="当前计划可建立为20%高水位线收费。" />}</Panel>
-        <details className="setup-editor"><summary>新增收费计划</summary><Panel id="setup-create" step="新增资料" title="新增收费计划"><form className="form-grid" onSubmit={(e) => void submitPlan(e)}><Field label="收费计划名称"><input name="name" required placeholder="Profit Sharing 20%" /></Field><Field label="费率（%）"><input name="rate" type="number" step="0.01" min="0" max="100" defaultValue="20" required /></Field><p className="workflow-next">确认现有资料中没有本项后再保存。保存成功后，在现有资料中搜索核对新记录，再继续客户建档或账单出具。</p><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存收费计划"}</button></form></Panel></details>
+        <div hidden={editorOpen}><Panel id="setup-existing" step="查询已有资料" title="现有收费计划"><div className="list-search"><Field label="搜索收费计划"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称…" /></Field></div>{plans.loading ? <Loading /> : plans.data.length ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap"><table><thead><tr><th>收费计划</th><th>费率</th><th className="master-actions-column">操作</th></tr></thead><tbody>{visiblePlans.map((x) => <tr key={x.id}><td>{x.name}<small className="cell-note">档案 #{x.id}</small></td><td>{Number(x.fee_rate_percent).toFixed(2)}%</td><td className="master-actions-column">{deleteButton("收费计划", "/api/fee-plans", x.id, x.name)}</td></tr>)}</tbody></table>{visiblePlans.length === 0 ? <EmptyState title="没有匹配项" detail="请更换关键词或清空搜索。" /> : null}</div> : <EmptyState title="暂无收费计划" detail="当前计划可建立为20%高水位线收费。" />}</Panel>
+        <button className="primary" type="button" onClick={() => setEditorOpen(true)}>新增收费计划</button></div><div hidden={!editorOpen}>{editorOpen ? <DetailBack title="新增收费计划" disabled={formAction.pending} onBack={() => setEditorOpen(false)} /> : null}<Panel id="setup-create" step="新增资料" title="新增收费计划"><form className="form-grid" onSubmit={(e) => void submitPlan(e)}><Field label="收费计划名称"><input name="name" required placeholder="Profit Sharing 20%" /></Field><Field label="费率（%）"><input name="rate" type="number" step="0.01" min="0" max="100" defaultValue="20" required /></Field><button className="primary" type="submit" disabled={formAction.pending}>{formAction.pending ? "保存中..." : "保存收费计划"}</button></form></Panel></div>
       </>}
-      <div className="workflow-intro"><strong>资料就绪后继续</strong>中介人、平台和收费计划用于客户与账户建档；收款公司用于账单出具。
+      <div className="compact-next">
         <div className="workflow-link-actions"><a className="text-link" href="#/clients">前往客户与账户</a><a className="text-link" href="#/invoices">前往账单出具</a></div>
       </div>
     </div>

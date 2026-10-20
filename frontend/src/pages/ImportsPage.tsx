@@ -1,3 +1,4 @@
+import { DetailBack } from "../Progressive";
 import ChineseDateInput from "../ChineseDateInput";
 import DocumentPreviewDialog, { type PreviewDocument } from "../DocumentPreviewDialog";
 import { systemMessage } from "../uiText";
@@ -264,6 +265,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
   const [importStatus, setImportStatus] = useState("");
   const filteredImports = imports.data.filter((item) => matchesSearch(item.original_name, importSearch) && (!importStatus || item.status === importStatus));
   const importPages = usePagination(filteredImports, `${importSearch}:${importStatus}`, 12);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [selected, setSelected] = useState<StatementImport | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument | null>(null);
   useEffect(() => { setPreviewDocument(null); }, [selected?.id]);
@@ -361,6 +363,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
       const result = await api<StatementImport & { duplicate: boolean; upload_recovery_pending?: boolean }>("/api/statement-imports", { method: "POST", body: data });
       await imports.reload();
       setSelected(result);
+      setReviewOpen(true);
       setReviewValues(initialReviewValues(result));
       if (result.upload_recovery_pending) {
         setLocalError("账单记录已安全处理，但上传对账标记仍待系统清理；请安全退出并重新启动，若仍有提示请停止操作并检查数据目录");
@@ -384,6 +387,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
     try {
       const result = await postJson<StatementImport>(`/api/statement-imports/${selected.id}/reparse`, {});
       setSelected(result);
+      setReviewOpen(true);
       setReviewValues(initialReviewValues(result));
       setConflictsAcknowledged(false);
       await imports.reload();
@@ -403,6 +407,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
     try {
       const result = await recognizeStatementWithAi(selected.id);
       setSelected(result);
+      setReviewOpen(true);
       await imports.reload();
       const reviewIssueTotal = buildReviewIssues(result).length;
       notify(reviewIssueTotal ? `智能辅助识别完成，有${reviewIssueTotal}项需人工复核` : "智能辅助与本地文字识别结果一致，请财务最终复核");
@@ -584,6 +589,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
       /> : null}
       {(localError || imports.error || clients.error || accounts.error || snapshots.error || profileError) ? <ErrorBanner message={localError || imports.error || clients.error || accounts.error || snapshots.error || profileError} /> : null}
 
+      <div hidden={reviewOpen}>
       <Panel id="statement-upload" step={guided ? "第1步 · 上传原件" : undefined} title={embedded ? title : "上传eMPF文件"} subtitle="支持账户余额页及供款凭证JPG、PNG、PDF；系统会先分类，单个文件不超过25MB">
         <form className="upload-box" onSubmit={(event) => void upload(event)}>
           <UploadCloud size={32} />
@@ -593,7 +599,9 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
         </form>
       </Panel>
 
-      <section aria-label="智能辅助识别" className="ai-assistant-compact">
+      </div>
+      {reviewOpen ? <DetailBack label="返回导入记录" title={selected?.original_name || "核对资料"} disabled={statementWriteBusy} onBack={() => setReviewOpen(false)} /> : null}
+      <section hidden={!reviewOpen} aria-label="智能辅助识别" className="ai-assistant-compact">
           <BrainCircuit size={20} aria-hidden="true" />
           <div className="ai-assistant-summary">
             <h2>智能辅助识别</h2>
@@ -605,7 +613,7 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
           </button>
       </section>
 
-      <div className="import-layout">
+      <div hidden={reviewOpen} className="import-layout">
         <Panel id="statement-records" step={guided ? "第2步 · 选择导入记录" : undefined} title="导入记录" className="import-list-panel">
           <div className="list-search"><Field label="搜索导入文件"><input type="search" value={importSearch} onChange={(event) => setImportSearch(event.target.value)} placeholder="文件名称…" /></Field><Field label="复核状态"><select value={importStatus} onChange={(event) => setImportStatus(event.target.value)}><option value="">全部记录</option><option value="NEEDS_REVIEW">待复核</option><option value="CONFIRMED">已入账</option></select></Field></div>
           {imports.loading ? <Loading /> : filteredImports.length ? <div className="import-list">{importPages.rows.map((item) => {
@@ -613,13 +621,15 @@ export default function ImportsPage({ notify, embedded = false, guided = false, 
             const solType = String(item.ai_recognition?.values?.document_type ?? item.ai_recognition?.extracted?.document_type ?? "");
             const typeLabel = type === "unknown" && solType === "empf_account_page" ? "本地未知 · 智能辅助余额页" : documentTypeLabels[type] || documentTypeLabels.unknown;
             return <div key={item.id} className={`import-list-item ${selected?.id === item.id ? "active" : ""}`}>
-              <button aria-pressed={selected?.id === item.id} className="import-select" onClick={() => setSelected(item)}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
+              <button aria-pressed={selected?.id === item.id} className="import-select" disabled={statementWriteBusy} onClick={() => { setSelected(item); setReviewOpen(true); }}><FileSearch size={18} /><span><strong>{item.original_name}</strong><small>#{item.id} · {typeLabel}</small></span><StatusBadge value={item.status} /></button>
               <button className="import-delete" type="button" title={item.status === "CONFIRMED" ? "撤销并删除误入账记录（须填写原因且未进入结算）" : "删除未确认导入记录"} aria-label={`删除导入记录 #${item.id}`} disabled={statementWriteBusy} onClick={() => void deleteImport(item)}><Trash2 size={14} /></button>
             </div>;
           })}</div> : <EmptyState title={importSearch || importStatus ? "没有匹配的导入记录" : "暂无导入记录"} detail={importSearch || importStatus ? "更换关键词或复核状态后重试。" : "上传第一份eMPF文件开始。"} />}
           <Pagination {...importPages} />
         </Panel>
 
+      </div>
+      <div hidden={!reviewOpen} className="import-layout review-layout">
         <Panel title="原始文件" subtitle={selected ? selected.original_name : "选择一条记录查看"}>
           {selected ? <><div className="document-open"><button type="button" className="secondary" onClick={() => setPreviewDocument({ path: `/api/statement-imports/${selected.id}/file`, title: "原始文件预览", filename: selected.original_name })}>打开文件</button><small>在弹窗中查看完整原件，图片可放大核对。</small></div>{selected.mime_type?.startsWith("image/") ? <img className="document-preview" src={`/api/statement-imports/${selected.id}/file`} alt={`原始账单：${selected.original_name}`} /> : <div className="document-placeholder"><FileSearch size={40} aria-hidden="true" /><strong>PDF 原始文件</strong><p>点击“打开文件”查看完整内容。</p></div>}</> : <EmptyState title="尚未选择文件" detail="从导入记录选择文件后查看原件。" />}
         </Panel>

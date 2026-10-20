@@ -28,15 +28,20 @@ test("期间查询和全部档案均先明确选择客户，文字搜索不展�
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "客户1" } });
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   fireEvent.click(screen.getByRole("option", { name: "客户1" }));
+  fireEvent.click(screen.getByRole("button", { name: "查看账户" }));
   expect(screen.getByText("MANAGED-1")).toBeTruthy();
   expect(screen.queryByText("ACCOUNT-2")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   fireEvent.click(screen.getByRole("button", { name: "清空查询客户账户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   fireEvent.change(screen.getByLabelText("查询范围"), { target: { value: "all" } });
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   await choose("查询客户账户", "客户1");
+  fireEvent.click(screen.getByRole("button", { name: "查看账户" }));
   expect(screen.getByText("ACCOUNT-1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   await choose("查询客户账户", "客户2");
+  fireEvent.click(screen.getByRole("button", { name: "查看账户" }));
   expect(screen.queryByText("ACCOUNT-1")).toBeNull();
   expect(screen.getByText("ACCOUNT-2")).toBeTruthy();
 });
@@ -49,6 +54,7 @@ test("资金记录、结余及账户在未选客户时隐藏，切客清除更�
   fireEvent.click(screen.getByRole("option", { name: "客户1" }));
   const ledger = within(screen.getByRole("region", { name: "供款、加款、取款记录表" }));
   fireEvent.click(ledger.getByRole("button", { name: "更正" }));
+  fireEvent.click(screen.getByRole("tab", { name: "历史结余" }));
   fireEvent.click(within(screen.getByRole("region", { name: "历史结余表" })).getByRole("button", { name: "补存凭证" }));
   expect(screen.getByRole("button", { name: "上传到本条记录" })).toBeTruthy();
   await choose("资金与余额客户", "客户2");

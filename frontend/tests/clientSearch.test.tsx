@@ -91,6 +91,7 @@ test("新增账户页面通过搜索选择客户ID，分页切换不影响输入
   render(<ClientsPage notify={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "新增客户", exact: true }));
     fireEvent.click(screen.getByRole("tab", { name: /手动导入/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "2 · 建立账户" }));
   const input = screen.getByRole("combobox", { name: "新增账户客户" });
   fireEvent.focus(input);
   fireEvent.change(input, { target: { value: "mei" } });

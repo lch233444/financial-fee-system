@@ -70,6 +70,7 @@ test("余额差异仍须独立人工确认，切换文件会清空确认", async
   await waitFor(() => expect(submitted).toHaveLength(1));
   await screen.findByText("测试停在提交边界");
   expect(submitted[0].ai_conflicts_reviewed).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "返回导入记录" }));
   fireEvent.click(screen.getByRole("button", { name: /合成账单2/ }));
   expect((screen.getByRole("checkbox", { name: /我已人工核对完整清单/ }) as HTMLInputElement).checked).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: /生成历史结余/ }));
@@ -81,6 +82,8 @@ test("嵌入模式保留上传及复核流程并隐藏独立页导航", async ()
   await openFirst();
   expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   expect(screen.queryByRole("navigation")).toBeNull();
+  expect(screen.queryByRole("button", { name: "上传并本地识别" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "返回导入记录" }));
   expect(screen.getByRole("button", { name: "上传并本地识别" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "导入季度结余" })).toBeTruthy();
 });

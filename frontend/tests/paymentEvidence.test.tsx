@@ -63,6 +63,7 @@ test("账单按六项条件联合筛选，混合计划按任一来源匹配且�
   fireEvent.change(screen.getByLabelText("账单年度"), { target: { value: "2026" } });
   fireEvent.change(screen.getByLabelText("账单季度"), { target: { value: "1" } });
   await choose("账单客户", "客户甲");
+  fireEvent.click(screen.getByText("更多筛选"));
   await choose("账单收费计划", "计划20");
   await choose("账单收款公司", "实际收款公司乙 · #2");
   await choose("账单中介人", "同名FC · #1");
@@ -193,6 +194,7 @@ test("切换客户账单清空全部付款输入和凭证，重新填写后只�
     target: { files: [new File(["proof-A"], "customer-A.png", { type: "image/png" })] },
   });
 
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   fireEvent.click(screen.getByRole("button", { name: "查看UNPAID-001" }));
   const formB = screen.getByRole("button", { name: "确认已付款" }).closest("form")!;
   expect((within(formB).getByLabelText("实际现金（港币）") as HTMLInputElement).value).toBe("");

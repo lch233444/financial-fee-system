@@ -36,33 +36,43 @@ test("期间客户按实际子账户去重，已结束账户及无账单客户�
   expect(within(directory).getByText("客户乙")).toBeTruthy();
   expect(within(directory).getByText("显示 2 / 2 位在管客户")).toBeTruthy();
   expect(within(directory).getByText("收费计划：基础计划、特殊计划")).toBeTruthy();
-  expect(within(directory).getByText("管理期间：2025年01月01日 至 2026年04月01日")).toBeTruthy();
+
   for (const name of ["未来客户", "结束缺日期", "开始缺日期", "待补全客户", "无账户客户"]) expect(within(directory).queryByText(name)).toBeNull();
   expect(directory.textContent).not.toContain("2020年");
   expect(directory.textContent).not.toMatch(/客户\s*#|顾问甲\s*\(|编码/);
   expect(within(directory).queryByText("ACCOUNT-A")).toBeNull();
+  fireEvent.click(within(directory).getAllByRole("button", { name: "查看账户" })[0]);
+  expect(screen.getByText("2025年01月01日")).toBeTruthy();
+  expect(screen.getByText("至 2026年04月01日")).toBeTruthy();
 });
 
 test("客户、FC、收费计划和年季组合筛选，明确选客后才展开账户", async () => {
   setup();
   await screen.findByText("客户甲");
   const directory = screen.getByRole("region", { name: "客户与账户清单" });
+  fireEvent.click(screen.getByText("更多筛选"));
   await choose("收费计划筛选", "特殊计划");
   await choose("中介人筛选", "顾问甲");
   expect(within(directory).getByText("显示 1 / 2 位在管客户")).toBeTruthy();
   expect(within(directory).queryByText("客户乙")).toBeNull();
   await choose("查询客户账户", "客户甲");
-  expect(within(directory).getByText("ACCOUNT-B")).toBeTruthy();
+  fireEvent.click(within(directory).getByRole("button", { name: "查看账户" }));
+  expect(within(screen.getByRole("region", { name: "账户资料" })).getByText("ACCOUNT-B")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   expect(within(directory).queryByText("ACCOUNT-A")).toBeNull();
   fireEvent.change(screen.getByLabelText("季度"), { target: { value: "3" } });
   expect(within(directory).getByText("所选条件下没有在管客户")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "清空收费计划筛选" }));
-  expect(within(directory).getByText("ACCOUNT-A")).toBeTruthy();
+  fireEvent.click(within(directory).getByRole("button", { name: "查看账户" }));
+  expect(within(screen.getByRole("region", { name: "账户资料" })).getByText("ACCOUNT-A")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   await choose("年份", "2024年");
   expect(within(directory).getByText("所选条件下没有在管客户")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("季度"), { target: { value: "" } });
   await choose("年份", "2025年");
-  expect(within(directory).getByText("ACCOUNT-B")).toBeTruthy();
+  fireEvent.click(within(directory).getByRole("button", { name: "查看账户" }));
+  expect(within(screen.getByRole("region", { name: "账户资料" })).getByText("ACCOUNT-B")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
 });
 
 test("整年继承及路由期间变更生效，导入仅新增区挂载并刷新客户账户，删除重复区块且导入后刷新", async () => {
@@ -102,7 +112,9 @@ test("全部档案统一显示非期间档案及空客户，筛选、账户隐�
   expect(screen.queryByLabelText("季度")).toBeNull();
   expect(within(directory).queryByText("ACCOUNT-A")).toBeNull();
   await choose("查询客户账户", "无账户客户");
+  fireEvent.click(screen.getByRole("button", { name: "查看账户" }));
   expect(screen.getByText("尚无子账户")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
   vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "删除客户 无账户客户" }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith("/api/clients/7", expect.objectContaining({ method: "DELETE" })));

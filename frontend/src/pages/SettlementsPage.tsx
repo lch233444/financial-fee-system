@@ -1,3 +1,4 @@
+import { DetailBack, HelpTip } from "../Progressive";
 import { TaskTabs, TaskView, TaskHelp } from "../TaskTabs";
 import { clientIdentityLabel, formatDate } from "../types";
 import GeneratedBills, { SettlementBillingStatus } from "../GeneratedBills";
@@ -40,6 +41,8 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   const invoices = useApiList<Invoice>("/api/invoices");
   const currentYear = new Date().getFullYear();
   const [task, setTask] = useState<"fee-work" | "fee-export" | "fee-history">("fee-work");
+  const [workStep, setWorkStep] = useState<"select" | "entry" | "result">("select");
+  const [resultOrigin, setResultOrigin] = useState<"select" | "entry" | "history">("select");
   const [clientId, setClientId] = useState("");
   const [platformId, setPlatformId] = useState("");
   const [planId, setPlanId] = useState("");
@@ -140,6 +143,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
   function invalidateResult() {
     resultRevisionRef.current += 1;
     setResult(null);
+    setWorkStep((current) => current === "result" ? "select" : current);
   }
 
   function resetCombination() {
@@ -197,8 +201,10 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       });
       if (resultRevisionRef.current === requestRevision) {
         setResult(response);
+        setWorkStep("result");
       }
       await settlements.reload();
+      setResultOrigin("entry");
       notify("账户级高水位线已计算并保存为草稿");
     } catch (err) {
       setError(err instanceof Error ? err.message : "计算失败");
@@ -218,8 +224,10 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       const response = await postJson<Settlement>(`/api/settlements/${id}/finalize`, {});
       if (resultRevisionRef.current === requestRevision) {
         setResult(response);
+        setWorkStep("result");
       }
       await settlements.reload();
+      setResultOrigin("select");
       notify("结算已确认并锁定");
     } catch (err) {
       setError(err instanceof Error ? err.message : "确认失败");
@@ -247,6 +255,7 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       await api<{ status: string; id: number }>(`/api/settlements/${item.id}`, { method: "DELETE" });
       resultRevisionRef.current += 1;
       setResult(null);
+      setWorkStep("select");
       await settlements.reload();
       notify("草稿结算已删除，审计记录已保留");
     } catch (err) {
@@ -312,6 +321,8 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
 
   function showHistoricalResult(item: Settlement) {
     if (calculateBusyRef.current || finalizeBusyRef.current || deleteBusyRef.current || voidBusyRef.current) return;
+    setResultOrigin(task === "fee-history" ? "history" : "select");
+    setWorkStep("result");
     setTask("fee-work");
     resultRevisionRef.current += 1;
     setError("");
@@ -364,13 +375,14 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
       <TaskHelp title="计算前需要准备什么？">客户及账户须已启用并分配收费计划，备齐期初、期末结余和期间资金凭证；已有前序季度时，先完成其锁定。收款公司可在出具账单时再选择。</TaskHelp>
       {error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error ? <ErrorBanner message={error || invoices.error || settlements.error || clients.error || accounts.error || platforms.error || plans.error || snapshots.error} /> : null}
       <TaskView id="fee-work" active={task === "fee-work"}>
-      <Panel id="settlement-groups" step="第1步 · 选择客户季度与组合" title="本季账户组合总览" subtitle={`${year}年第${quarter}季度 · 按客户、平台和收费计划分组。点击“建立此组合”进入第2步；已有计算可直接查看结果。已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>
+      <div hidden={workStep !== "select"}>
+      <Panel id="settlement-groups" step="第1步 · 选择客户季度与组合" title="1 · 选择客户与季度" subtitle={`${year}年第${quarter}季度 · 按客户、平台和收费计划分组。点击“建立此组合”进入第2步；已有计算可直接查看结果。已锁定组合缺少账户时，须通过原结算的作废/更正流程补齐。`}>
         <div className="settlement-controls">
           <Field label="结算年份"><input disabled={settlementMutationBusy} type="number" min="2000" max="2200" value={year} onChange={(e) => { resetCombination(); setYear(Number(e.target.value) || currentYear); }} /></Field>
           <Field label="结算季度"><select disabled={settlementMutationBusy} value={quarter} onChange={(e) => { resetCombination(); setQuarter(Number(e.target.value)); }}><option value={1}>第一季度</option><option value={2}>第二季度</option><option value={3}>第三季度</option><option value={4}>第四季度</option></select></Field>
           <Field group label="客户"><SearchableSelect label="结算客户" disabled={settlementMutationBusy} value={clientId} onChange={(value) => { resetCombination(); setClientId(value); }} options={clients.data.filter((x) => x.status === "ACTIVE").map((x) => ({ value: String(x.id), label: clientIdentityLabel(x, clients.data, accounts.data) }))} /></Field>
         </div>
-        {!clientId ? <EmptyState title="先搜索并选定客户" detail="选择年份、季度，再选定客户后查看该期间的账户组合。仅输入搜索文字不会展示账户。" /> : accounts.loading || settlements.loading ? <Loading /> : clientGroups.length ? <>
+        {!clientId ? null : accounts.loading || settlements.loading ? <Loading /> : clientGroups.length ? <>
           <div className="table-wrap" tabIndex={0} role="region" aria-label="本季客户平台计划组合"><table><thead><tr><th>客户</th><th>平台 / 收费计划</th><th>子账户</th><th>结算进度</th><th>已锁定服务费</th><th>操作</th></tr></thead><tbody>{groupPages.rows.map((group) => {
             const first = group.accounts[0];
             const settled = group.settlement;
@@ -378,20 +390,23 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
             const rate = settled ? settled.fee_rate * 100 : plans.data.find((plan) => plan.id === first.fee_plan_id)?.fee_rate_percent;
             return <tr key={group.key} className={group.key === `${clientId}:${platformId}:${planId}` ? "selected" : ""}><td><strong>{first.client_name || clients.data.find((client) => client.id === first.client_id)?.name}</strong></td><td>{first.platform_name || platforms.data.find((platform) => platform.id === first.platform_id)?.name}<small className="cell-note">{first.fee_plan_name || plans.data.find((plan) => plan.id === first.fee_plan_id)?.name}{rate != null ? ` · ${rate}%${settled ? "（结算费率）" : ""}` : ""}</small></td><td>{group.accounts.map((account) => <small className="cell-note" key={account.id}>{account.account_number}{account.scheme_name && account.scheme_name !== account.platform_name ? ` · ${account.scheme_name}` : ""}</small>)}</td><td>{settled ? <SettlementBillingStatus settlement={settled} invoices={invoices.data} /> : "待计算"}<small className="cell-note">已锁定 {covered} / {group.accounts.length} 个账户{settled?.status === "FINALIZED" && covered < group.accounts.length ? " · 有账户遗漏" : ""}</small></td><td>{settled?.status === "FINALIZED" ? <Money value={settled.service_fee} /> : "待锁定"}</td><td><button className="ghost" disabled={settlementMutationBusy} onClick={() => {
               if (settled) { showHistoricalResult(settled); return; }
-              invalidateResult(); setClientId(String(first.client_id)); setPlatformId(String(first.platform_id)); setPlanId(String(first.fee_plan_id));
+              invalidateResult(); setWorkStep("entry"); setClientId(String(first.client_id)); setPlatformId(String(first.platform_id)); setPlanId(String(first.fee_plan_id));
               const panel = document.getElementById("settlement-create"); panel?.scrollIntoView?.({ block: "start" }); panel?.focus({ preventScroll: true });
             }}>{settled ? "查看结算" : "建立此组合"}</button></td></tr>;
           })}</tbody></table></div><Pagination {...groupPages} />
         </> : <EmptyState title="本季没有可计算账户" detail="核对账户是否已启用、已分配平台和收费计划、开始管理日期是否落在本季或之前。" />}
       </Panel>
 
-      <Panel id="settlement-create" step="第2步 · 填写资料并计算" title="建立结算组合" subtitle="先完成第1步，再核对平台、收费计划及下方每个账户；计算保存为草稿后进入第3步。">
-        <p className="settlement-instructions">逐账户核对管理起止日期、期初及期末结余和原件。结算日期须为季末或实际退出日。首次高水位线自动取本系统首次结算的期初结余金额；修改需填写原因并单独确认。后续只读继承上期结算的下期高水位线。</p>
+      </div>
+      <div hidden={workStep !== "entry"}>
+      {workStep === "entry" ? <DetailBack label="返回选择" title={`${clients.data.find((item) => item.id === Number(clientId))?.name || ""} · ${year}年第${quarter}季度`} disabled={settlementMutationBusy} onBack={() => setWorkStep("select")} /> : null}
+      <Panel id="settlement-create" step="第2步 · 填写资料并计算" title="2 · 核对账户并计算" subtitle="先完成第1步，再核对平台、收费计划及下方每个账户；计算保存为草稿后进入第3步。">
+        <div className="task-help-inline"><HelpTip title="高水位线与结算规则">逐账户核对管理起止日期、期初及期末结余和原件。结算日期须为季末或实际退出日。首次高水位线自动取本系统首次结算的期初结余金额；修改需填写原因并单独确认。后续只读继承上期结算的下期高水位线。</HelpTip><span>计算规则</span></div>
         <div className="settlement-controls">
           <Field label="投资平台"><select disabled={settlementMutationBusy || !clientId} value={platformId} onChange={(e) => { invalidateResult(); setPlatformId(e.target.value); setPlanId(""); }}><option value="">请选择</option>{availablePlatforms.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <Field label="收费计划"><select disabled={settlementMutationBusy || !platformId} value={planId} onChange={(e) => { invalidateResult(); setPlanId(e.target.value); }}><option value="">请选择</option>{availablePlans.map((x) => <option key={x.id} value={x.id}>{x.name}{x.fee_rate_percent != null ? ` · ${x.fee_rate_percent}%` : ""}</option>)}</select></Field>
         </div>
-        <div className="settlement-scope" role="status"><strong>{clientId ? clients.data.find((client) => client.id === Number(clientId))?.name : "先选择客户"} · {year}年第{quarter}季度</strong><span>{platformId ? platforms.data.find((platform) => platform.id === Number(platformId))?.name : "选择平台"} · {selectedPlan ? `${selectedPlan.name} · 利润收费 ${selectedPlan.fee_rate_percent}%` : "选择收费计划"}</span><span>当前组合 {groupAccounts.length} 个子账户 · 各账户独立高水位线，亏损不抵消其他账户费用；最终按客户季度合并缴费单。</span></div>
+        <div className="settlement-scope" role="status"><strong>{clientId ? clients.data.find((client) => client.id === Number(clientId))?.name : "先选择客户"} · {year}年第{quarter}季度</strong><span>{platformId ? platforms.data.find((platform) => platform.id === Number(platformId))?.name : "选择平台"} · {selectedPlan ? `${selectedPlan.name} · 利润收费 ${selectedPlan.fee_rate_percent}%` : "选择收费计划"}</span><span>{groupAccounts.length} 个子账户</span></div>
         <div className="account-entry-table" tabIndex={0} role="region" aria-label="账户结算输入，可横向滚动">
           <div className="account-entry header"><span>加入</span><span>子账户</span><span>开始日期</span><span>结算日期</span><span>期初结余</span><span>期末结余</span><span>期初高水位线</span></div>
           {groupAccounts.length ? groupAccounts.map((account) => {
@@ -423,14 +438,18 @@ export default function SettlementsPage({ notify }: { notify: (message: string) 
         <div className="form-actions"><button className="primary" disabled={settlementMutationBusy || !clientId || !platformId || !planId || !groupAccounts.length} onClick={() => void calculate()}><Calculator size={17} />{busy ? "计算中..." : "计算并保存草稿"}</button></div>
       </Panel>
 
+      </div>
+      <div hidden={workStep !== "result"}>
+      {workStep === "result" ? <DetailBack label={resultOrigin === "entry" ? "返回填写" : resultOrigin === "history" ? "返回历史记录" : "返回选择"} title="3 · 复核计算结果" disabled={settlementMutationBusy} onBack={() => { if (resultOrigin === "history") { setTask("fee-history"); setWorkStep("select"); } else setWorkStep(resultOrigin); }} /> : null}
       {result ? <Panel id="settlement-result" step="第3步 · 核对结果并锁定" title={`计算结果 · 版本${result.version_no}`} subtitle={`${result.calculation_mode === "ACCOUNT_HWM" ? "账户级高水位线" : "历史组合高水位线"} · Formula ${result.formula_version} · ${result.status === "DRAFT" ? "尚未锁定" : result.status === "FINALIZED" ? "已锁定" : "已作废并冻结为历史"}`}>
-        <div className="workflow-current"><strong>{result.status === "DRAFT" ? "当前：草稿待人工复核" : result.status === "FINALIZED" ? "当前：本组合已锁定" : "当前：查看作废历史"}</strong><p>{result.status === "DRAFT" ? "逐账户核对金额、高水位线、收费及原始凭证；资料完整后点击“确认并锁定”。若来源有变，先重新计算。" : result.status === "FINALIZED" ? "核对该客户本季其余组合是否完成，再到账单出具建立或查看客户季度缴费单。" : "本记录不能再次锁定；按原组合重新计算并复核替代版本，保留旧记录供追溯。"}</p>{result.status === "FINALIZED" ? <a className="text-link" href="#/invoices">前往账单出具</a> : null}</div>
-        <div className="settlement-scope"><strong>{result.client_name} · {result.year}年第{result.quarter}季度</strong><span>{result.platform_name} · {result.fee_plan_name} · 结算费率 {(result.fee_rate * 100).toFixed(2)}%</span><span>结算 #{result.id} · {result.account_lines.length} 个账户。以下仅为这份结算，客户缴费单会合并本季所有已锁定平台及收费计划。</span></div>
+        <div className="workflow-current"><strong>{result.status === "DRAFT" ? "当前：草稿待人工复核" : result.status === "FINALIZED" ? "当前：本组合已锁定" : "当前：查看作废历史"}</strong><HelpTip title="当前结算的下一步">{result.status === "DRAFT" ? "逐账户核对金额、高水位线、收费及原始凭证；资料完整后点击“确认并锁定”。若来源有变，先重新计算。" : result.status === "FINALIZED" ? "核对该客户本季其余组合是否完成，再到账单出具建立或查看客户季度缴费单。" : "本记录不能再次锁定；按原组合重新计算并复核替代版本，保留旧记录供追溯。"}</HelpTip>{result.status === "FINALIZED" ? <a className="text-link" href="#/invoices">前往账单出具</a> : null}</div>
+        <div className="settlement-scope"><strong>{result.client_name} · {result.year}年第{result.quarter}季度</strong><span>{result.platform_name} · {result.fee_plan_name} · 结算费率 {(result.fee_rate * 100).toFixed(2)}%</span><span>结算 #{result.id} · {result.account_lines.length} 个账户</span></div>
         <div className="calculation-grid"><span><small>期初结余</small><Money value={result.beginning} /></span><span><small>净供款</small><Money value={result.net_contribution} /></span><span><small>期末结余</small><Money value={result.closing} /></span><span><small>投资盈亏</small><Money value={result.gain_loss} /></span><span><small>期间费率</small><strong>{result.period_rate == null ? "N/A" : `${(result.period_rate * 100).toFixed(2)}%`}</strong></span><span><small>天数（仅展示）</small><strong>{result.days}</strong></span><span><small>调整后高水位线合计</small><Money value={result.adjusted_hwm} /></span><span><small>各账户超过高水位线的收益合计</small><Money value={result.chargeable_above_hwm} /></span><span className="highlight"><small>各账户服务费合计</small><Money value={result.service_fee} emphasis /></span><span><small>下期高水位线合计</small><Money value={result.next_hwm} /></span></div>
         {result.account_lines.length && [clientId, historyClientId].includes(String(result.client_id)) ? <div tabIndex={0} role="region" aria-label="可滚动数据表格" className="table-wrap settlement-line-results"><table><thead><tr><th>子账户</th><th>账户期间</th><th>期初结余</th><th>净供款</th><th>期末结余</th><th>期初高水位线</th><th>超过高水位线的收益</th><th>服务费</th><th>凭证</th></tr></thead><tbody>{result.account_lines.map((line) => { const account = accountById.get(line.account_id); return <tr key={line.id}><td><strong>{line.account_number}</strong><small className="cell-note">{account ? [account.client_name, account.platform_name || "待确认投资平台", account.scheme_name !== account.platform_name ? account.scheme_name : null].filter(Boolean).join(" · ") : `${result.client_name} · ${result.platform_name}`}</small></td><td>{formatDate(line.start_date)} 至 {formatDate(line.closing_date)}<small className="cell-note">{line.days}天</small></td><td><Money value={line.beginning} /></td><td><Money value={line.net_contribution || "0.00"} /></td><td><Money value={line.closing} /></td><td><Money value={line.original_hwm || "0.00"} /><small className="cell-note">{line.hwm_source_type === "INITIAL_SNAPSHOT" ? `首次期初结余 #${line.beginning_snapshot_id}` : line.hwm_source_type === "PREVIOUS_SETTLEMENT" ? `继承账户结算 #${line.previous_line_id}` : "历史记录"}</small>{line.hwm_override_confirmed ? <small className="cell-note">修改已确认：{line.hwm_override_reason}</small> : null}</td><td><Money value={line.chargeable_above_hwm || "0.00"} /></td><td><Money value={line.service_fee || "0.00"} /></td><td>{(line.beginning_evidence_count || 0) > 0 && (line.closing_evidence_count || 0) > 0 ? "完整" : "待补"}</td></tr>; })}</tbody></table></div> : null}
         {result.status === "VOID" ? <div className="invoice-candidate-warning">作废原因：{result.void_reason || "未记录"}{result.replaces_settlement_id ? ` · 本记录替代结算 #${result.replaces_settlement_id}` : ""}</div> : null}
         <div className="form-actions">{result.status === "DRAFT" ? <><button className="primary" disabled={settlementMutationBusy} onClick={() => void finalize(result.id)}><CheckCircle2 size={17} />{finalizeBusy ? "锁定中..." : "确认并锁定"}</button><button className="danger" disabled={settlementMutationBusy} onClick={() => void deleteDraft(result)}><Trash2 size={17} />{deleteBusy ? "删除中..." : "删除草稿"}</button></> : result.status === "FINALIZED" ? <><button className="ghost" disabled={settlementMutationBusy} onClick={() => void download(`/api/exports/excel?settlement_ids=${result.id}`, `settlement_${result.id}.xlsx`, { method: "POST" })}><Download size={17} />内部Excel</button><button className="danger" disabled={settlementMutationBusy} onClick={() => void voidFinalized(result)}><Ban size={17} />{voidBusy ? "作废处理中..." : "作废结算"}</button></> : null}</div>
-      </Panel> : <Panel id="settlement-result" step="第3步 · 核对结果并锁定" title="等待计算结果"><EmptyState title="完成第2步后，在这里复核" detail="也可从本季组合或计算记录打开已有结果。计算保存草稿与正式锁定是两个独立操作。" /></Panel>}
+      </Panel> : null}
+      </div>
 
       </TaskView>
       <TaskView id="fee-export" active={task === "fee-export"}>

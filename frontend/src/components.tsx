@@ -1,12 +1,12 @@
 import { type PropsWithChildren, useEffect, useId, useRef } from "react";
 import { AlertCircle, Inbox, LoaderCircle } from "lucide-react";
+import { HelpTip } from "./Progressive";
 
 export function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="page-header">
       <div>
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
+        <h1 aria-label={title}>{title}<HelpTip title={title}>{subtitle}</HelpTip></h1>
       </div>
     </div>
   );
@@ -18,9 +18,7 @@ export function Panel({ title, subtitle, children, className = "", id, step }: P
     <section className={`panel ${className}`} id={id} aria-labelledby={titleId} tabIndex={id ? -1 : undefined}>
       <div className="panel-heading">
         <div>
-          {step ? <span className="workflow-step-label">{step}</span> : null}
-          <h2 id={titleId}>{title}</h2>
-          {subtitle ? <p>{subtitle}</p> : null}
+          <h2 id={titleId} aria-label={title}>{title}{subtitle ? <HelpTip title={title}>{step ? <p>{step}</p> : null}{subtitle}</HelpTip> : null}</h2>
         </div>
       </div>
       {children}
@@ -30,13 +28,13 @@ export function Panel({ title, subtitle, children, className = "", id, step }: P
 
 /** Visible task instructions, not a claim that a financial action has completed. */
 export function WorkflowStep({ number, title, detail }: { number: number; title: string; detail?: string }) {
-  return <div className="workflow-step"><span className="workflow-step-label">第{number}步</span><div><h3>{title}</h3>{detail ? <p>{detail}</p> : null}</div></div>;
+  return <div className="workflow-step"><span className="workflow-step-label">{number}</span><div><h3 aria-label={title}>{title}{detail ? <HelpTip title={title}>{detail}</HelpTip> : null}</h3></div></div>;
 }
 
-export function WorkflowSection({ id, title, description, children }: PropsWithChildren<{ id: string; title: string; description: string }>) {
+export function WorkflowSection({ id, title, description, children, compact = false }: PropsWithChildren<{ id: string; title: string; description: string; compact?: boolean }>) {
   const titleId = useId();
-  return <section className="workflow-section" id={id} aria-labelledby={titleId} tabIndex={-1}>
-    <header className="workflow-section-heading"><h2 id={titleId}>{title}</h2><p>{description}</p></header>
+  return <section className="workflow-section" id={id} aria-labelledby={compact ? undefined : titleId} aria-label={compact ? title : undefined} tabIndex={-1}>
+    {compact ? null : <header className="workflow-section-heading"><h2 id={titleId} aria-label={title}>{title}<HelpTip title={title}>{description}</HelpTip></h2></header>}
     {children}
   </section>;
 }
@@ -55,9 +53,9 @@ export function Field({ label, hint, children, group = false }: PropsWithChildre
 export function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="empty-state">
-      <span className="empty-state-icon"><Inbox size={23} aria-hidden="true" /></span>
+      <span className="empty-state-icon"><Inbox size={20} aria-hidden="true" /></span>
       <strong>{title}</strong>
-      <span>{detail}</span>
+      <HelpTip title={title}>{detail}</HelpTip>
     </div>
   );
 }

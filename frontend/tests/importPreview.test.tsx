@@ -43,6 +43,7 @@ test("自动导入原件在弹窗放大核对，关闭释放资源、回到原�
 
 test("切换导入记录后弹窗使用新PDF原件，Escape关闭", async () => {
   const fetcher = await setup(async () => new Response("%PDF-synthetic", { headers: { "Content-Type": "application/pdf" } }));
+  fireEvent.click(screen.getByRole("button", { name: "返回导入记录" }));
   fireEvent.click(screen.getByRole("button", { name: /合成文档.pdf/ }));
   fireEvent.click(screen.getByRole("button", { name: "打开文件" }));
   const dialog = screen.getByRole("dialog", { name: "原始文件预览" });

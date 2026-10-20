@@ -70,6 +70,7 @@ test("切换原件清空客户选择，手工改名保留所选客户但姓名�
   setup();
   await openFirst();
   chooseCustomer(11);
+  fireEvent.click(screen.getByRole("button", { name: "返回导入记录" }));
   fireEvent.click(screen.getByRole("button", { name: /客户归属测试2/ }));
   expect((screen.getByRole("combobox", { name: "选择已有客户" }) as HTMLInputElement).value).toBe("");
   chooseCustomer(12);

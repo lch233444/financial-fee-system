@@ -1,3 +1,4 @@
+import { TaskTabs, TaskView } from "../TaskTabs";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
 import { api } from "../api";
@@ -21,6 +22,7 @@ export default function DashboardPage() {
   const platforms = useApiList<{ id: number }>("/api/platforms");
   const plans = useApiList<{ id: number }>("/api/fee-plans");
   const years = Array.from({ length: 201 }, (_, index) => 2000 + index);
+  const [view, setView] = useState<"home-tasks" | "home-overview">("home-tasks");
   const [year, setYear] = useState(2026);
   const [quarter, setQuarter] = useState("");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -47,6 +49,8 @@ export default function DashboardPage() {
   return (
     <div className="workflow-page dashboard-workflow">
       <PageHeader title="工作台" subtitle="选择今天要办理的任务，或查看本期经营情况。" />
+      <TaskTabs label="工作台内容" value={view} onChange={setView} items={[{ id: "home-tasks", label: "办理业务" }, { id: "home-overview", label: "经营概览" }]} />
+      <TaskView id="home-tasks" active={view === "home-tasks"}>
       <section className="workbench-start" aria-labelledby="workbench-title">
         <div className="workbench-heading"><div><span className="eyebrow">日常办理</span><h2 id="workbench-title">今天从哪里开始？</h2><p>新客户先建档，已有客户从本次需要的环节继续。</p></div><a className="text-link" href="#/setup">基础资料设置 <ArrowRight size={17} aria-hidden="true" /></a></div>
         <div className="task-cards">
@@ -59,6 +63,8 @@ export default function DashboardPage() {
           : fcs.loading || platforms.loading || plans.loading ? <p className="workbench-readiness" role="status">正在检查基础资料…</p>
           : !fcs.data.length || !platforms.data.length || !plans.data.length ? <p className="workbench-readiness" role="status"><strong>首次使用，先补充：</strong>{[!fcs.data.length && "中介人", !platforms.data.length && "投资平台", !plans.data.length && "收费计划"].filter(Boolean).join("、")}。<a href="#/setup">去设置</a>。收款公司可在出具账单前确认。</p> : null}
       </section>
+      </TaskView>
+      <TaskView id="home-overview" active={view === "home-overview"}>
       <div className="overview-heading"><h2>经营概览</h2><span>选择期间查看统计</span></div>
       <WorkflowSection id="dashboard-period" title="统计期间" description="选择并确认年度，可进一步按季度查看。">
       <div className="dashboard-period">
@@ -87,6 +93,7 @@ export default function DashboardPage() {
           <a href={`#/clients?year=${year}${quarter ? `&quarter=${quarter}` : ""}`}><strong>查看本期客户与账户</strong><span>核对在管客户及管理日期；新增客户使用该页的新增入口。</span></a>
         </div>
       </WorkflowSection>
+      </TaskView>
     </div>
   );
 }

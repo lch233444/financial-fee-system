@@ -96,6 +96,7 @@ jobs:
           retention-days: 7
   verify-dmg:
     needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:

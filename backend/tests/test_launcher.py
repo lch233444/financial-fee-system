@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
@@ -8,6 +9,16 @@ import pytest
 
 from app import launcher
 from app.config import APP_VERSION
+
+
+def test_port_probe_never_accepts_an_active_listener():
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        assert not launcher._port_available("127.0.0.1", port)
+    assert launcher._port_available("127.0.0.1", port)
 
 
 @pytest.mark.parametrize("different", [None, "version", "root", "app", "malformed"])

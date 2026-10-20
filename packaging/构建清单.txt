@@ -38,3 +38,5 @@
 
 2026-10-20 双端构建补充（实施中）
 macOS：requirements-macos-build.txt；prepare-macos-assets.py固定上游摘要；build-macos.py分别构建arm64/x86_64；assemble-macos.py合并DMG。运行run-backend-tests.py与check-distribution.py后才能认定对应平台通过。Apple签名、公证及最终DMG运行结果独立记录。Windows常规回归与原有运行组件完整性检查继续保留。
+
+Windows安装向导：使用官方NSIS3.13，SHA256 ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8（官方ZIP）；运行scripts/build-windows-installer.py封装已验收的空白runtime。安装、合成业务、恢复、卸载保留额外数据分别验收。/NOINTEGRATION仅供隔离测试，避免写入用户快捷方式和安装注册项。Mac Codex的上游LICENSE/NOTICE随包保存。

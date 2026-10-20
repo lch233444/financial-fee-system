@@ -80,3 +80,35 @@ jobs:
         with:
           name: Mac-installer
           path: release/*.dmg
+  verify-dmg:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r backend/requirements-macos-build.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Mac-installer
+          path: artifacts
+      - run: |
+          hdiutil attach artifacts/*.dmg -mountpoint /tmp/ff-dmg -nobrowse -readonly
+          ditto "/tmp/ff-dmg/金融计划收费系统.app" "/tmp/金融计划收费系统.app"
+          hdiutil detach /tmp/ff-dmg
+          codesign --verify "/tmp/金融计划收费系统.app"
+          lipo -archs "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem"
+          python scripts/check-distribution.py --executable "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem" --work /tmp/ff-final
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: final-evidence-${{ matrix.runner }}
+          path: |
+            /tmp/ff-final/*.json
+            /tmp/ff-final/*.log
+            /tmp/ff-final/*.pdf

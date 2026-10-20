@@ -1,9 +1,12 @@
 """Acceptance of an actual frozen runtime using only generated test records."""
 import argparse
+from contextlib import closing
 import io
 import json
 import os
+import platform
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -32,6 +35,7 @@ with socket.socket() as sock:
     port = sock.getsockname()[1]
 env = {k: v for k, v in os.environ.items() if not k.startswith("FINANCIAL_")}
 env.update(FINANCIAL_DATA_ROOT=str(work / "data"), FINANCIAL_CODEX_HOME=str(work / "login"),
+           FINANCIAL_OCR_CACHE_ROOT=str(work / "ocr-cache"),
            FINANCIAL_HOST="127.0.0.1", FINANCIAL_PORT=str(port), FINANCIAL_NO_BROWSER="1",
            TEMP=str(work / "tmp"), TMP=str(work / "tmp"), TMPDIR=str(work / "tmp"), PYTHONUTF8="1")
 if sys.platform == "darwin":
@@ -40,7 +44,7 @@ client = httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, time
                       headers={"X-Financial-System-Request": "1"})
 process = None
 log = (work / "app.log").open("w", encoding="utf-8")
-report = {"version": APP_VERSION, "platform": sys.platform, "checks": []}
+report = {"version": APP_VERSION, "platform": sys.platform, "status": "failed", "checks": []}
 
 
 def start():
@@ -98,7 +102,12 @@ try:
     png = work / "ocr.png"
     picture.save(png)
     runtime = exe.parent
+    if exe.parent.name == "MacOS" and exe.parent.parent.name == "Contents":
+        runtime = exe.parent.parent / "Resources" / f"runtime-{platform.machine()}"
     ocr = runtime / ("Tesseract-OCR/tesseract.exe" if os.name == "nt" else "_internal/Tesseract-OCR/tesseract")
+    if os.name == "nt":
+        from app.services.ocr_runtime import prepare_windows_runtime
+        ocr = prepare_windows_runtime(ocr, work / "ocr-cache")
     ocr_env = dict(env, TESSDATA_PREFIX=str(ocr.parent / "tessdata"))
     recognized = subprocess.check_output([str(ocr), str(png), "stdout"], env=ocr_env,
                                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), text=True)
@@ -106,6 +115,9 @@ try:
     imported = client.post("/api/statement-imports",
                            files={"file": ("synthetic.png", png.read_bytes(), "image/png")}).raise_for_status().json()
     assert imported["id"]
+    with closing(sqlite3.connect(work / "data/database/financial_system.sqlite3")) as db:
+        raw = db.execute("SELECT raw_text FROM statement_imports WHERE id = ?", (imported["id"],)).fetchone()[0]
+    assert "TEST123456" in raw and "900.00" in raw
     report["checks"].append("native-OCR/generated-image/import")
     backup = client.post("/api/backups?year=2026&quarter=1").raise_for_status().content
     assert backup.startswith(b"PK")
@@ -119,6 +131,7 @@ try:
     report["checks"].append("backup/restore/restart/persistence")
     stop()
     report["checks"].append("safe-shutdown")
+    report["status"] = "passed"
 finally:
     if process and process.poll() is None:
         process.terminate()

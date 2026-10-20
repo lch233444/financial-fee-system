@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from websockets.sync.client import connect
+from app.launcher import _port_available
 
 
 def test_last_browser_close_allows_inflight_request_to_finish(tmp_path):
@@ -71,8 +72,7 @@ main()
                 page.close()
                 assert request.result(timeout=10) == {'completed': True}
         assert process.wait(timeout=10) == 0
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', port))
+        assert _port_available("127.0.0.1", port)
     finally:
         if process.poll() is None:
             process.terminate()

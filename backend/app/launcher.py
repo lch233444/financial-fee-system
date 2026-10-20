@@ -95,6 +95,11 @@ def _prepare_data_root() -> None:
 def _port_available(host: str, port: int) -> bool:
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     with socket.socket(family, socket.SOCK_STREAM) as sock:
+        if os.name != "nt":
+            # Match Uvicorn's POSIX bind semantics after a graceful restart.
+            # TIME_WAIT sockets are not a live server; Windows reuse semantics
+            # differ and must not be enabled there.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
             return True

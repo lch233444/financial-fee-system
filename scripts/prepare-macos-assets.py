@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import platform
+import shutil
 import tarfile
 import urllib.request
 from pathlib import Path
@@ -48,6 +49,8 @@ def main():
         (target / name).chmod(0o755)
         lines.append(f"{item['binary_sha256'].upper()}  {name}")
     (target / "VERSION.txt").write_text("\n".join(lines) + "\n")
+    for name in ("LICENSE", "NOTICE"):
+        shutil.copyfile(ROOT / f"packaging/licenses/Codex-{name}.txt", target / name)
 
 
 if __name__ == "__main__":

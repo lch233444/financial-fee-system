@@ -39,6 +39,12 @@ for arch in ("arm64", "x86_64"):
     ], cwd=root, check=True)
     shutil.copytree(args.runtimes / arch / "FinancialFeeSystem",
                     contents / "Resources" / f"runtime-{arch}", symlinks=True)
+    for path in (contents / "Resources" / f"runtime-{arch}").rglob("*"):
+        assert path.name.lower() not in {
+            "auth.json", "financial_system_config.json", "config.toml", ".codex",
+            "lunacodexhome", "backups", "attachments", "statement_imports",
+        }, path
+        assert not path.name.lower().endswith((".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm")), path
     # Native code is immutable; replace only the existing Markdown documents.
     docs = contents / "Resources" / f"runtime-{arch}" / "docs"
     for document in (root / "docs").rglob("*"):
@@ -46,6 +52,11 @@ for arch in ("arm64", "x86_64"):
             target = docs / document.relative_to(root / "docs")
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(document, target)
+    runtime = contents / "Resources" / f"runtime-{arch}"
+    for document in ("README.md", "AGENTS.md"):
+        shutil.copyfile(root / document, runtime / document)
+    for document in ("发布说明.txt", "构建清单.txt"):
+        shutil.copyfile(root / "packaging" / document, runtime / document)
 launcher = contents / "MacOS/FinancialFeeSystem"
 subprocess.run(["clang", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=15.0",
                 str(root / "packaging/macos-launcher.c"), "-o", str(launcher)], check=True)

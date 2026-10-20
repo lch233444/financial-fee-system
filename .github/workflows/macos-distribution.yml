@@ -58,10 +58,12 @@ jobs:
         with:
           name: native-${{ matrix.arch }}
           path: runtime-${{ matrix.arch }}.tar.gz
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: evidence-${{ matrix.arch }}
+          retention-days: 7
           path: |
             /tmp/ff-tests/*.log
             /tmp/ff-tests/*.xml
@@ -91,6 +93,7 @@ jobs:
         with:
           name: Mac-installer
           path: release/*.dmg
+          retention-days: 7
   verify-dmg:
     needs: assemble
     strategy:
@@ -120,6 +123,7 @@ jobs:
         if: always()
         with:
           name: final-evidence-${{ matrix.runner }}
+          retention-days: 7
           path: |
             /tmp/ff-final/*.json
             /tmp/ff-final/*.log

@@ -1,10 +1,11 @@
 金融计划收费计算系统 MVP 1.1.6 Windows运行版构建清单
-文档修订：2026-10-20。本轮复用10月16日已冻结的1.1.6 EXE，核对哈希并重新构建前端；未修改后端或额外迁移。最新验证与交付状态见docs/项目说明书.md第12.37节；后端和OCR历史全量验证见12.36节。
+文档修订：2026-10-20。本清单同时记录Windows与Mac空白安装包构建。最新双端验证见docs/项目说明书.md第12.38.2节；本机正式Windows程序及真实数据不在本批切换，仍见1.2及12.37节。
 
 一、当前构建契约
 - 应用版本：1.1.6；Windows ProductVersion：1.1.6；FileVersion：1.1.6.0。
 - 数据库目标head：d016f0ee1160；目标60个Trigger；结构数量不能替代业务验收。
-- 常规完整构建输出：release/FinancialFeeSystem。本轮候选独立位于release/progressive-20261020/FinancialFeeSystem；验收及恢复临时根F:\ui20a，历史受阻目录不重试。
+- 常规完整构建输出：release/FinancialFeeSystem。本批Windows独立候选release/distribution-20261020-r2/FinancialFeeSystem，测试与构建临时根F:\ffp20a。历史受阻目录不重试。
+- 本批同事Windows EXE SHA-256：9AB486AB023898F87FD51AD2D174B05F1F4A05283356B0C161711261C0FB0DAA；这不是本机正式运行EXE哈希。Mac原生组件来源37f87716c47d81cef703072b7cb926896a1abba1，已验证Actions运行39386598516；最终文档重封装的DMG仍须通过两端实际运行。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6
@@ -12,33 +13,35 @@
 - Tesseract版本5.5.3.20260724；tools/Tesseract-OCR/tesseract.exe：C66F0F12ED76F6AA455DAC97684BBC86756D6A732380BEE09122454CFDA3F420
 - packaging/tesseract-runtime.json固定95个实际OCR运行文件哈希，包括所有DLL、eng/osd语言及配置；复制为运行包Tesseract-OCR/runtime-manifest.json。安装文件不符即停止，不以修改清单绕过。
 - scripts/check-ocr-runtime.py先核对源组件及语言启动，打包后实际启动EXE，合成PNG/JPG/扫描PDF经上传接口验证账户、日期和余额仍为待复核；覆盖仅剩EXE、再次缺DLL缓存修复及原件reparse，不运行Sol。报告存docs/build-dependencies/ocr-smoke.json。
-- 本轮使用F:\ui20a，预检226字符ASCII路径创建、解压及复制。10月16日冻结EXE完成合成PNG/JPG/扫描PDF识别及缓存修复；本轮不重复计作全量OCR验收。
+- 本批临时路径预检采用F盘ASCII短根，深层恢复路径不得超过240字符。Windows源码671项通过；实际安装后的OCR生成图、零金额双语账单、备份恢复及退出检查通过。早期PNG/JPG/扫描PDF与缓存修复历史证据仍见12.36节，不计作本轮重复检查。
 - 唯一Excel母版：新收费计划计算纯净版模板.xlsx；SHA-256：16A1197C6C2C843F58F766EC42041439D063FBBD4F6FF6D9002A947035871145
 - 主表示例、公式及Defer保留页不因构建重写；AI实际模型固定gpt-5.6-sol，兼容名称不改变该限制。
 - 客户PDF在Windows优先使用系统微软正黑体常规/粗体，回退微软雅黑及原有字体候选；不另行打包商业字体。英文含中文公司/客户资料时也须验证原名完整显示。
 
 二、执行顺序和产物
-- 常规完整构建入口scripts/build-windows.ps1。10月16日使用该脚本的独立输出副本F:\zf16\build.ps1，保留依赖、签名、模板及冻结EXE OCR检查；测试独立先行，避开脚本对既有release父目录的清理。实际执行脚本及日志随验收证据归档。
+- 常规完整构建入口scripts/build-windows.ps1。本批冻结Windows程序使用独立输出，完整测试单独先行；不清理已有release父目录。实际构建日志及验收归档于F:\财务系统\开发验收\20261020_双端安装包。
 - 先test_system_backup.py，再按文件名执行其余完整后端测试；前端交互测试和生产构建由同一脚本先行执行。
 - Codex两个EXE、Tesseract、模板和版本任一校验失败即停止。不得通过更改文档哈希掩盖实际组件变更。
 - 包含完整运行依赖、前端资源、迁移文件、Tesseract、Codex、启动脚本，以及当前README、AGENTS、docs、发布说明和构建清单。
-- 构建脚本在docs/build-dependencies中保留本次依赖锁文件，在程序根生成构建结果.txt，记录实际时间、文件数、字节数、EXE哈希和Windows版本。
+- 常规构建脚本在docs/build-dependencies中保留依赖锁文件，并生成构建结果.txt；本批独立构建由归档日志、原生元数据、实际安装文件比对与最终SHA-256清单共同记录，不复用历史构建结果。
 - 不复制历史构建结果充当新产物证据；文档更改也不表示现有正式包内容已同步。
 
 
 三、交付门槛
 - 候选只连隔离合成数据；核对loopback、版本、API、全部静态文件、对应业务成功/拒绝路径及退出状态。
-- 涉及整套界面调整时，八页375/768/1024/1440像素核对步骤、选择、弹窗、键盘与窄屏；本轮针对账单与原件弹窗验证实际EXE操作、1920宽桌面拖动及375宽边界。编译不替代实际视觉验收。
-- 当前正式版本完整备份并严格验证，同版本恢复后以新版隔离启动；再核对正式未变化并切换新独立目录。
-- 核对旧程序配置并沿用F:\备份，启动时移除数据根环境覆盖；升级前后账目与业务文件逐项对照。
+- 涉及整套界面调整时核对各页桌面及窄屏的步骤、选择、弹窗与键盘；本批前端未再改动，八页交互视觉证据见12.37节。本批另外检查实际Windows和Mac生成的双语PDF。编译不替代实际视觉验收。
+- 本批仅空白同事分发，不连接或复制正式数据。未来正式切换仍须完整备份、隔离恢复、核对目标目录并在切换前后逐项对照账目与业务文件。
 - 最终文档既核对源码/包内字节一致，也核对当前版本、路径、规则、链接及接手提示词内容时效。
 - 仅按精确清单清理本次候选、测试及已归档旧程序，保留真实数据、完整备份和回滚包；遇拒绝不换工具重试。
 - pnpm 11运行现有锁定依赖可设置pnpm_config_verify_deps_before_run=false；不要仅因应用版本变化自动重装。
 
 
-2026-10-20 双端构建补充（实施中）
-macOS：requirements-macos-build.txt；prepare-macos-assets.py固定上游摘要；build-macos.py分别构建arm64/x86_64；assemble-macos.py合并DMG。运行run-backend-tests.py与check-distribution.py后才能认定对应平台通过。Apple签名、公证及最终DMG运行结果独立记录。Windows常规回归与原有运行组件完整性检查继续保留。
+四、双端安装包
+macOS：macOS15及以上；requirements-macos-build.txt锁定Python构建依赖，prepare-macos-assets.py固定Codex与字体上游摘要，build-macos.py分别构建arm64/x86_64，assemble-macos.py生成同一个双芯片DMG。Homebrew仅供构建阶段使用，运行包收集原生依赖并拒绝外部Homebrew绝对路径。两架构真实平台前端各140项通过、后端各670通过/1项Windows专用跳过；原生程序与DMG复制安装后的验收通过。
 
-Windows安装向导：使用官方NSIS3.13，SHA256 ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8（官方ZIP）；运行scripts/build-windows-installer.py封装已验收的空白runtime。安装、合成业务、恢复、卸载保留额外数据分别验收。/NOINTEGRATION仅供隔离测试，避免写入用户快捷方式和安装注册项。Mac Codex的上游LICENSE/NOTICE随包保存。
+Windows安装向导：64位Windows，使用官方NSIS3.13，SHA256 ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8（官方ZIP）；scripts/build-windows-installer.py封装空白runtime，scripts/check-windows-installer.py验收实际安装、逐文件比对、合成业务、恢复及卸载保留额外数据。/NOINTEGRATION仅供隔离测试，不写用户快捷方式或安装注册项。
 
 字体封装须更新静态实例的PostScript名称，常规与粗体名称必须不同；最终PDF实际字体资源须分开。Mac首次启动测试见check-macos-first-launch.py。文档重封装通过workflow_dispatch的native_run_id选择已验收组件，组装脚本核对源码树差异，安全解包并重新签封完整应用，两个最终DMG运行测试不可省略。
+
+Mac内置Noto Sans SC及OFL，Codex的上游LICENSE/NOTICE随包保留。当前仅ad-hoc完整性签名，没有Developer ID或Apple公证。安装说明须保留真实状态与Apple官方首次打开步骤，不能宣称免来源确认或关闭系统保护。
+两端安装包均不得包含数据库、附件、备份、auth.json或个人路径/登录配置。GitHub构建产物保留7天；最终两个交付文件放F:\财务系统\同事安装包，摘要及证据单独归档到开发验收目录。

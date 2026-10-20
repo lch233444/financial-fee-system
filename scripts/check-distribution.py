@@ -71,11 +71,11 @@ def stop():
 
 try:
     start()
+    info = client.get("/api/system-info").raise_for_status().json()
+    assert Path(info["data_root"]).resolve() == work / "data" and info["template_exists"]
     for name in ["companies", "fcs", "platforms", "fee-plans", "clients", "accounts",
                  "settlements", "invoices", "statement-imports", "attachments"]:
         assert client.get(f"/api/{name}").raise_for_status().json() == [], name
-    info = client.get("/api/system-info").raise_for_status().json()
-    assert Path(info["data_root"]).resolve() == work / "data" and info["template_exists"]
     assert client.get("/api/openapi.json").raise_for_status().json()["paths"]
     assert "<html" in client.get("/").raise_for_status().text.lower()
     report["checks"].append("blank/startup/static/template/loopback")
@@ -91,9 +91,18 @@ try:
     for lang in ("zh", "en"):
         pdf = client.post(f"/api/invoices/{issued['id']}/pdf?language={lang}").raise_for_status().content
         (work / f"notice-{lang}.pdf").write_bytes(pdf)
-        text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+        reader = PdfReader(io.BytesIO(pdf))
+        text = "\n".join(page.extract_text() for page in reader.pages)
         assert "香港合成验收公司" in text and "HKD 0.00" in text
         assert ("無需付款" if lang == "zh" else "No payment") in text
+        if sys.platform == "darwin":
+            font_names = {
+                str(font.get_object()["/BaseFont"])
+                for page in reader.pages
+                for font in page["/Resources"]["/Font"].get_object().values()
+            }
+            assert any(name.endswith("NotoSansSC-Regular") for name in font_names), font_names
+            assert any(name.endswith("NotoSansSC-Bold") for name in font_names), font_names
     report["checks"].append("calculate/finalize/zero-invoice/bilingual-PDF")
     picture = Image.new("RGB", (1200, 450), "white")
     draw = ImageDraw.Draw(picture)

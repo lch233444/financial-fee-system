@@ -1,6 +1,7 @@
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "x64.nsh"
 Name "金融计划收费系统"
 OutFile "@OUTPUT@"
 InstallDir "$LOCALAPPDATA\FinancialFeeSystem\App"
@@ -18,12 +19,17 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" ""
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "卸载将移除程序文件，保留业务数据及数据目录配置。"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 Var NoIntegration
 
 Function .onInit
+  ${IfNot} ${RunningX64}
+    MessageBox MB_ICONSTOP "本安装包需要64位Windows系统。"
+    Abort
+  ${EndIf}
   ${GetParameters} $0
   ClearErrors
   ${GetOptions} $0 "/NOINTEGRATION" $1

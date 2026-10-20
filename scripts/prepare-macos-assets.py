@@ -27,8 +27,13 @@ def main():
     fonts.mkdir(exist_ok=True)
     font = MANIFEST["font"]
     data = fetch(font["url"], font["sha256"])
+    postscript_names = set()
     for weight, filename in [(400, "NotoSansSC-Regular.ttf"), (700, "NotoSansSC-Bold.ttf")]:
-        instance = instantiateVariableFont(TTFont(io.BytesIO(data)), {"wght": weight}, inplace=True)
+        instance = instantiateVariableFont(TTFont(io.BytesIO(data)), {"wght": weight},
+                                           inplace=True, updateFontNames=True)
+        postscript_name = instance["name"].getDebugName(6)
+        assert postscript_name and postscript_name not in postscript_names
+        postscript_names.add(postscript_name)
         instance.save(fonts / filename)
     (fonts / "OFL.txt").write_bytes(fetch(font["license_url"], font["license_sha256"]))
     arch = {"arm64": "aarch64", "x86_64": "x86_64"}[platform.machine()]

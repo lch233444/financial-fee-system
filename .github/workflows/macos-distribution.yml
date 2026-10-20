@@ -1,6 +1,11 @@
 name: macOS distribution
 on:
   workflow_dispatch:
+    inputs:
+      native_run_id:
+        description: "Optional: repack documentation using verified native artifacts from this run"
+        required: false
+        default: ""
   push:
     branches: [codex/macos-distribution]
     paths:
@@ -11,8 +16,10 @@ on:
       - .github/workflows/macos-distribution.yml
 permissions:
   contents: read
+  actions: read
 jobs:
   native:
+    if: ${{ !inputs.native_run_id }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,19 +70,23 @@ jobs:
             /tmp/ff-accept/*.log
   assemble:
     needs: native
+    if: ${{ !cancelled() && (needs.native.result == 'success' || inputs.native_run_id) }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
           path: artifacts
           merge-multiple: true
-      - run: |
-          mkdir -p runtimes/arm64 runtimes/x86_64
-          tar -xzf artifacts/runtime-arm64.tar.gz -C runtimes/arm64
-          tar -xzf artifacts/runtime-x86_64.tar.gz -C runtimes/x86_64
-          python3 scripts/assemble-macos.py --runtimes runtimes --output release
+          run-id: ${{ inputs.native_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - run: python scripts/assemble-macos.py --archives artifacts --runtimes runtimes --output release
       - uses: actions/upload-artifact@v4
         with:
           name: Mac-installer
@@ -103,6 +114,7 @@ jobs:
           hdiutil detach /tmp/ff-dmg
           codesign --verify "/tmp/金融计划收费系统.app"
           lipo -archs "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem"
+          python scripts/check-macos-first-launch.py --app "/tmp/金融计划收费系统.app" --work /tmp/ff-first
           python scripts/check-distribution.py --executable "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem" --work /tmp/ff-final
       - uses: actions/upload-artifact@v4
         if: always()
@@ -112,3 +124,5 @@ jobs:
             /tmp/ff-final/*.json
             /tmp/ff-final/*.log
             /tmp/ff-final/*.pdf
+            /tmp/ff-first/*.json
+            /tmp/ff-first/*.log

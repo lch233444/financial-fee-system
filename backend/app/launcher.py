@@ -13,6 +13,8 @@ from urllib.request import ProxyHandler, build_opener
 
 import uvicorn
 
+from .platform_paths import is_macos, macos_state_root
+
 
 def _application_root() -> Path:
     if getattr(sys, "frozen", False):
@@ -21,6 +23,8 @@ def _application_root() -> Path:
 
 
 def _config_paths() -> list[Path]:
+    if is_macos():
+        return [macos_state_root() / "config.json"]
     local_app_data = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return [
         _application_root() / "financial_system_config.json",
@@ -29,6 +33,8 @@ def _config_paths() -> list[Path]:
 
 
 def _choose_data_root() -> Path | None:
+    if is_macos():
+        return macos_state_root() / "data"
     if os.name != "nt":
         return _application_root() / "data"
     script = r"""

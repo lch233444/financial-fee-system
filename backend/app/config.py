@@ -8,6 +8,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .platform_paths import is_macos, macos_state_root
+
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 APP_VERSION = "1.1.6"
@@ -36,6 +38,8 @@ def default_ai_codex_home() -> Path:
     extraction turn inherit instructions outside this application's control.
     """
 
+    if is_macos():
+        return macos_state_root() / "LunaCodexHome"
     local_app_data = os.getenv("LOCALAPPDATA")
     if local_app_data and local_app_data.strip():
         return Path(local_app_data) / "FinancialFeeSystem" / "LunaCodexHome"

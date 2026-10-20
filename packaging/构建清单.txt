@@ -34,3 +34,7 @@
 - 最终文档既核对源码/包内字节一致，也核对当前版本、路径、规则、链接及接手提示词内容时效。
 - 仅按精确清单清理本次候选、测试及已归档旧程序，保留真实数据、完整备份和回滚包；遇拒绝不换工具重试。
 - pnpm 11运行现有锁定依赖可设置pnpm_config_verify_deps_before_run=false；不要仅因应用版本变化自动重装。
+
+
+2026-10-20 双端构建补充（实施中）
+macOS：requirements-macos-build.txt；prepare-macos-assets.py固定上游摘要；build-macos.py分别构建arm64/x86_64；assemble-macos.py合并DMG。运行run-backend-tests.py与check-distribution.py后才能认定对应平台通过。Apple签名、公证及最终DMG运行结果独立记录。Windows常规回归与原有运行组件完整性检查继续保留。

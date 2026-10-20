@@ -25,7 +25,7 @@ numpy==2.5.2
 opencv-python-headless==4.14.0.94
 openpyxl==3.1.5
 packaging==26.3
-pefile==2024.8.26
+pefile==2024.8.26; sys_platform == "win32"
 pillow==12.3.0
 pluggy==1.6.0
 pydantic==2.13.4
@@ -41,7 +41,7 @@ pytest==9.1.1
 pytest-cov==7.1.0
 python-dotenv==1.2.3
 python-multipart==0.0.32
-pywin32-ctypes==0.2.3
+pywin32-ctypes==0.2.3; sys_platform == "win32"
 PyYAML==6.0.3
 reportlab==4.5.1
 setuptools==84.0.0

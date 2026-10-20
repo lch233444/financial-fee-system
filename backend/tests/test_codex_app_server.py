@@ -146,6 +146,7 @@ def test_codex_subprocess_environment_ignores_explicit_user_codex_home(
 def test_bundled_codex_runtime_requires_code_and_manifest_hashes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(codex_app_server_module, "is_macos", lambda: False)
     runtime = tmp_path / "Codex"
     runtime.mkdir()
     files = {
@@ -172,6 +173,7 @@ def test_bundled_codex_runtime_requires_code_and_manifest_hashes(
 def test_frozen_executable_discovery_ignores_override_and_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(codex_app_server_module, "is_macos", lambda: False)
     bundled = tmp_path / "Codex" / "codex.exe"
     bundled.parent.mkdir()
     bundled.write_bytes(b"mocked-after-integrity-layer")

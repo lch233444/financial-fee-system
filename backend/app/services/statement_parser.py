@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageErr
 from pytesseract import Output
 
 from ..config import application_root, get_settings, installation_root
+from ..platform_paths import is_macos
 from .ocr_runtime import OcrRuntimeError, check_tesseract, prepare_windows_runtime
 
 
@@ -56,6 +58,16 @@ class ParsedStatement:
 
 def _configure_tesseract() -> str | None:
     settings = get_settings()
+    if is_macos():
+        bundled = application_root() / "Tesseract-OCR" / "tesseract"
+        # A distributed Mac app is self-contained, independent of Homebrew.
+        if bundled.is_file():
+            check_tesseract(bundled)
+            os.environ["TESSDATA_PREFIX"] = str(bundled.parent / "tessdata")
+            pytesseract.pytesseract.tesseract_cmd = str(bundled)
+            return str(bundled)
+        if getattr(sys, "frozen", False):
+            raise OcrRuntimeError("内置Mac OCR组件缺失，请重新安装完整应用。")
     candidates = [
         settings.tesseract_cmd,
         installation_root() / "Tesseract-OCR" / "tesseract.exe",

@@ -1,0 +1,82 @@
+name: macOS distribution
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/macos-distribution]
+    paths:
+      - backend/**
+      - scripts/**
+      - packaging/**
+      - frontend/**
+      - .github/workflows/macos-distribution.yml
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install -r backend/requirements-macos-build.txt
+      - run: brew install tesseract
+      - run: python scripts/prepare-macos-assets.py
+      - run: npm install --global pnpm@10
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm --dir frontend run test && pnpm --dir frontend run build
+      - run: python scripts/run-backend-tests.py --work /tmp/ff-tests
+      - run: python scripts/build-macos.py
+      - run: python scripts/check-distribution.py --executable release/FinancialFeeSystem/FinancialFeeSystem --work /tmp/ff-accept
+      - run: tar -czf runtime-${{ matrix.arch }}.tar.gz -C release FinancialFeeSystem native-build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.arch }}
+          path: runtime-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ matrix.arch }}
+          path: |
+            /tmp/ff-tests/*.log
+            /tmp/ff-tests/*.xml
+            /tmp/ff-accept/*.json
+            /tmp/ff-accept/*.pdf
+            /tmp/ff-accept/*.log
+  assemble:
+    needs: native
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+          merge-multiple: true
+      - run: |
+          mkdir -p runtimes/arm64 runtimes/x86_64
+          tar -xzf artifacts/runtime-arm64.tar.gz -C runtimes/arm64
+          tar -xzf artifacts/runtime-x86_64.tar.gz -C runtimes/x86_64
+          python3 scripts/assemble-macos.py --runtimes runtimes --output release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mac-installer
+          path: release/*.dmg

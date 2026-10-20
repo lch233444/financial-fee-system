@@ -1,0 +1,38 @@
+{
+  "codex": [
+    {
+      "name": "codex-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.149.1/codex-aarch64-apple-darwin.tar.gz",
+      "archive_sha256": "ed60f475c6dda6044c2c00fd7f33273cc3f3f98900ccd1204bfdf2fe935f3405",
+      "binary_name": "codex-aarch64-apple-darwin",
+      "binary_sha256": "f0d8762236594359b60cfbe17f4c7e945a3ce8d1c91e74778838c968d250fb6c"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.149.1/codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+      "archive_sha256": "aae1c0c9459700a2e897adadd647351140ae7933ad73bd8d3af6505c69a4f3fd",
+      "binary_name": "codex-code-mode-host-aarch64-apple-darwin",
+      "binary_sha256": "c9340c2cc50c86193cc670aa9130980d6982059a0965aeae41bf4e85952fc43e"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-apple-darwin.tar.gz",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.149.1/codex-code-mode-host-x86_64-apple-darwin.tar.gz",
+      "archive_sha256": "3a24bc342ea0e609e707f6211987d499c33c09a4f75891a94dd46bef8f7c5bbe",
+      "binary_name": "codex-code-mode-host-x86_64-apple-darwin",
+      "binary_sha256": "ec4dc6a7822d87de76fa1050b5176b93953617d4cc3d76debff35089f79eb8dc"
+    },
+    {
+      "name": "codex-x86_64-apple-darwin.tar.gz",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.149.1/codex-x86_64-apple-darwin.tar.gz",
+      "archive_sha256": "85fe7a837eb739dd5e1cc59a9c95b7b682048e5aacdc261505bae768fb1288ef",
+      "binary_name": "codex-x86_64-apple-darwin",
+      "binary_sha256": "19ad079130409e2d32cbb4b02b3d622ab44e7de93a2898ce58908a0f2f5d7a06"
+    }
+  ],
+  "font": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
+    "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+    "license_url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/OFL.txt",
+    "license_sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+  }
+}

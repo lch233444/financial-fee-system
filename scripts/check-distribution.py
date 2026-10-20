@@ -1,0 +1,129 @@
+"""Acceptance of an actual frozen runtime using only generated test records."""
+import argparse
+import io
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import httpx
+from PIL import Image, ImageDraw
+from pypdf import PdfReader
+
+p = argparse.ArgumentParser()
+p.add_argument("--executable", type=Path, required=True)
+p.add_argument("--work", type=Path, required=True)
+args = p.parse_args()
+exe, work = args.executable.resolve(), args.work.resolve()
+assert not work.exists(), "Acceptance requires a fresh synthetic directory"
+work.mkdir(parents=True)
+(work / "tmp").mkdir()
+root = Path(__file__).resolve().parents[1]
+os.environ.update(FINANCIAL_DATA_ROOT=str(work / "helper-data"), FINANCIAL_CODEX_HOME=str(work / "helper-login"))
+sys.path[:0] = [str(root / "backend"), str(root / "backend/tests")]
+from app.config import APP_VERSION
+from test_invoice_aggregation import _group, _finalized_settlement, _draft
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+env = {k: v for k, v in os.environ.items() if not k.startswith("FINANCIAL_")}
+env.update(FINANCIAL_DATA_ROOT=str(work / "data"), FINANCIAL_CODEX_HOME=str(work / "login"),
+           FINANCIAL_HOST="127.0.0.1", FINANCIAL_PORT=str(port), FINANCIAL_NO_BROWSER="1",
+           TEMP=str(work / "tmp"), TMP=str(work / "tmp"), TMPDIR=str(work / "tmp"), PYTHONUTF8="1")
+if sys.platform == "darwin":
+    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+client = httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=120,
+                      headers={"X-Financial-System-Request": "1"})
+process = None
+log = (work / "app.log").open("w", encoding="utf-8")
+report = {"version": APP_VERSION, "platform": sys.platform, "checks": []}
+
+
+def start():
+    global process
+    process = subprocess.Popen([str(exe)], cwd=exe.parent, env=env, stdout=log, stderr=subprocess.STDOUT,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    for _ in range(200):
+        if process.poll() is not None:
+            raise RuntimeError(f"App exited: {process.returncode}")
+        try:
+            health = client.get("/api/health", timeout=1).raise_for_status().json()
+            assert health["version"] == APP_VERSION and health["local_only"]
+            return
+        except httpx.TransportError:
+            time.sleep(.2)
+    raise RuntimeError("App startup timeout")
+
+
+def stop():
+    client.post("/api/shutdown").raise_for_status()
+    process.wait(timeout=30)
+    assert process.returncode == 0
+
+
+try:
+    start()
+    for name in ["companies", "fcs", "platforms", "fee-plans", "clients", "accounts",
+                 "settlements", "invoices", "statement-imports", "attachments"]:
+        assert client.get(f"/api/{name}").raise_for_status().json() == [], name
+    info = client.get("/api/system-info").raise_for_status().json()
+    assert Path(info["data_root"]).resolve() == work / "data" and info["template_exists"]
+    assert client.get("/api/openapi.json").raise_for_status().json()["paths"]
+    assert "<html" in client.get("/").raise_for_status().text.lower()
+    report["checks"].append("blank/startup/static/template/loopback")
+    ai = client.get("/api/ai-assistant/status").raise_for_status().json()
+    assert ai["available"] and ai["status"] == "signed_out", ai
+    report["checks"].append("bundled-Codex-app-server/signed-out")
+    data = _group(client, "DIST", platform_count=1, company_name="香港合成验收公司")
+    settlement = _finalized_settlement(client, data, 0, year=2026, quarter=1, closing="900.00")
+    draft = _draft(client, data, year=2026, quarter=1).raise_for_status().json()
+    issued = client.post(f"/api/invoices/{draft['id']}/issue",
+                         json={"issue_date": "2026-04-05", "language": "zh"}).raise_for_status().json()
+    assert issued["payment_status"] == "NOT_REQUIRED" and issued["amount"] == "0.00"
+    for lang in ("zh", "en"):
+        pdf = client.post(f"/api/invoices/{issued['id']}/pdf?language={lang}").raise_for_status().content
+        (work / f"notice-{lang}.pdf").write_bytes(pdf)
+        text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+        assert "香港合成验收公司" in text and "HKD 0.00" in text
+        assert ("無需付款" if lang == "zh" else "No payment") in text
+    report["checks"].append("calculate/finalize/zero-invoice/bilingual-PDF")
+    picture = Image.new("RGB", (1200, 450), "white")
+    draw = ImageDraw.Draw(picture)
+    for n, text in enumerate(["SYNTHETIC TEST DOCUMENT", "Account: TEST123456", "Balance: HKD 900.00"]):
+        draw.text((40, 40 + 95 * n), text, fill="black", font_size=45)
+    png = work / "ocr.png"
+    picture.save(png)
+    runtime = exe.parent
+    ocr = runtime / ("Tesseract-OCR/tesseract.exe" if os.name == "nt" else "_internal/Tesseract-OCR/tesseract")
+    ocr_env = dict(env, TESSDATA_PREFIX=str(ocr.parent / "tessdata"))
+    recognized = subprocess.check_output([str(ocr), str(png), "stdout"], env=ocr_env,
+                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), text=True)
+    assert "TEST123456" in recognized and "900.00" in recognized
+    imported = client.post("/api/statement-imports",
+                           files={"file": ("synthetic.png", png.read_bytes(), "image/png")}).raise_for_status().json()
+    assert imported["id"]
+    report["checks"].append("native-OCR/generated-image/import")
+    backup = client.post("/api/backups?year=2026&quarter=1").raise_for_status().content
+    assert backup.startswith(b"PK")
+    restored = client.post("/api/backups/restore",
+                           files={"file": ("synthetic.zip", backup, "application/zip")}).raise_for_status().json()
+    assert restored["staged"] and restored["restart_required"]
+    process.wait(timeout=30)
+    start()
+    invoices = client.get("/api/invoices").raise_for_status().json()
+    assert len(invoices) == 1 and invoices[0]["invoice_number"] == issued["invoice_number"]
+    report["checks"].append("backup/restore/restart/persistence")
+    stop()
+    report["checks"].append("safe-shutdown")
+finally:
+    if process and process.poll() is None:
+        process.terminate()
+        process.wait(timeout=15)
+    client.close()
+    log.close()
+    (work / "acceptance.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+print(json.dumps(report, ensure_ascii=True))

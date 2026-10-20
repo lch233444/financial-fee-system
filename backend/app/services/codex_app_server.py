@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import queue
 import re
 import shutil
@@ -24,6 +25,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from ..config import APP_VERSION, application_root, get_settings, installation_root
+from ..platform_paths import is_macos
 
 
 FIXED_AI_MODEL = "gpt-5.6-sol"
@@ -33,6 +35,16 @@ MAX_AI_PDF_PAGES = 20
 BUNDLED_CODEX_HASHES = {
     "codex.exe": "A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6",
     "codex-code-mode-host.exe": "8F98CC7AA079B51DBFBB16A8E655A468A9C37C1CD23E22422C10CDFD6CACE543",
+}
+MAC_CODEX_HASHES = {
+    "arm64": {
+        "codex": "F0D8762236594359B60CFBE17F4C7E945A3CE8D1C91E74778838C968D250FB6C",
+        "codex-code-mode-host": "C9340C2CC50C86193CC670AA9130980D6982059A0965AEAE41BF4E85952FC43E",
+    },
+    "x86_64": {
+        "codex": "19AD079130409E2D32CBB4B02B3D622AB44E7DE93A2898CE58908A0F2F5D7A06",
+        "codex-code-mode-host": "EC4DC6A7822D87DE76FA1050B5176B93953617D4CC3D76DEBFF35089F79EB8DC",
+    },
 }
 # The recognition subprocess needs the user's ChatGPT-managed sign-in, but it
 # does not need Codex's agent tools.  Command-line config overrides keep this
@@ -185,7 +197,10 @@ def _validate_bundled_codex_runtime(codex_path: Path) -> None:
     manifest_path = runtime_dir / "VERSION.txt"
     try:
         manifest = manifest_path.read_text(encoding="utf-8")
-        for filename, expected_hash in BUNDLED_CODEX_HASHES.items():
+        hashes = MAC_CODEX_HASHES.get(platform.machine()) if is_macos() else BUNDLED_CODEX_HASHES
+        if not hashes:
+            raise CodexUnavailableError("当前Mac芯片没有经过验证的内置Codex程序")
+        for filename, expected_hash in hashes.items():
             executable = runtime_dir / filename
             if not executable.is_file() or _file_sha256(executable) != expected_hash:
                 raise CodexUnavailableError("内置Codex运行程序完整性校验失败")
@@ -598,7 +613,7 @@ class CodexAppServerClient:
         if getattr(sys, "frozen", False):
             # Packaged financial builds must never execute an environment
             # override or a PATH-provided binary.
-            bundled = installation_root() / "Codex" / "codex.exe"
+            bundled = installation_root() / "Codex" / ("codex" if is_macos() else "codex.exe")
             if not bundled.is_file():
                 return None
             resolved_bundled = bundled.resolve()
@@ -607,10 +622,11 @@ class CodexAppServerClient:
 
         settings = get_settings()
         configured = settings.codex_cmd
-        source_bundled = application_root() / "tools" / "Codex" / "codex.exe"
+        executable_name = "codex" if is_macos() else "codex.exe"
+        source_bundled = application_root() / "tools" / "Codex" / executable_name
         candidates: list[str | Path | None] = [
             configured,
-            installation_root() / "Codex" / "codex.exe",
+            installation_root() / "Codex" / executable_name,
             source_bundled,
             shutil.which(configured) if configured else None,
             shutil.which("codex"),

@@ -51,6 +51,7 @@ release_*/
 *.pyd
 tools/*
 !tools/README.md
+/fonts/
 
 # Local QA artifacts and personal reports
 qa_*.png

@@ -24,6 +24,8 @@ from reportlab.platypus import (
 
 from ..models import Invoice, QuarterlySettlement
 from ..money import from_cents
+from ..config import application_root
+from ..platform_paths import is_macos
 
 
 BRAND = colors.HexColor("#173B57")
@@ -40,6 +42,8 @@ INVOICE_TINT = colors.HexColor("#F1F5F7")
 
 
 def _register_chinese_font() -> str:
+    if is_macos():
+        return _macos_fonts()[0]
     candidates = [
         ("MicrosoftYaHei", Path(r"C:\Windows\Fonts\msyh.ttc")),
         ("MicrosoftYaHei", Path(r"C:\Windows\Fonts\msyh.ttf")),
@@ -64,6 +68,8 @@ def _money(cents: int) -> str:
 def _invoice_fonts(needs_chinese: bool) -> tuple[str, str]:
     if not needs_chinese:
         return "Helvetica", "Helvetica-Bold"
+    if is_macos():
+        return _macos_fonts()
     # Prefer the Windows Traditional Chinese family for customer notices.
     # Register real bold glyphs instead of rendering every level at one weight.
     for family, regular_file, bold_file in (
@@ -79,6 +85,15 @@ def _invoice_fonts(needs_chinese: bool) -> tuple[str, str]:
             continue
     font = _register_chinese_font()
     return font, "Helvetica-Bold" if font == "Helvetica" else font
+
+
+def _macos_fonts() -> tuple[str, str]:
+    # Embed licensed fonts instead of depending on fonts installed by the user.
+    names = ("NotoSansSC", "NotoSansSC-Bold")
+    for name, filename in zip(names, ("NotoSansSC-Regular.ttf", "NotoSansSC-Bold.ttf")):
+        if name not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont(name, str(application_root() / "fonts" / filename)))
+    return names
 
 
 def _labels(language: str) -> dict[str, str]:

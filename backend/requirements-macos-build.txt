@@ -1,0 +1,3 @@
+-r requirements-dev-lock.txt
+fonttools==4.67.0
+macholib==1.16.4

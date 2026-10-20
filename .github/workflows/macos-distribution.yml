@@ -43,9 +43,9 @@ jobs:
       - run: npm install --global pnpm@10
       - run: pnpm --dir frontend install --frozen-lockfile
       - run: pnpm --dir frontend run test && pnpm --dir frontend run build
-      - run: python scripts/run-backend-tests.py --work /tmp/ff-tests
       - run: python scripts/build-macos.py
       - run: python scripts/check-distribution.py --executable release/FinancialFeeSystem/FinancialFeeSystem --work /tmp/ff-accept
+      - run: python scripts/run-backend-tests.py --work /tmp/ff-tests
       - run: tar -czf runtime-${{ matrix.arch }}.tar.gz -C release FinancialFeeSystem native-build.json
       - uses: actions/upload-artifact@v4
         with:

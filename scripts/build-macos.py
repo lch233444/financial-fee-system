@@ -29,6 +29,12 @@ subprocess.run(args, check=True)
 runtime = out / "FinancialFeeSystem"
 shutil.copytree(ROOT / "tools/Codex", runtime / "Codex")
 shutil.copytree(ROOT / "docs", runtime / "docs")
+# PyInstaller relocates the Python framework's binary and resources. Seal the
+# assembled framework as a bundle after collection, before verifying it.
+for framework in sorted(runtime.rglob("*.framework"), key=lambda p: len(p.parts), reverse=True):
+    if framework.is_dir() and not framework.is_symlink():
+        subprocess.run(["codesign", "--force", "--sign", "-", str(framework)], check=True)
+        subprocess.run(["codesign", "--verify", str(framework)], check=True)
 # Reject forgotten absolute Homebrew/library paths in every bundled Mach-O.
 checked = 0
 for path in runtime.rglob("*"):
@@ -42,7 +48,7 @@ for path in runtime.rglob("*"):
     for line in libraries:
         dep = line.strip().split(" (", 1)[0]
         assert not dep.startswith(("/opt/homebrew/", "/usr/local/", "/Library/Frameworks/")), (path, dep)
-    subprocess.run(["codesign", "--verify", str(path)], check=True, capture_output=True)
+    subprocess.run(["codesign", "--verify", str(path)], check=True)
 (out / "native-build.json").write_text(json.dumps({
     "architecture": arch, "macos": platform.mac_ver()[0], "python": sys.version,
     "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

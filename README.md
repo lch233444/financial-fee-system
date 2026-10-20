@@ -2,7 +2,7 @@
 
 2026-10-20已正式交付1.1.6：保留左侧导航，八模块按“选择 → 核对 → 办理”组织，规则说明按“？”查看；零金额账单与原件窗口拖动一并交付。详见[12.37节](docs/项目说明书.md#progressive-workspace-20261020)。
 
-单机财务系统，用于客户与账户管理、账单人工复核、逐账户高水位线（HWM）收费、客户季度Invoice、收款更正及完整数据包交接。**Windows与macOS必须同步开发、测试和更新**，共用业务规则和数据格式。现提供Windows 64位安装向导及Mac双芯片DMG；Mac支持macOS 15及以上，自动选择Apple芯片或Intel程序，未做Apple Developer ID签名或公证。安装与实包验收见[12.38节](docs/项目说明书.md#cross-platform-distribution-20261020)。
+单机财务系统，用于客户与账户管理、账单人工复核、逐账户高水位线（HWM）收费、客户季度Invoice、收款更正及完整数据包交接。**Windows与macOS必须同步开发、测试和更新**，共用业务规则和数据格式。现提供Windows 64位安装向导及Mac按Apple芯片与Intel分别提供DMG；Mac支持macOS 15及以上，安装前按机型选择对应包，未做Apple Developer ID签名或公证。安装与实包验收见[12.38节](docs/项目说明书.md#cross-platform-distribution-20261020)。
 
 当前源码版本为 **1.1.6**，本机Windows正式版本同为1.1.6，正式数据根保持 `F:\备份`；该正式版的备份、隔离迁移恢复及本机验收见[12.37节](docs/项目说明书.md#progressive-workspace-20261020)。本批同事安装包均为空白系统，不含业务资料或登录凭据，不替换本机正式程序。双端构建、数据路径及验证范围见12.38节。编号规则见[完整编号](docs/项目说明书.md#invoice-number-prefix-20260928)。
 

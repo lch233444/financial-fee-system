@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       native_run_id:
-        description: "Optional: repack documentation using verified native artifacts from this run"
+        description: "Optional: assemble installers using verified unchanged native artifacts from this run"
         required: false
         default: ""
   push:
@@ -73,7 +73,15 @@ jobs:
   assemble:
     needs: native
     if: ${{ !cancelled() && (needs.native.result == 'success' || inputs.native_run_id) }}
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,15 +91,14 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          pattern: native-*
+          name: native-${{ matrix.arch }}
           path: artifacts
-          merge-multiple: true
           run-id: ${{ inputs.native_run_id || github.run_id }}
           github-token: ${{ github.token }}
-      - run: python scripts/assemble-macos.py --archives artifacts --runtimes runtimes --output release
+      - run: python scripts/assemble-macos.py --arch ${{ matrix.arch }} --archives artifacts --runtimes runtimes --output release
       - uses: actions/upload-artifact@v4
         with:
-          name: Mac-installer
+          name: Mac-installer-${{ matrix.arch }}
           path: release/*.dmg
           retention-days: 7
   verify-dmg:
@@ -100,7 +107,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -110,14 +121,16 @@ jobs:
       - run: python -m pip install -r backend/requirements-macos-build.txt
       - uses: actions/download-artifact@v4
         with:
-          name: Mac-installer
+          name: Mac-installer-${{ matrix.arch }}
           path: artifacts
       - run: |
-          hdiutil attach artifacts/*.dmg -mountpoint /tmp/ff-dmg -nobrowse -readonly
+          hdiutil attach artifacts/FinancialFeeSystem-*-Mac-${{ matrix.arch }}.dmg -mountpoint /tmp/ff-dmg -nobrowse -readonly
+          grep -F "${{ matrix.arch }}" /tmp/ff-dmg/安装说明.txt
           ditto "/tmp/ff-dmg/金融计划收费系统.app" "/tmp/金融计划收费系统.app"
           hdiutil detach /tmp/ff-dmg
           codesign --verify "/tmp/金融计划收费系统.app"
-          lipo -archs "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem"
+          test "$(lipo -archs "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem")" = "${{ matrix.arch }}"
+          test "$(ls "/tmp/金融计划收费系统.app/Contents/Resources")" = "runtime-${{ matrix.arch }}"
           python scripts/check-macos-first-launch.py --app "/tmp/金融计划收费系统.app" --work /tmp/ff-first
           python scripts/check-distribution.py --executable "/tmp/金融计划收费系统.app/Contents/MacOS/FinancialFeeSystem" --work /tmp/ff-final
       - uses: actions/upload-artifact@v4

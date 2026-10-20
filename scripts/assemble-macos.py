@@ -1,4 +1,4 @@
-"""Create one DMG containing both native runtimes and a universal launcher."""
+"""Create a DMG for one Mac architecture from its verified native runtime."""
 import argparse
 import json
 import plistlib
@@ -12,14 +12,15 @@ p = argparse.ArgumentParser()
 p.add_argument("--runtimes", required=True, type=Path)
 p.add_argument("--archives", type=Path)
 p.add_argument("--output", required=True, type=Path)
+p.add_argument("--arch", required=True, choices=("arm64", "x86_64"))
 args = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 version = re.search(r'APP_VERSION = "([^"]+)"', (root / "backend/app/config.py").read_text()).group(1)
-stage = args.output / "dmg"
+stage = args.output / f"dmg-{args.arch}"
 bundle = stage / "金融计划收费系统.app"
 contents = bundle / "Contents"
 (contents / "MacOS").mkdir(parents=True)
-for arch in ("arm64", "x86_64"):
+for arch in (args.arch,):
     if args.archives:
         destination = args.runtimes / arch
         destination.mkdir(parents=True)
@@ -28,7 +29,7 @@ for arch in ("arm64", "x86_64"):
     metadata = json.loads((args.runtimes / arch / "native-build.json").read_text())
     assert metadata["architecture"] == arch
     assert re.fullmatch(r"[0-9a-f]{40}", metadata["commit"])
-    # A documentation-only repack may reuse native artifacts only when every
+    # A packaging/documentation change may reuse native artifacts only when every
     # runtime source, asset pin, dependency and native acceptance input matches.
     subprocess.run([
         "git", "diff", "--exit-code", metadata["commit"], "HEAD", "--",
@@ -58,8 +59,10 @@ for arch in ("arm64", "x86_64"):
     for document in ("发布说明.txt", "构建清单.txt"):
         shutil.copyfile(root / "packaging" / document, runtime / document)
 launcher = contents / "MacOS/FinancialFeeSystem"
-subprocess.run(["clang", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=15.0",
+subprocess.run(["clang", "-arch", args.arch, "-mmacosx-version-min=15.0",
                 str(root / "packaging/macos-launcher.c"), "-o", str(launcher)], check=True)
+assert subprocess.check_output(["lipo", "-archs", str(launcher)], text=True).strip() == args.arch
+assert sorted(p.name for p in (contents / "Resources").iterdir()) == [f"runtime-{args.arch}"]
 info = {
     "CFBundleExecutable": "FinancialFeeSystem", "CFBundleName": "金融计划收费系统",
     "CFBundleDisplayName": "金融计划收费系统", "CFBundleIdentifier": "com.financialfeesystem.desktop",
@@ -72,6 +75,9 @@ info = {
 subprocess.run(["codesign", "--force", "--sign", "-", str(bundle)], check=True)
 subprocess.run(["codesign", "--verify", str(bundle)], check=True)
 (stage / "Applications").symlink_to("/Applications")
-shutil.copyfile(root / "packaging/Mac安装说明.txt", stage / "安装说明.txt")
+label = "Apple芯片（arm64）" if args.arch == "arm64" else "Intel处理器（x86_64）"
+instructions = (root / "packaging/Mac安装说明.txt").read_text(encoding="utf-8")
+assert "{{ARCH_LABEL}}" in instructions
+(stage / "安装说明.txt").write_text(instructions.replace("{{ARCH_LABEL}}", label), encoding="utf-8")
 subprocess.run(["hdiutil", "create", "-volname", "金融计划收费系统", "-srcfolder", str(stage),
-               "-ov", "-format", "UDZO", str(args.output / f"FinancialFeeSystem-{version}-Mac.dmg")], check=True)
+               "-ov", "-format", "UDZO", str(args.output / f"FinancialFeeSystem-{version}-Mac-{args.arch}.dmg")], check=True)

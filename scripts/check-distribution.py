@@ -148,7 +148,7 @@ try:
         assert client.get(f"/api/{name}").raise_for_status().json() == [], name
     assert client.get("/api/invoices", headers={"X-Financial-Dataset": original_token}).status_code == 409
     customer = client.post("/api/clients", json={"name": "Independent B customer"}).raise_for_status().json()
-    package_b = client.post("/api/backups").raise_for_status().content
+    package_b = client.post("/api/backups?year=2026&quarter=1").raise_for_status().content
     clone = client.post("/api/datasets/import", data={"name": "Independent clone C"},
                         files={"file": ("b.zip", package_b, "application/zip")}).raise_for_status().json()
     state = client.post("/api/datasets/switch", json={"id": "primary"}).raise_for_status().json()

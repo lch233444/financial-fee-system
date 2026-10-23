@@ -21,6 +21,8 @@ import {
 import { ErrorBanner, Field, Loading, PageHeader, Panel, StatusBadge, WorkflowSection } from "../components";
 import type { AiAssistantStatus } from "../types";
 import { SOL_MODEL_ID } from "../types";
+import { DatasetManagement } from "../Datasets";
+import { datasetFetch } from "../datasetSession";
 
 type SystemInfo = {
   app_name: string;
@@ -145,7 +147,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
     setBackupBusy(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await datasetFetch(
         `/api/backups?year=${packageYear}&quarter=${packageQuarter}`,
         withFinancialSystemRequestHeader({ method: "POST" }),
       );
@@ -174,7 +176,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
     event.preventDefault();
     if (restoreBusyRef.current) return;
     const confirmed = window.confirm(
-      "导入数据包会完整覆盖这台电脑现有的数据库、账单原件、附件和导出文件，不能与现有资料合并。\n\n请确认这台电脑不需要保留当前资料，并且数据包来自相同版本的系统。确定继续吗？",
+      "导入数据包会完整覆盖当前选中数据包的数据库、账单原件、附件和导出文件，不能与现有资料合并。\n\n请核对顶部数据包名称并确认不需要保留该包当前资料，并且数据包来自相同版本的系统。确定继续吗？",
     );
     if (!confirmed) return;
     restoreBusyRef.current = true;
@@ -202,19 +204,20 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
     <div className="workflow-page system-workflow">
       <PageHeader title="数据与系统" subtitle="本地数据、ChatGPT Pro辅助识别及完整数据包交接" />
       {error ? <ErrorBanner message={error} /> : null}
+      <DatasetManagement notify={notify} />
       <details className="system-location"><summary>查看本机数据位置</summary><WorkflowSection id="system-location" title="本机数据" description="操作前核对数据位置。备份、恢复与辅助识别按需要分别办理。">
       {info ? <><div className="system-grid"><article><FolderLock aria-hidden="true" /><span><small>业务数据保存位置</small><strong>{info.data_root}</strong></span></article><article><DatabaseBackup aria-hidden="true" /><span><small>运行范围与导出模板</small><strong>{info.local_only ? "仅本机运行" : "请检查网络配置"} · {info.template_exists ? "Excel模板已就绪" : "Excel模板未找到"}</strong></span></article></div><details className="technical-details"><summary>查看数据库与模板位置</summary><div><p><HardDrive size={16} aria-hidden="true" /><span><strong>数据库</strong>{info.database_path}</span></p><p><ArchiveRestore size={16} aria-hidden="true" /><span><strong>Excel模板</strong>{info.template_path}</span></p></div></details></> : null}
       </WorkflowSection></details>
       <TaskTabs label="系统任务" value={task} onChange={setTask} disabled={backupBusy || restoreBusy || assistantWorking} items={[
         { id: "system-export", label: "备份与交接", detail: "导出完整数据包" },
-        { id: "system-import", label: "恢复数据", detail: "导入并整体覆盖本机资料" },
+        { id: "system-import", label: "恢复数据", detail: "导入并整体覆盖当前数据包" },
         { id: "system-ai", label: "辅助识别", detail: "登录及查看连接状态" },
       ]} />
       <TaskView id="system-export" active={task === "system-export"}>
-        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><p className="compact-next">完整导出全部业务资料；以下年季仅作检查标签。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>第一季度</option><option value={2}>第二季度</option><option value={3}>第三季度</option><option value={4}>第四季度</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><p className="compact-next">仅完整导出当前数据包的全部业务资料；以下年季仅作检查标签。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>第一季度</option><option value={2}>第二季度</option><option value={3}>第三季度</option><option value={4}>第四季度</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
       </TaskView>
       <TaskView id="system-import" active={task === "system-import"}>
-        <Panel id="system-restore" step="导入路径 · 接收并整体覆盖" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖本机资料"><form className="backup-action" onSubmit={(event) => void restore(event)}><p className="invoice-candidate-warning">导入会整体覆盖本机资料，不会合并。请先备份本机数据，并确认双方系统版本一致。</p><p className="compact-next">选择 ZIP 校验后，系统将安全退出；重新启动完成导入。</p><Field label="选择完整数据包ZIP"><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /></Field><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
+        <Panel id="system-restore" step="导入路径 · 接收并整体覆盖" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖当前数据包"><form className="backup-action" onSubmit={(event) => void restore(event)}><p className="invoice-candidate-warning">导入会整体覆盖当前数据包，不会合并或影响其他包。请先备份当前包，并确认双方系统版本一致。</p><p className="compact-next">选择 ZIP 校验后，系统将安全退出；重新启动完成导入。</p><Field label="选择完整数据包ZIP"><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /></Field><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
       </TaskView>
       <TaskView id="system-ai" active={task === "system-ai"}>
       <Panel id="system-assistant" step="按需使用 · 登录后返回导入页" title="ChatGPT Pro 辅助识别" subtitle="使用与桌面Codex隔离的专用登录；不需要OpenAI 接口密钥">

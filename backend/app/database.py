@@ -42,7 +42,9 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def init_db() -> None:
+def init_db(*, target_settings=None, target_engine=None) -> None:
+    settings = target_settings if target_settings is not None else globals()["settings"]
+    engine = target_engine if target_engine is not None else globals()["engine"]
     from . import models  # noqa: F401
 
     root = application_root()

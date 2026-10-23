@@ -1,5 +1,6 @@
 import { systemMessage, validationMessage } from "./uiText";
 import type { AiAssistantStatus, StatementImport } from "./types";
+import { datasetFetch, datasetToken } from "./datasetSession";
 
 const SAFE_REQUEST_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 type ApiValidationIssue = { msg?: string; loc?: Array<string | number> };
@@ -29,6 +30,8 @@ async function apiErrorMessage(response: Response, fallback: string): Promise<st
 
 export function withFinancialSystemRequestHeader(options: RequestInit = {}): RequestInit {
   const headers = new Headers(options.headers);
+  const token = datasetToken();
+  if (token) headers.set("X-Financial-Dataset", token);
   const method = (options.method ?? "GET").toUpperCase();
   if (!SAFE_REQUEST_METHODS.has(method)) {
     headers.set("X-Financial-System-Request", "1");
@@ -42,7 +45,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (requestOptions.body && !(requestOptions.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(path, { ...requestOptions, headers });
+  const response = await datasetFetch(path, { ...requestOptions, headers });
   if (!response.ok) {
     throw new Error(await apiErrorMessage(response, `请求失败 (${response.status})`));
   }
@@ -89,7 +92,7 @@ export async function download(path: string, suggestedName: string, options: Req
 }
 
 export async function fetchBlob(path: string, options: RequestInit = {}): Promise<Blob> {
-  const response = await fetch(path, withFinancialSystemRequestHeader(options));
+  const response = await datasetFetch(path, withFinancialSystemRequestHeader(options));
   if (!response.ok) {
     throw new Error(await apiErrorMessage(response, `下载失败 (${response.status})`));
   }

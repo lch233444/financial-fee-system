@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$PnpmExecutable = ""
+    [string]$PnpmExecutable = "",
+    [string]$BuildWorkRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +11,14 @@ $ReleaseRoot = Join-Path $ProjectRoot "release"
 $ReleaseApp = Join-Path $ReleaseRoot "FinancialFeeSystem"
 $TestTempRoot = Join-Path ([IO.Path]::GetPathRoot($ProjectRoot)) ".ffsys-build-tmp"
 $OcrWorkRoot = Join-Path ([IO.Path]::GetPathRoot($ProjectRoot)) ".ffsys-ocr-build"
+if ($BuildWorkRoot) {
+    $BuildWorkRoot = [IO.Path]::GetFullPath($BuildWorkRoot)
+    if ($BuildWorkRoot -notmatch '^[A-Za-z]:\\[A-Za-z0-9_-]{1,16}$' -or (Test-Path -LiteralPath $BuildWorkRoot)) {
+        throw "构建临时根必须为尚不存在的盘符下短英文目录。"
+    }
+    $TestTempRoot = Join-Path $BuildWorkRoot "t"
+    $OcrWorkRoot = Join-Path $BuildWorkRoot "o"
+}
 # Keep test resources bounded on Windows desktops with many logical CPUs.
 $env:OPENBLAS_NUM_THREADS = "1"
 $env:OMP_NUM_THREADS = "1"
@@ -96,16 +105,7 @@ if (Test-Path -LiteralPath $TestTempRoot) {
 New-Item -ItemType Directory -Path $TestTempRoot -Force | Out-Null
 $env:TEMP = $TestTempRoot
 $env:TMP = $TestTempRoot
-$BackendTests = Join-Path $ProjectRoot "backend\tests"
-$BackupTests = Join-Path $BackendTests "test_system_backup.py"
-$RemainingTests = @(
-    Get-ChildItem -LiteralPath $BackendTests -File -Filter "test_*.py" |
-        Where-Object { $_.FullName -ne $BackupTests } |
-        Sort-Object Name |
-        ForEach-Object FullName
-)
-$OrderedTests = @($BackupTests) + $RemainingTests
-& $VenvPython -m pytest $OrderedTests -q -p no:cacheprovider --basetemp (Join-Path $TestTempRoot "basetemp")
+& $VenvPython (Join-Path $PSScriptRoot "run-backend-tests.py") --work (Join-Path $TestTempRoot "tests")
 $TestExitCode = $LASTEXITCODE
 if ($TestExitCode -ne 0) {
     Remove-BuildDirectory $TestTempRoot

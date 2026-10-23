@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+from contextvars import ContextVar
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from .platform_paths import is_macos, macos_state_root
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.2.0"
 
 
 def application_root() -> Path:
@@ -131,8 +133,28 @@ class Settings(BaseSettings):
             path.mkdir(parents=True, exist_ok=True)
 
 
+_settings_override: ContextVar[Settings | None] = ContextVar("dataset_settings", default=None)
+
+
 @lru_cache
-def get_settings() -> Settings:
+def _default_settings() -> Settings:
     settings = Settings()
     settings.ensure_directories()
     return settings
+
+
+def get_settings() -> Settings:
+    return _settings_override.get() or _default_settings()
+
+
+get_settings.cache_clear = _default_settings.cache_clear
+
+
+@contextmanager
+def using_settings(settings: Settings):
+    """Scope preparation of an isolated data package without rebinding live data."""
+    token = _settings_override.set(settings)
+    try:
+        yield
+    finally:
+        _settings_override.reset(token)

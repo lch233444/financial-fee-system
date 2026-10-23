@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { handleDatasetMessage } from "./datasetSession";
 
 export function useBrowserSession() {
   useEffect(() => {
@@ -12,6 +13,7 @@ export function useBrowserSession() {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const current = new WebSocket(url);
       socket = current;
+      current.addEventListener("message", event => handleDatasetMessage(current, String(event.data)));
       current.addEventListener("close", () => {
         if (socket !== current) return;
         socket = undefined;

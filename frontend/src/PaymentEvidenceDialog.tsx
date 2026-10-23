@@ -3,6 +3,7 @@ import { formatDate } from "./types";
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { fetchBlob } from "./api";
+import { datasetUrl } from "./datasetSession";
 import { ErrorBanner, Loading, Money } from "./components";
 import type { Invoice, InvoiceCorrection } from "./types";
 import ZoomableImage from "./ZoomableImage";
@@ -28,7 +29,7 @@ function ProofPreview({ id }: { id: number }) {
     {/^image\/(png|jpeg)$/.test(preview.type) ? <ZoomableImage key={preview.url} src={preview.url} alt={`付款凭证 #${id}`} />
       : preview.type === "application/pdf" ? <object data={preview.url} type="application/pdf" aria-label={`付款凭证 PDF #${id}`}><p>浏览器未能显示PDF，请打开原件查看。</p></object>
       : <p>此凭证格式不支持页内预览，请打开原件查看。</p>}
-    <a className="text-link" href={`/api/attachments/${id}/file`} target="_blank" rel="noreferrer">打开凭证原件 #{id}</a>
+    <a className="text-link" href={datasetUrl(`/api/attachments/${id}/file`)} target="_blank" rel="noreferrer">打开凭证原件 #{id}</a>
   </div>;
 }
 

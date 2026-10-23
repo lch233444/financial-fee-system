@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_VERSION, LOOPBACK_HOSTS, get_settings
 from .database import init_db
-from .routes import ai_assistant, attachments, browser_sessions, invoices, master, settlements, statements, system
+from .routes import ai_assistant, attachments, browser_sessions, datasets, invoices, master, settlements, statements, system
+from .services.datasets import DatasetGate, get_datasets
 from .services.browser_sessions import BrowserSessions
 from .services.backup import apply_pending_restore
 from .services.codex_app_server import get_codex_app_server
@@ -22,6 +23,7 @@ from .services.shutdown import get_shutdown_coordinator
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    get_datasets().startup()
     apply_pending_restore()
     init_db()
     reconcile_statement_delete_pending_files()
@@ -144,6 +146,7 @@ app.include_router(invoices.router)
 app.include_router(invoices.correction_router)
 app.include_router(attachments.router)
 app.include_router(system.router)
+app.include_router(datasets.router)
 app.include_router(browser_sessions.router)
 app.include_router(ai_assistant.router)
 
@@ -181,3 +184,7 @@ def spa_fallback(requested_path: str):
         "message": "Frontend尚未构建。开发模式请启动Vite，生产模式请先运行build-windows.ps1。",
         "api_docs": "/api/docs",
     }
+
+
+# Outermost: retain the lease through streamed responses and background tasks.
+app.add_middleware(DatasetGate)

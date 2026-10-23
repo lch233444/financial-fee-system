@@ -26,6 +26,10 @@ def test_existing_service_requires_same_identity_and_data_directory(tmp_path, di
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             body = {"app": "金融计划收费计算系统", "version": APP_VERSION, "status": "ok", "local_only": True} if self.path == '/api/health' else {"data_root": str(tmp_path), "local_only": True}
+            if self.path == '/api/datasets':
+                body = {"token": "synthetic-dataset-token"}
+            if self.path == '/api/system-info':
+                assert self.headers.get('X-Financial-Dataset') == 'synthetic-dataset-token'
             if different == "version": body["version"] = "0.0.0"
             if different == "root": body["data_root"] = str(tmp_path/'other')
             if different == "app": body["app"] = "Other app"

@@ -9,7 +9,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from urllib.error import URLError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener
 
 import uvicorn
 
@@ -111,15 +111,19 @@ def _is_same_running_system(url: str, *, version: str, data_root: Path) -> bool:
     """Reopen only the expected local app, version, and chosen data directory."""
     opener = build_opener(ProxyHandler({}))
     try:
-        def read_json(path: str) -> dict:
-            with opener.open(url + path, timeout=1) as response:
+        def read_json(path: str, headers: dict | None = None) -> dict:
+            with opener.open(Request(url + path, headers=headers or {}), timeout=1) as response:
                 value = json.loads(response.read(65537))
             if not isinstance(value, dict):
                 raise ValueError("Unexpected local service response")
             return value
 
         health = read_json("/api/health")
-        info = read_json("/api/system-info")
+        datasets = read_json("/api/datasets")
+        token = datasets.get("token")
+        if not isinstance(token, str):
+            return False
+        info = read_json("/api/system-info", {"X-Financial-Dataset": token})
         return (
             health.get("app") == "金融计划收费计算系统"
             and health.get("status") == "ok"
@@ -127,7 +131,7 @@ def _is_same_running_system(url: str, *, version: str, data_root: Path) -> bool:
             and health.get("local_only") is True
             and info.get("local_only") is True
             and isinstance(info.get("data_root"), str)
-            and Path(info["data_root"]).resolve() == data_root.resolve()
+            and Path(info.get("workspace_root", info["data_root"])).resolve() == data_root.resolve()
         )
     except (OSError, URLError, ValueError, TypeError):
         return False

@@ -48,8 +48,9 @@ async def browser_session(websocket: WebSocket) -> None:
         return
     try:
         await websocket.accept()
+        sessions.attach_socket(page, websocket)
         while True:
-            await websocket.receive_text()
+            sessions.receive(page, await websocket.receive_text())
     except WebSocketDisconnect:
         pass
     finally:

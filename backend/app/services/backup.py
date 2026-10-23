@@ -798,7 +798,7 @@ def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None
         temporary_output_path.unlink(missing_ok=True)
 
 
-def validate_backup(backup_path: Path, extract_root: Path) -> dict:
+def validate_backup(backup_path: Path, extract_root: Path, *, allow_upgrade: bool = False) -> dict:
     """Safely extract and validate a backup archive into an empty directory."""
 
     if extract_root.is_symlink() or extract_root.is_junction():
@@ -848,7 +848,7 @@ def validate_backup(backup_path: Path, extract_root: Path) -> dict:
             if manifest_member.file_size > MAX_MANIFEST_SIZE:
                 raise ValueError("备份manifest.json过大")
             manifest = _parse_manifest_bytes(archive.read(manifest_member))
-            records = _validate_manifest(manifest)
+            records = _validate_manifest(manifest, allow_upgrade=allow_upgrade)
             archive_payload_paths = set(archive_files) - {"manifest.json"}
             if archive_payload_paths != set(records):
                 raise ValueError("备份文件集合与清单不一致")
@@ -867,10 +867,10 @@ def validate_backup(backup_path: Path, extract_root: Path) -> dict:
                     raise ValueError(f"无法读取备份文件：{relative_path}") from exc
     except zipfile.BadZipFile as exc:
         raise ValueError("备份文件不是有效的ZIP归档") from exc
-    return validate_backup_archive_root(extract_root)
+    return validate_backup_archive_root(extract_root, allow_upgrade=allow_upgrade)
 
 
-def validate_backup_archive_root(root: Path) -> dict:
+def validate_backup_archive_root(root: Path, *, allow_upgrade: bool = False) -> dict:
     """Validate one extracted backup tree and return its manifest."""
 
     if root.is_symlink() or root.is_junction():
@@ -889,7 +889,7 @@ def validate_backup_archive_root(root: Path) -> dict:
         raise ValueError("备份manifest.json过大")
     manifest = _parse_manifest_bytes(manifest_bytes)
 
-    records = _validate_manifest(manifest)
+    records = _validate_manifest(manifest, allow_upgrade=allow_upgrade)
     actual_files: dict[str, str] = {}
     for entry in root.rglob("*"):
         if entry.is_symlink() or entry.is_junction():
@@ -931,8 +931,10 @@ def validate_backup_archive_root(root: Path) -> dict:
     _validate_payment_proof_archive(database_path, root, records)
     _validate_statement_import_archive(database_path, root, records)
     if manifest["format"] == BACKUP_FORMAT:
-        if _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
+        if not allow_upgrade and _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
             raise ValueError("数据包数据库版本与当前系统不一致")
+        if allow_upgrade:
+            _validate_upgrade_revision(manifest, _sqlite_database_revision(database_path))
         _validate_data_package_file_references(database_path, root, records)
     return manifest
 
@@ -978,16 +980,17 @@ def _rebase_data_package_database(
     archive_root: Path,
     data_root: Path,
     manifest: dict,
+    *, allow_upgrade: bool = False,
 ) -> None:
     """Rewrite only physical file locations for the receiving computer."""
 
     if manifest.get("format") != BACKUP_FORMAT:
         return
-    records = _validate_manifest(manifest)
+    records = _validate_manifest(manifest, allow_upgrade=allow_upgrade)
     settings = get_settings()
     database_relative_path = f"database/{settings.database_path.name}"
     database_path = archive_root.joinpath(*PurePosixPath(database_relative_path).parts)
-    if _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
+    if not allow_upgrade and _sqlite_database_revision(database_path) != CURRENT_DATABASE_REVISION:
         raise ValueError("数据包数据库版本与当前系统不一致")
 
     connection = sqlite3.connect(database_path)
@@ -1469,7 +1472,16 @@ def _validate_zip_member_type(member: zipfile.ZipInfo, is_directory: bool) -> No
         raise ValueError(f"备份文件包含非普通文件：{member.filename}")
 
 
-def _validate_manifest(manifest: object) -> dict[str, str]:
+def _validate_upgrade_revision(manifest: dict, revision: str | None) -> None:
+    # These released formats have complete current file-reference semantics.
+    # Earlier formats require their matching program; never infer compatibility.
+    revisions = {"1.1.4": MEETING_REVISION, "1.1.5": MEETING_REVISION, "1.1.6": ZERO_FEE_REVISION,
+                 APP_VERSION: CURRENT_DATABASE_REVISION}
+    if manifest.get("app_version") not in revisions or revision != revisions[manifest["app_version"]]:
+        raise ValueError("该数据包版本或数据库结构尚不支持自动升级，请先用对应版本转换")
+
+
+def _validate_manifest(manifest: object, *, allow_upgrade: bool = False) -> dict[str, str]:
     if not isinstance(manifest, dict):
         raise ValueError("备份清单结构无效")
 
@@ -1477,7 +1489,10 @@ def _validate_manifest(manifest: object) -> dict[str, str]:
     if manifest_format == BACKUP_FORMAT:
         if set(manifest) != MANIFEST_KEYS:
             raise ValueError("数据包清单结构无效")
-        if manifest.get("app_version") != APP_VERSION:
+        version = manifest.get("app_version")
+        if allow_upgrade and version not in {"1.1.4", "1.1.5", "1.1.6", APP_VERSION}:
+            raise ValueError("该数据包版本暂不支持；高于当前程序的版本请先升级程序")
+        if not allow_upgrade and version != APP_VERSION:
             raise ValueError(
                 f"数据包系统版本不一致：数据包为{manifest.get('app_version')}，当前系统为{APP_VERSION}"
             )

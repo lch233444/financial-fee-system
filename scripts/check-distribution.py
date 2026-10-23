@@ -57,6 +57,8 @@ def start():
         try:
             health = client.get("/api/health", timeout=1).raise_for_status().json()
             assert health["version"] == APP_VERSION and health["local_only"]
+            state = client.get("/api/datasets").raise_for_status().json()
+            client.headers["X-Financial-Dataset"] = state["token"]
             return
         except httpx.TransportError:
             time.sleep(.2)
@@ -138,6 +140,29 @@ try:
     invoices = client.get("/api/invoices").raise_for_status().json()
     assert len(invoices) == 1 and invoices[0]["invoice_number"] == issued["invoice_number"]
     report["checks"].append("backup/restore/restart/persistence")
+    original_token = client.headers["X-Financial-Dataset"]
+    other = client.post("/api/datasets", json={"name": "Independent synthetic B"}).raise_for_status().json()
+    state = client.post("/api/datasets/switch", json={"id": other["id"]}).raise_for_status().json()
+    client.headers["X-Financial-Dataset"] = state["token"]
+    for name in ["clients", "accounts", "settlements", "invoices", "attachments", "statement-imports"]:
+        assert client.get(f"/api/{name}").raise_for_status().json() == [], name
+    assert client.get("/api/invoices", headers={"X-Financial-Dataset": original_token}).status_code == 409
+    customer = client.post("/api/clients", json={"name": "Independent B customer"}).raise_for_status().json()
+    package_b = client.post("/api/backups").raise_for_status().content
+    clone = client.post("/api/datasets/import", data={"name": "Independent clone C"},
+                        files={"file": ("b.zip", package_b, "application/zip")}).raise_for_status().json()
+    state = client.post("/api/datasets/switch", json={"id": "primary"}).raise_for_status().json()
+    client.headers["X-Financial-Dataset"] = state["token"]
+    assert client.get("/api/invoices").raise_for_status().json()[0]["invoice_number"] == issued["invoice_number"]
+    state = client.post("/api/datasets/switch", json={"id": clone["id"]}).raise_for_status().json()
+    client.headers["X-Financial-Dataset"] = state["token"]
+    assert client.get("/api/clients").raise_for_status().json()[0]["name"] == customer["name"]
+    stop()
+    start()
+    assert client.get("/api/datasets").raise_for_status().json()["active_id"] == clone["id"]
+    assert client.get("/api/clients").raise_for_status().json()[0]["name"] == customer["name"]
+    assert client.get("/api/invoices").raise_for_status().json() == []
+    report["checks"].append("independent-datasets/create/import/switch/stale-request/restart")
     stop()
     report["checks"].append("safe-shutdown")
     report["status"] = "passed"

@@ -115,7 +115,9 @@ def _settlement_export_query():
 @router.get("/system-info")
 def system_info() -> dict:
     settings = get_settings()
+    from ..services.datasets import get_datasets
     return {
+        "workspace_root": str(get_datasets().root),
         "app_name": settings.app_name,
         "data_root": str(settings.data_root),
         "database_path": str(settings.database_path),

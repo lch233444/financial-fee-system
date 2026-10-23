@@ -1,11 +1,11 @@
 金融计划收费计算系统 MVP 1.1.6 Windows运行版构建清单
-文档修订：2026-10-20。本清单同时记录Windows与Mac空白安装包构建。最新双端验证见docs/项目说明书.md第12.38.2节；本机正式Windows程序及真实数据不在本批切换，仍见1.2及12.37节。
+文档修订：2026-10-23。本清单同时记录Windows与Mac空白安装包构建。双端原生验证见docs/项目说明书.md第12.38.2节，最终分包见12.38.3节；10月23日核对见1.3节。本机正式Windows程序构建来源仍见1.2及12.37节，10月21日业务数据接收另见9.3.1节。
 
 一、当前构建契约
 - 应用版本：1.1.6；Windows ProductVersion：1.1.6；FileVersion：1.1.6.0。
 - 数据库目标head：d016f0ee1160；目标60个Trigger；结构数量不能替代业务验收。
-- 常规完整构建输出：release/FinancialFeeSystem。本批Windows独立候选release/distribution-20261020-r2/FinancialFeeSystem，测试与构建临时根F:\ffp20a。历史受阻目录不重试。
-- 本批同事Windows EXE SHA-256：9AB486AB023898F87FD51AD2D174B05F1F4A05283356B0C161711261C0FB0DAA；这不是本机正式运行EXE哈希。Mac原生组件来源37f87716c47d81cef703072b7cb926896a1abba1，已验证Actions运行39386598516；最终文档重封装的DMG仍须通过两端实际运行。
+- 常规完整构建输出：release/FinancialFeeSystem。10月20日Windows独立候选release/distribution-20261020-r2/FinancialFeeSystem已清理，F:\ffp20a仍保留受保护测试残留；不是现行程序入口，历史受阻目录不重试。
+- 同事Windows运行EXE SHA-256：9AB486AB023898F87FD51AD2D174B05F1F4A05283356B0C161711261C0FB0DAA；这不是安装向导文件哈希，也不是本机正式运行EXE哈希。Mac原生组件来源37f87716c47d81cef703072b7cb926896a1abba1，原生验证Actions运行39386598516；最终分包以f051a90组装并在运行39396035802完成两端DMG安装及运行验收。
 - Python依赖：backend/requirements-dev-lock.txt；Node依赖：frontend/pnpm-lock.yaml。
 - Codex CLI固定0.149.1；codex.exe与codex-code-mode-host.exe均须通过OpenAI OpCo, LLC的有效Authenticode签名及下列SHA-256。
 - tools/Codex/codex.exe：A395030B56B126F608F2403036DDDB654A9C063213E9C2B5F85D954CF490EBE6

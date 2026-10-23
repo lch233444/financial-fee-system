@@ -9,7 +9,7 @@ Apple官方说明：https://support.apple.com/zh-cn/116943
 1. 双击 DMG，把“金融计划收费系统”拖入 Applications（应用程序）。
 2. 在“应用程序”中双击启动，系统会打开本机浏览器。
 3. 初次使用为空白系统，请先录入基础设置，再建立客户和账户。
-4. 退出请使用系统页面内“安全退出”。
+4. 使用结束关闭全部系统网页；最后一个页面关闭约3秒后后台自动退出。最小化或切换标签不会退出，未提交表单不会自动保存。
 
 业务数据默认保存在：
 ~/Library/Application Support/FinancialFeeSystem/data

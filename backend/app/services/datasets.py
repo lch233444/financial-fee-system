@@ -157,12 +157,12 @@ class Datasets:
         self.generation = uuid4().hex
 
     def startup(self) -> None:
+        selected = self.settings_for(self.active)
+        if self.managed and not selected.database_path.is_file():
+            raise RuntimeError("已选数据包的数据库缺失，已停止启动；不会新建空库替代")
         if self.active != "primary":
-            settings = self.settings_for(self.active)
-            if not settings.database_path.is_file():
-                raise RuntimeError("已选数据包的数据库缺失，已停止启动；不会新建空库替代")
             database.engine.dispose()
-            self.bind(self.active, self.engine_for(settings))
+            self.bind(self.active, self.engine_for(selected))
 
     def switch(self, identity: str) -> None:
         if not any(entry["id"] == identity for entry in self.entries):

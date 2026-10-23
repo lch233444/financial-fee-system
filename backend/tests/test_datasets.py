@@ -210,3 +210,31 @@ def test_browser_switch_requires_every_page_to_be_clean():
         assert sessions.connect(object())
         await sessions.close()
     asyncio.run(run())
+
+
+def test_missing_registered_primary_database_stops_without_creating_empty_replacement(tmp_path):
+    root = tmp_path / "missing"
+    root.mkdir()
+    manager = datasets.Datasets(root)
+    manager.save(manager.entries, "primary")
+    restored = datasets.Datasets(root)
+    with pytest.raises(RuntimeError, match="数据库缺失"):
+        restored.startup()
+    assert not (root / "database/financial_system.sqlite3").exists()
+
+
+def test_restore_only_replaces_selected_dataset(workspace):
+    client, manager, settings = workspace
+    with database.SessionLocal() as db:
+        db.add(Client(id=allocate_entity_id(db, Client), name="Primary retained")); db.commit()
+    other = create(client, manager)
+    assert client.post("/api/datasets/switch", json={"id": other}, headers=headers(manager)).status_code == 200
+    package = backup.create_backup()
+    with database.SessionLocal() as db:
+        db.add(Client(id=allocate_entity_id(db, Client), name="Will be restored")); db.commit()
+    database.engine.dispose()
+    backup.stage_restore(package)
+    assert backup.apply_pending_restore()
+    assert client.get("/api/clients", headers=headers(manager)).json() == []
+    assert client.post("/api/datasets/switch", json={"id": "primary"}, headers=headers(manager)).status_code == 200
+    assert client.get("/api/clients", headers=headers(manager)).json()[0]["name"] == "Primary retained"

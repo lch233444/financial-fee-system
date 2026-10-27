@@ -74,7 +74,7 @@ export function DatasetManagement({ notify }: { notify: (message: string) => voi
     </form>
     <p>新建前选定结算周期。开始结算后周期锁定；原始账单截图可在切换到新包后逐份录入并人工核对。</p>
     <details><summary>从已有完整ZIP建立另一套数据</summary>
-      <p>支持当前版本及1.1.4、1.1.5、1.1.6、1.2.0完整数据包。结算周期随包保留，旧版本包按季度处理。旧包保留原件，经校验、升级及重新验证后加入列表；更高版本须先升级程序。</p>
+      <p>支持当前版本及1.1.4、1.1.5、1.1.6、1.2.0、1.3.0完整数据包。结算周期随包保留，1.2.0及更早支持版本的包按季度处理。旧包保留原件，经校验、升级及重新验证后加入列表；更高版本须先升级程序。</p>
       <form className="inline-form" onSubmit={event => void create(event, true)}>
         <Field label="导入数据包名称"><input name="name" required maxLength={60} disabled={busy} /></Field>
         <Field label="作为独立数据包导入ZIP"><input name="file" type="file" accept=".zip" required disabled={busy} /></Field>

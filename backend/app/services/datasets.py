@@ -177,7 +177,13 @@ class Datasets:
             raise ValueError("数据包不存在")
         settings = self.settings_for(identity)
         if (settings.data_root / "pending_restore.json").exists():
-            raise ValueError("目标数据包有待完成的恢复，请先重启完成恢复")
+            # A failed upgrade of an inactive package must be resumable without
+            # changing the catalog by hand. This completes only the already
+            # staged, strictly validated native restore before activating it.
+            if identity == self.active:
+                database.engine.dispose()
+            with using_settings(settings):
+                backup.apply_pending_restore()
         if not settings.database_path.is_file():
             raise ValueError("数据包数据库缺失，不能切换")
         from .dataset_upgrade import upgrade_registered_dataset

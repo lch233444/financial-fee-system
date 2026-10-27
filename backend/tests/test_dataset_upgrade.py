@@ -77,3 +77,28 @@ def test_failed_upgrade_rehearsal_keeps_original_and_active_package(workspace, m
     assert manager.active == 'primary'
     assert not (target.data_root/'pending_restore.json').exists()
     assert len(list((target.data_root/'backups').glob('*.zip'))) == 1
+
+
+def test_failed_inactive_package_replace_rolls_back_and_next_selection_resumes(workspace, monkeypatch):
+    client, manager, _ = workspace
+    identity, target = old_registered(manager)
+    original = target.database_path.read_bytes()
+    replace = backup._replace_restore_directory
+    failed = False
+    def fail_once(source, destination):
+        nonlocal failed
+        if destination == target.data_root/'attachments' and not failed:
+            failed = True
+            raise OSError('synthetic target replacement failure')
+        return replace(source, destination)
+    with monkeypatch.context() as patch:
+        patch.setattr(backup, '_replace_restore_directory', fail_once)
+        response = client.post('/api/datasets/switch', headers=headers(manager), json={'id':identity})
+    assert response.status_code == 409
+    assert manager.active == 'primary'
+    assert target.database_path.read_bytes() == original
+    assert (target.data_root/'pending_restore.json').exists()
+    response = client.post('/api/datasets/switch', headers=headers(manager), json={'id':identity})
+    assert response.status_code == 200, response.text
+    assert client.get('/api/clients', headers=headers(manager)).json()[0]['name'] == 'Keep old customer'
+    assert not (target.data_root/'pending_restore.json').exists()

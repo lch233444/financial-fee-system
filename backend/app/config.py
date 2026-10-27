@@ -14,7 +14,7 @@ from .platform_paths import is_macos, macos_state_root
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 
 def application_root() -> Path:

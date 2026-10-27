@@ -1,5 +1,6 @@
 """Acceptance of an actual frozen runtime using only generated test records."""
 import argparse
+import hashlib
 from contextlib import closing
 import io
 import json
@@ -45,6 +46,28 @@ client = httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, time
 process = None
 log = (work / "app.log").open("w", encoding="utf-8")
 report = {"version": APP_VERSION, "platform": sys.platform, "status": "failed", "checks": []}
+
+
+def record_http_error(response):
+    if response.is_error:
+        response.read()
+        report.setdefault("http_errors", []).append({"method": response.request.method,
+            "path": response.request.url.path, "status": response.status_code, "detail": response.text[:2000]})
+
+
+client.event_hooks["response"].append(record_http_error)
+
+
+def dataset_fingerprint(path):
+    """Compare every synthetic database row and business file across rapid switches."""
+    from app.services.backup import RESTORE_COMPONENTS
+    with closing(sqlite3.connect((path / 'database/financial_system.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
+        tables = sorted(row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+        rows = {table: sorted(repr(row) for row in db.execute('SELECT * FROM "' + table.replace('"', '""') + '"')) for table in tables}
+    files = {str(file.relative_to(path)): hashlib.sha256(file.read_bytes()).hexdigest()
+             for component in RESTORE_COMPONENTS if component != 'database'
+             for file in (path / component).rglob('*') if file.is_file()}
+    return {"records": hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest(), "files": files}
 
 
 def start():
@@ -192,6 +215,31 @@ try:
     assert state['settlement_cycle'] == 'QUARTERLY'
     assert client.get('/api/invoices').raise_for_status().json()[0]['invoice_number'] == issued['invoice_number']
     report['checks'].append('annual/full-year/next-year-HWM/invoice/PDF/restore/isolation')
+    roots = {'primary': work / 'data', annual['id']: work / 'data/datasets' / annual['id']}
+    before = {identity: dataset_fingerprint(path) for identity, path in roots.items()}
+    elapsed = []
+    for iteration in range(64):
+        for identity, cycle, expected in [(annual['id'], 'ANNUAL', invoice), ('primary', 'QUARTERLY', issued)]:
+            # No sleep or retry: exercise GET -> switch -> GET and real package changes.
+            client.get('/api/invoices').raise_for_status()
+            previous_token = client.headers['X-Financial-Dataset']
+            started = time.monotonic()
+            state = client.post('/api/datasets/switch', json={'id': identity}).raise_for_status().json()
+            elapsed.append(time.monotonic() - started)
+            client.headers['X-Financial-Dataset'] = state['token']
+            assert state['active_id'] == identity and state['settlement_cycle'] == cycle
+            actual = client.get('/api/invoices').raise_for_status().json()
+            assert len(actual) == 1 and actual[0]['invoice_number'] == expected['invoice_number']
+            assert actual[0]['amount'] == expected['amount'] and actual[0]['period_type'] == cycle
+            if iteration % 16 == 0:
+                stale = {'X-Financial-Dataset': previous_token}
+                assert client.get('/api/clients', headers=stale).status_code == 409
+                assert client.post('/api/clients', json={'name': 'must never be written'}, headers=stale).status_code == 409
+    after = {identity: dataset_fingerprint(path) for identity, path in roots.items()}
+    assert before == after, 'Switch stress changed dataset rows or business files'
+    report['switch_stress'] = {'switches': len(elapsed), 'retries': 0,
+        'max_seconds': max(elapsed), 'rows_and_files_unchanged': True}
+    report['checks'].append('rapid-128-switches/quarterly-annual/stale-read-write/all-rows-files-unchanged')
     stop()
     report["checks"].append("safe-shutdown")
     report["status"] = "passed"

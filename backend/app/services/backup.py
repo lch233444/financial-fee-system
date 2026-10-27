@@ -1494,7 +1494,7 @@ def _validate_upgrade_revision(manifest: dict, revision: str | None) -> None:
     # These released formats have complete current file-reference semantics.
     # Earlier formats require their matching program; never infer compatibility.
     revisions = {"1.1.4": MEETING_REVISION, "1.1.5": MEETING_REVISION, "1.1.6": ZERO_FEE_REVISION, "1.2.0": ZERO_FEE_REVISION,
-                 APP_VERSION: CURRENT_DATABASE_REVISION}
+                 "1.3.0": CURRENT_DATABASE_REVISION, APP_VERSION: CURRENT_DATABASE_REVISION}
     if manifest.get("app_version") not in revisions or revision != revisions[manifest["app_version"]]:
         raise ValueError("该数据包版本或数据库结构尚不支持自动升级，请先用对应版本转换")
 
@@ -1506,13 +1506,13 @@ def _validate_manifest(manifest: object, *, allow_upgrade: bool = False) -> dict
     manifest_format = manifest.get("format")
     if manifest_format == BACKUP_FORMAT:
         version = manifest.get("app_version")
-        if allow_upgrade and version not in {"1.1.4", "1.1.5", "1.1.6", "1.2.0", APP_VERSION}:
+        if allow_upgrade and version not in {"1.1.4", "1.1.5", "1.1.6", "1.2.0", "1.3.0", APP_VERSION}:
             raise ValueError("该数据包版本暂不支持；高于当前程序的版本请先升级程序")
         if not allow_upgrade and version != APP_VERSION:
             raise ValueError(
                 f"数据包系统版本不一致：数据包为{manifest.get('app_version')}，当前系统为{APP_VERSION}"
             )
-        expected_keys = CURRENT_MANIFEST_KEYS if manifest.get("app_version") == APP_VERSION else MANIFEST_KEYS
+        expected_keys = CURRENT_MANIFEST_KEYS if version in {"1.3.0", APP_VERSION} else MANIFEST_KEYS
         if set(manifest) != expected_keys:
             raise ValueError("数据包清单结构无效")
         cycle = manifest.get("settlement_cycle", "QUARTERLY")

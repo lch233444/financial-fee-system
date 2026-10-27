@@ -7,7 +7,7 @@ on:
         required: false
         default: ""
   push:
-    branches: [codex/macos-distribution, codex/independent-datasets, codex/annual-settlement]
+    branches: [codex/macos-distribution, codex/independent-datasets, codex/annual-settlement, codex/dataset-handoff]
     paths:
       - backend/**
       - scripts/**

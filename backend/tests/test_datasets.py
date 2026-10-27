@@ -238,3 +238,28 @@ def test_restore_only_replaces_selected_dataset(workspace):
     assert client.get("/api/clients", headers=headers(manager)).json() == []
     assert client.post("/api/datasets/switch", json={"id": "primary"}, headers=headers(manager)).status_code == 200
     assert client.get("/api/clients", headers=headers(manager)).json()[0]["name"] == "Primary retained"
+
+
+@pytest.mark.parametrize("cycle", ["QUARTERLY", "ANNUAL"])
+def test_130_package_retains_cycle_and_independent_records(workspace, monkeypatch, cycle):
+    client, manager, settings = workspace
+    source = client.post("/api/datasets", json={"name": "source", "settlement_cycle": cycle}, headers=headers(manager)).json()["id"]
+    assert client.post("/api/datasets/switch", json={"id": source}, headers=headers(manager)).status_code == 200
+    assert client.post("/api/clients", json={"name": "130 customer"}, headers=headers(manager)).status_code == 201
+    with monkeypatch.context() as legacy:
+        legacy.setattr(backup, "APP_VERSION", "1.3.0")
+        package = backup.create_backup()
+    original_bytes = package.read_bytes()
+    response = client.post("/api/datasets/import", data={"name": "imported 130"},
+                           files={"file": ("130.zip", original_bytes)}, headers=headers(manager))
+    assert response.status_code == 200, response.text
+    imported = response.json()["id"]
+    assert imported != source
+    assert (manager.path(imported) / "backups/import-original.zip").read_bytes() == original_bytes
+    switched = client.post("/api/datasets/switch", json={"id": imported}, headers=headers(manager))
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["settlement_cycle"] == cycle
+    assert client.get("/api/clients", headers=headers(manager)).json()[0]["name"] == "130 customer"
+    assert client.post("/api/clients", json={"name": "clone only"}, headers=headers(manager)).status_code == 201
+    assert client.post("/api/datasets/switch", json={"id": source}, headers=headers(manager)).status_code == 200
+    assert len(client.get("/api/clients", headers=headers(manager)).json()) == 1

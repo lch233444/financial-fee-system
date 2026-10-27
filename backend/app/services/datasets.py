@@ -1,12 +1,14 @@
 """Independent local datasets. Publication and switching are exclusive operations."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import shutil
 from pathlib import Path
 from threading import Lock
+from concurrent.futures import Future
 from uuid import uuid4
 
 from sqlalchemy import create_engine, event
@@ -28,8 +30,8 @@ class Datasets:
         self.active = "primary"
         self.generation = uuid4().hex
         self.lock = Lock()
-        self.requests = 0
-        self.exclusive = False
+        self.requests = set()
+        self.exclusive = None
         self.managed = False
         if self.catalog_path.exists():
             if self.catalog_path.is_symlink():
@@ -221,8 +223,17 @@ def get_datasets() -> Datasets:
     return _manager
 
 
+class _DatasetLease:
+    def __init__(self):
+        self.responded = False
+        # Thread safe: tests and embedded servers can use different event loops.
+        self.finished = Future()
+
+
 class DatasetGate:
-    """Hold a dataset lease until the entire HTTP response has finished."""
+    """Retain leases through cleanup; hand off completed responses without a race."""
+    response_drain_timeout = 3.0
+
     def __init__(self, app):
         self.app = app
 
@@ -238,22 +249,73 @@ class DatasetGate:
         bootstrap = path == "/api/datasets" and scope["method"] == "GET"
         exclusive = scope["method"] == "POST" and path in {"/api/datasets", "/api/datasets/import", "/api/datasets/switch"}
         error = None
-        with manager.lock:
-            if manager.exclusive or (exclusive and manager.requests):
-                error = "系统正在处理请求，请稍后再切换或管理数据包"
-            elif not bootstrap and ((token and token != manager.generation) or (manager.managed and not token)):
-                error = "当前数据包已变化，请刷新页面后操作"
-            elif exclusive:
-                manager.exclusive = True
-            else:
-                manager.requests += 1
+        busy = "系统正在处理请求，请稍后再切换或管理数据包"
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.response_drain_timeout
+        lease = _DatasetLease()
+        while True:
+            with manager.lock:
+                conflicts = ([manager.exclusive] if manager.exclusive else
+                             list(manager.requests) if exclusive else [])
+                if not bootstrap and ((token and token != manager.generation) or (manager.managed and not token)):
+                    error = "当前数据包已变化，请刷新页面后操作"
+                elif conflicts:
+                    if any(not previous.responded for previous in conflicts):
+                        error = busy
+                else:
+                    if exclusive:
+                        manager.exclusive = lease
+                    else:
+                        manager.requests.add(lease)
+                    break
+            if error:
+                break
+            # The client already has the response, but ASGI dependencies,
+            # background tasks or middleware may still own the old database.
+            # Wait for their actual completion, never release their lease early.
+            try:
+                await asyncio.wait_for(asyncio.gather(*(
+                    asyncio.shield(asyncio.wrap_future(previous.finished)) for previous in conflicts
+                )), timeout=max(0, deadline - loop.time()))
+            except asyncio.TimeoutError:
+                error = busy
+                break
+            # Recheck the token and all conflicts atomically after waking.
         if error:
             return await JSONResponse({"detail": error, "dataset_changed": "已变化" in error}, status_code=409)(scope, receive, send)
+
+        trailers = False
+        remaining = None
+
+        async def send_with_completion(message):
+            nonlocal trailers, remaining
+            finished = False
+            if message["type"] == "http.response.start":
+                trailers = message.get("trailers", False)
+                length = dict(message.get("headers", [])).get(b"content-length")
+                remaining = int(length) if length is not None else None
+                finished = scope["method"] == "HEAD" or message["status"] in {204, 304} or remaining == 0
+            elif message["type"] == "http.response.body" and remaining is not None:
+                remaining -= len(message.get("body", b""))
+                # With Content-Length, browsers finish before the final empty
+                # ASGI body event emitted by BaseHTTPMiddleware.
+                finished = remaining <= 0
+            finished = (finished and not trailers) or (
+                (message["type"] == "http.response.body" and not message.get("more_body", False) and not trailers)
+                or (message["type"] == "http.response.trailers" and not message.get("more_trailers", False))
+                or message["type"] == "http.response.pathsend"
+            )
+            if finished:
+                with manager.lock:
+                    lease.responded = True
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_with_completion)
         finally:
             with manager.lock:
                 if exclusive:
-                    manager.exclusive = False
+                    manager.exclusive = None
                 else:
-                    manager.requests -= 1
+                    manager.requests.remove(lease)
+            lease.finished.set_result(None)

@@ -1,3 +1,5 @@
+1.3.1候选：切包响应交接修复；Windows/Mac本轮验收进行中，正式版暂为1.3.0。最终证据见主说明书12.41节。
+
 金融计划收费计算系统 MVP 1.3.0 Windows运行版构建清单
 文档修订：2026-10-27。本清单同时记录Windows与Mac空白安装包构建。本轮双端原生、安装验收和正式升级见docs/项目说明书.md第12.40节；1.2节登记当前正式路径，1.3及12.38节为历史基线。
 
@@ -45,7 +47,7 @@ Windows安装向导：64位Windows，使用官方NSIS3.13，SHA256 ba63dffc4410e
 字体封装须更新静态实例的PostScript名称，常规与粗体名称必须不同；最终PDF实际字体资源须分开。Mac首次启动测试见check-macos-first-launch.py。文档重封装通过workflow_dispatch的native_run_id选择已验收组件，组装脚本核对源码树差异，安全解包并重新签封完整应用，两个最终DMG运行测试不可省略。
 
 Mac内置Noto Sans SC及OFL，Codex的上游LICENSE/NOTICE随包保留。当前仅ad-hoc完整性签名，没有Developer ID或Apple公证。安装说明须保留真实状态与Apple官方首次打开步骤，不能宣称免来源确认或关闭系统保护。
-两端安装包均不得包含数据库、附件、备份、auth.json或个人路径/登录配置。GitHub构建产物保留7天；最终Windows加两种Mac共三个交付文件放F:\财务系统\同事安装包，摘要及证据单独归档到开发验收目录。
+两端安装包均不得包含数据库、附件、备份、auth.json或个人路径/登录配置。GitHub构建产物保留7天；最终Windows加两种Mac共三个交付文件放F:\财务系统\安装包，摘要及证据单独归档到开发验收目录。
 
 - 1.2.0双端实包验收新增：新建独立数据包、旧页面令牌拒绝、切换隔离、独立导入及重启记住选择；Mac两架构均执行scripts/check-distribution.py和完整后端模块测试。
 - Windows构建使用scripts/build-windows.ps1 -BuildWorkRoot F:\<未使用短英文目录>，测试顺序与Mac统一：恢复模块优先，其余模块独立进程；临时根预检，避免复用历史受保护测试目录。

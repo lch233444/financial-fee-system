@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .settlement_cycle import period_label
 
 import hashlib
 import shutil
@@ -98,7 +99,7 @@ def export_settlements_to_template(
         company = invoice.receiving_company if invoice else None
         fc = settlement.fc or settlement.client.fc
         sheet.cell(row, 2, company.name if company else "")
-        sheet.cell(row, 3, f"{settlement.year} Q{settlement.quarter}")
+        sheet.cell(row, 3, period_label(settlement.year, settlement.quarter, english=True))
         sheet.cell(row, 4, invoice.invoice_number if invoice else "")
         sheet.cell(row, 5, settlement.client.name)
         sheet.cell(row, 6, fc.name if fc else "")

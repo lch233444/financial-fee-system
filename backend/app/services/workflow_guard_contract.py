@@ -35,7 +35,8 @@ def workflow_trigger_sql_is_current(trigger_sql: dict[str, str]) -> bool:
             boundary = f"({prefix}.transaction_date >= line.start_date or {prefix}.transaction_date > ( select opening_snapshot.as_of_date from balance_snapshots as opening_snapshot where opening_snapshot.id = line.beginning_snapshot_id ))"
             if boundary not in sql[name]:
                 return False
-    finalize = sql["trg_settlement_validate_finalize"]
+    from .annual_period_contract import NEW_CONTINUITY, OLD_CONTINUITY
+    finalize = sql["trg_settlement_validate_finalize"].replace(" ".join(NEW_CONTINUITY.lower().split()), " ".join(OLD_CONTINUITY.lower().split()))
     correction = sql["trg_invoice_correction_validate_update"]
     return (
         "settlement_missing_previous_quarter" in finalize

@@ -1,3 +1,4 @@
+import { cycleLabel } from "./settlementCycle";
 import { type FormEvent, type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { api, postJson } from "./api";
 import { ErrorBanner, Field, Panel } from "./components";
@@ -40,7 +41,7 @@ export function DatasetSelector() {
   }
   return <div className="dataset-selector" data-dataset-control>
     <label>当前数据包<select aria-label="当前数据包" value={state.active_id} disabled={busy || processing} onChange={event => void switchTo(event.target.value)}>
-      {state.datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+      {state.datasets.map(item => <option key={item.id} value={item.id}>{item.name} · {cycleLabel(item.settlement_cycle)}</option>)}
     </select></label>{busy && <span role="status">正在切换…</span>}{error && <span className="dataset-error" role="alert">{error}</span>}
   </div>;
 }
@@ -57,7 +58,7 @@ export function DatasetManagement({ notify }: { notify: (message: string) => voi
     try {
       const data = new FormData(form);
       if (importing) await api("/api/datasets/import", { method: "POST", body: data });
-      else await postJson("/api/datasets", { name: data.get("name") });
+      else await postJson("/api/datasets", { name: data.get("name"), settlement_cycle: data.get("settlement_cycle") });
       setDatasetState(await api<DatasetState>("/api/datasets"));
       form.reset(); notify("数据包已建立，可在顶部选择切换；当前数据包未被替换。");
     } catch (err) { setError(err instanceof Error ? err.message : "建立数据包失败"); }
@@ -68,10 +69,12 @@ export function DatasetManagement({ notify }: { notify: (message: string) => voi
     <p>当前：<strong>{state.datasets.find(item => item.id === state.active_id)?.name}</strong>。新建或导入不会覆盖任何已有数据包。</p>
     <form className="inline-form" onSubmit={event => void create(event, false)}>
       <Field label="新数据包名称"><input name="name" required maxLength={60} disabled={busy} /></Field>
+      <Field label="结算周期"><select name="settlement_cycle" defaultValue="QUARTERLY" disabled={busy}><option value="QUARTERLY">季度结算 · 每季一次</option><option value="ANNUAL">自然年度结算 · 1月1日至12月31日，每年一次</option></select></Field>
       <button className="primary" disabled={busy || processing}>{busy ? "正在处理…" : "新建空白数据包"}</button>
     </form>
+    <p>新建前选定结算周期。开始结算后周期锁定；原始账单截图可在切换到新包后逐份录入并人工核对。</p>
     <details><summary>从已有完整ZIP建立另一套数据</summary>
-      <p>支持当前版本及1.1.4、1.1.5、1.1.6完整数据包。旧包保留原件，经校验、升级及重新验证后加入列表；更高版本须先升级程序。</p>
+      <p>支持当前版本及1.1.4、1.1.5、1.1.6、1.2.0完整数据包。结算周期随包保留，旧版本包按季度处理。旧包保留原件，经校验、升级及重新验证后加入列表；更高版本须先升级程序。</p>
       <form className="inline-form" onSubmit={event => void create(event, true)}>
         <Field label="导入数据包名称"><input name="name" required maxLength={60} disabled={busy} /></Field>
         <Field label="作为独立数据包导入ZIP"><input name="file" type="file" accept=".zip" required disabled={busy} /></Field>

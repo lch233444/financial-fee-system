@@ -455,6 +455,8 @@ def generate_settlement_pdf(
         return generate_invoice_pdf(invoice=invoice, output_path=output_path, language=language)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     labels = _labels(language)
+    if settlement.period_type == "ANNUAL":
+        labels = {key: value.replace("Quarterly", "Annual").replace("quarterly", "annual").replace("Quarter", "Year").replace("季度", "年度") for key, value in labels.items()}
     font = "Helvetica" if language == "en" else _register_chinese_font()
     bold_font = "Helvetica-Bold" if font == "Helvetica" else font
     styles = getSampleStyleSheet()

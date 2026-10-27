@@ -1,3 +1,4 @@
+import { isAnnualDataset, cycleText } from "./settlementCycle";
 import type { ReactNode } from "react";
 import SearchableSelect from "./SearchableSelect";
 import { Field } from "./components";
@@ -26,7 +27,7 @@ export default function RecordFilters({ value, onChange, clients, accounts = [],
   return <div className="record-filters">
     <Field group label="客户"><SearchableSelect label={clientLabel} value={value.clientId} onChange={(next) => change("clientId", next)} disabled={disabled} placeholder="全部客户" options={clients.map((client, index) => ({ value: String(client.id), label: clientLabels[index] }))} /></Field>
     {showPeriod ? <><Field group label="年份"><SearchableSelect label="年份" value={value.year} onChange={(next) => change("year", next)} disabled={disabled} required options={years.map((year) => ({ value: year, label: `${year}年` }))} optionLimit={years.length} centerSelectedOnOpen searchPlaceholder="输入年份搜索" /></Field>
-    <Field label="季度"><select value={value.quarter} disabled={disabled} onChange={(event) => change("quarter", event.target.value)}><option value="">全年 · 全部季度</option><option value="1">第一季度</option><option value="2">第二季度</option><option value="3">第三季度</option><option value="4">第四季度</option></select></Field></> : null}
+    {!isAnnualDataset() && <Field label={cycleText("季度")}><select value={value.quarter} disabled={disabled} onChange={(event) => change("quarter", event.target.value)}><option value="">{cycleText("全年 · 全部季度")}</option><option value="1">{cycleText("第一季度")}</option><option value="2">{cycleText("第二季度")}</option><option value="3">{cycleText("第三季度")}</option><option value="4">{cycleText("第四季度")}</option></select></Field>}</> : null}
     <details className="filter-more"><summary>更多筛选{value.fcId || value.feePlanId ? " · 已启用" : ""}</summary><div className="record-filters">
     <Field group label="中介人"><SearchableSelect label="中介人筛选" value={value.fcId} onChange={(next) => change("fcId", next)} disabled={disabled} placeholder="全部中介人" searchPlaceholder="输入中介人名称搜索" options={fcs.map((fc) => ({ value: String(fc.id), label: fc.name }))} /></Field>
     <Field group label="收费计划"><SearchableSelect label="收费计划筛选" value={value.feePlanId} onChange={(next) => change("feePlanId", next)} disabled={disabled} placeholder="全部收费计划" searchPlaceholder="输入收费计划名称搜索" options={plans.map((plan) => ({ value: String(plan.id), label: plan.name }))} /></Field>

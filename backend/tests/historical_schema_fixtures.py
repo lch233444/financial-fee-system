@@ -1,5 +1,19 @@
 """Copy synthetic rows into a real migration-created historical schema."""
 import sqlite3
+from sqlalchemy import ColumnDefault, MetaData, Table
+from sqlalchemy.orm import registry
+
+
+def historical_model(model, engine):
+    """Map only columns present at the migration's actual starting revision."""
+    table = Table(model.__tablename__, MetaData(), autoload_with=engine)
+    for column in table.c:
+        current = model.__table__.c.get(column.name)
+        if current is not None and current.default is not None:
+            column.default = ColumnDefault(current.default.arg)
+    mapped = type('Historical' + model.__name__, (), {})
+    registry().map_imperatively(mapped, table)
+    return mapped
 
 
 def copy_synthetic_rows(source_path, target_path):
@@ -17,6 +31,11 @@ def copy_synthetic_rows(source_path, target_path):
                 continue
             for row in source.execute(f'SELECT * FROM "{table}"'):
                 values = dict(zip(source_names, row))
+                if table == 'app_settings' and values['key'] == 'settlement_cycle':
+                    # This key did not exist in any pre-1.3.0 fixture schema.
+                    target_columns = [r[1] for r in target.execute('PRAGMA table_info(quarterly_settlements)')]
+                    if 'period_type' not in target_columns:
+                        continue
                 # The current synthetic masters never had codes. Older schemas
                 # require fixture-only codes; no historical customer data is used.
                 if table in {'fcs', 'fee_plans'} and 'code' in target_names:

@@ -47,6 +47,7 @@ def settlement_dict(
         "fee_plan_name": item.fee_plan.name if item.fee_plan else None,
         "year": item.year,
         "quarter": item.quarter,
+        "period_type": item.period_type,
         "start_date": item.start_date.isoformat(),
         "closing_date": item.closing_date.isoformat(),
         "days": item.days,
@@ -214,6 +215,7 @@ def invoice_dict(item: Invoice) -> dict:
         "client_name": item.client.name if item.client else None,
         "year": item.year,
         "quarter": item.quarter,
+        "period_type": item.period_type,
         "fee_plan_id": item.fee_plan_id,
         "fee_plan_name": " / ".join(dict.fromkeys(
             source.settlement.fee_plan.name for source in sources

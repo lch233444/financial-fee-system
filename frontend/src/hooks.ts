@@ -60,6 +60,7 @@ export function usePagination<T>(items: T[], resetKey: string, pageSize = 20) {
 
 export function quarterDates(year: number, quarter: number): [string, string] {
   const values: Record<number, [string, string]> = {
+    0: [`${year}-01-01`, `${year}-12-31`],
     1: [`${year}-01-01`, `${year}-03-31`],
     2: [`${year}-04-01`, `${year}-06-30`],
     3: [`${year}-07-01`, `${year}-09-30`],

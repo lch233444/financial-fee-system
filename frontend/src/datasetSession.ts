@@ -1,5 +1,6 @@
-export type Dataset = { id: string; name: string };
-export type DatasetState = { datasets: Dataset[]; active_id: string; token: string };
+import type { SettlementCycle } from "./settlementCycle";
+export type Dataset = { id: string; name: string; settlement_cycle?: SettlementCycle };
+export type DatasetState = { datasets: Dataset[]; active_id: string; token: string; settlement_cycle?: SettlementCycle };
 let state: DatasetState | null = null;
 let frozen = false;
 let stale = false;

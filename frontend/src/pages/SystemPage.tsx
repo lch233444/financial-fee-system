@@ -1,3 +1,4 @@
+import { isAnnualDataset, periodLabel, cycleText } from "../settlementCycle";
 import { TaskTabs, TaskView } from "../TaskTabs";
 import { systemMessage } from "../uiText";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -44,7 +45,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
   const backupBusyRef = useRef(false);
   const [packageYear, setPackageYear] = useState(() => new Date().getFullYear());
   const [packageQuarter, setPackageQuarter] = useState(
-    () => Math.floor(new Date().getMonth() / 3) + 1,
+    () => isAnnualDataset() ? 0 : Math.floor(new Date().getMonth() / 3) + 1,
   );
   const [restoreBusy, setRestoreBusy] = useState(false);
   const restoreBusyRef = useRef(false);
@@ -158,12 +159,12 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
       anchor.href = url;
       const disposition = response.headers.get("content-disposition") || "";
       const serverName = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-      anchor.download = serverName || `financial_system_data_package_${packageYear}_Q${packageQuarter}.zip`;
+      anchor.download = serverName || `financial_system_data_package_${packageYear}_${packageQuarter === 0 ? "Annual" : `Q${packageQuarter}`}.zip`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      notify(`${packageYear}年第${packageQuarter}季度完整数据包已生成并通过校验`);
+      notify(`${periodLabel(packageYear, packageQuarter)}完整数据包已生成并通过校验`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "数据包导出失败");
     } finally {
@@ -214,7 +215,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
         { id: "system-ai", label: "辅助识别", detail: "登录及查看连接状态" },
       ]} />
       <TaskView id="system-export" active={task === "system-export"}>
-        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><p className="compact-next">仅完整导出当前数据包的全部业务资料；以下年季仅作检查标签。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field><Field label="检查季度"><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>第一季度</option><option value={2}>第二季度</option><option value={3}>第三季度</option><option value={4}>第四季度</option></select></Field></div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
+        <Panel id="system-backup" step="导出路径 · 保留或交接资料" title="导出完整数据包" subtitle="供另一台同版本系统复核；包含导出时的全部资料"><div className="backup-action"><p className="compact-next">仅完整导出当前数据包的全部业务资料；以下期间仅作检查标签。</p><div className="data-package-period"><Field label="检查年度"><input type="number" min="2000" max="2100" value={packageYear} disabled={backupBusy} onChange={(event) => setPackageYear(Number(event.target.value))} /></Field>{!isAnnualDataset() && <Field label={cycleText("检查季度")}><select value={packageQuarter} disabled={backupBusy} onChange={(event) => setPackageQuarter(Number(event.target.value))}><option value={1}>{cycleText("第一季度")}</option><option value={2}>{cycleText("第二季度")}</option><option value={3}>{cycleText("第三季度")}</option><option value={4}>{cycleText("第四季度")}</option></select></Field>}</div><button className="primary" disabled={backupBusy} onClick={() => void backup()}>{backupBusy ? "正在生成数据包..." : "生成并下载ZIP数据包"}</button></div></Panel>
       </TaskView>
       <TaskView id="system-import" active={task === "system-import"}>
         <Panel id="system-restore" step="导入路径 · 接收并整体覆盖" title="导入完整数据包" subtitle="只接受同版本数据包；导入后完整覆盖当前数据包"><form className="backup-action" onSubmit={(event) => void restore(event)}><p className="invoice-candidate-warning">导入会整体覆盖当前数据包，不会合并或影响其他包。请先备份当前包，并确认双方系统版本一致。</p><p className="compact-next">选择 ZIP 校验后，系统将安全退出；重新启动完成导入。</p><Field label="选择完整数据包ZIP"><input aria-label="选择完整数据包ZIP" name="file" type="file" accept=".zip" required disabled={restoreBusy} /></Field><button className="danger" type="submit" disabled={restoreBusy}>{restoreBusy ? "正在校验数据包..." : "校验并安排导入"}</button></form></Panel>
@@ -240,7 +241,7 @@ export default function SystemPage({ notify }: { notify: (message: string) => vo
             <button className="ghost" type="button" disabled={assistantWorking} onClick={() => void refreshAssistant(true)}><RefreshCw size={15} />刷新状态</button>
             {assistant?.authenticated ? <button className="danger" type="button" disabled={assistantWorking} onClick={() => void logout()}><LogOut size={15} />退出ChatGPT Pro</button> : <button className="primary" type="button" disabled={assistantWorking || assistantLoading || assistant?.available === false} onClick={() => void login()}><LogIn size={15} />{assistantWorking ? "正在启动登录..." : "登录ChatGPT Pro"}</button>}
           </div>
-          <p className="workflow-next">{assistantReady ? "当前识别已就绪。前往客户与账户的新增客户，或资金与余额的导入季度结余，上传原件后主动运行智能辅助并人工复核。" : "需要智能辅助识别时，先登录并刷新确认就绪；未就绪时仍可人工复核。识别结果须人工确认才能入账。"}</p>
+          <p className="workflow-next">{assistantReady ? cycleText("当前识别已就绪。前往客户与账户的新增客户，或资金与余额的导入季度结余，上传原件后主动运行智能辅助并人工复核。") : "需要智能辅助识别时，先登录并刷新确认就绪；未就绪时仍可人工复核。识别结果须人工确认才能入账。"}</p>
           <div className="workflow-link-actions"><a className="text-link" href="#/clients">前往客户与账户</a><a className="text-link" href="#/transactions">前往资金与余额</a></div>
         </div>
       </Panel>

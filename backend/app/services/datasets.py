@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 from .. import database
 from ..config import get_settings, using_settings
 from . import backup
+from .settlement_cycle import read_cycle, CYCLES
 
 
 class Datasets:
@@ -84,7 +85,9 @@ class Datasets:
         return name.strip()
 
     def snapshot(self) -> dict:
-        return {"datasets": self.entries, "active_id": self.active, "token": self.generation}
+        entries = [{**entry, "settlement_cycle": read_cycle(self.path(entry["id"]) / "database/financial_system.sqlite3")} for entry in self.entries]
+        return {"datasets": entries, "active_id": self.active, "token": self.generation,
+                "settlement_cycle": next(entry["settlement_cycle"] for entry in entries if entry["id"] == self.active)}
 
     def save(self, entries: list[dict], active: str) -> None:
         temporary = self.root / f".datasets-{uuid4().hex}.tmp"
@@ -106,7 +109,9 @@ class Datasets:
         event.listen(engine, "connect", database._sqlite_pragmas)
         return engine
 
-    def create(self, name: str, package: Path | None = None) -> dict:
+    def create(self, name: str, package: Path | None = None, *, settlement_cycle: str = "QUARTERLY") -> dict:
+        if settlement_cycle not in CYCLES:
+            raise ValueError("请选择季度或自然年度结算")
         name = self.check_name(name)
         if any(e["name"].casefold() == name.casefold() for e in self.entries):
             raise ValueError("数据包名称已存在，请使用不同名称")
@@ -133,6 +138,9 @@ class Datasets:
                 settings.ensure_directories()
                 target_engine = self.engine_for(settings)
                 database.init_db(target_settings=settings, target_engine=target_engine)
+                if package is None and settlement_cycle == "ANNUAL":
+                    with target_engine.begin() as connection:
+                        connection.exec_driver_sql("UPDATE app_settings SET value='ANNUAL' WHERE key='settlement_cycle'")
                 # Export validates migrated schema, protected records and every file.
                 # The untouched original ZIP remains separately available for rollback.
                 backup.create_backup()
@@ -172,6 +180,10 @@ class Datasets:
             raise ValueError("目标数据包有待完成的恢复，请先重启完成恢复")
         if not settings.database_path.is_file():
             raise ValueError("数据包数据库缺失，不能切换")
+        from .dataset_upgrade import upgrade_registered_dataset
+        # The exclusive request gate prevents writes while the inactive target
+        # is backed up, migrated in isolation and restored atomically.
+        upgrade_registered_dataset(settings, self.engine_for)
         target_engine = self.engine_for(settings)
         try:
             with target_engine.connect() as connection:

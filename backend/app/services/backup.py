@@ -29,6 +29,7 @@ from .zero_fee_invoice_contract import ZERO_FEE_REVISION, zero_fee_schema_is_cur
 from .release_100_contract import RELEASE_100_REVISION, HWM_TRIGGER_SQL, release_100_schema_is_current
 from .invoice_payee_contract import PAYEE_REVISION, payee_trigger_sql_is_current
 from .workflow_guard_contract import workflow_trigger_sql_is_current, workflow_trigger_sql_is_legacy
+from .annual_period_contract import ANNUAL_REVISION, PERIOD_TRIGGER_SQL, annual_schema_is_current
 
 
 INCLUDED_DIRECTORIES = ("attachments", "statement_imports", "output")
@@ -39,6 +40,7 @@ MANIFEST_KEYS = frozenset(
     {"format", "version", "app_version", "snapshot_period", "created_at", "files"}
 )
 LEGACY_MANIFEST_KEYS = frozenset({"format", "version", "created_at", "files"})
+CURRENT_MANIFEST_KEYS = MANIFEST_KEYS | {"settlement_cycle"}
 MANIFEST_RECORD_KEYS = frozenset({"path", "sha256"})
 SNAPSHOT_PERIOD_KEYS = frozenset({"year", "quarter"})
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -59,7 +61,7 @@ SUPPORTED_DATABASE_REVISIONS = frozenset(
         "7f3c2a91b6e4",
         "c1a7d5e9b402",
         "d4f8a1c73b29",
-        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION,
+        "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION,
     }
 )
 OLD_HEAD_TRIGGER_NAMES = frozenset(
@@ -188,7 +190,7 @@ _LEGACY_REUSE_CORRECTION_FIELD = "legacy_reuse_correction_audit_id"
 _LEGACY_REUSE_REVISION = "c1a7d5e9b402"
 _LEGACY_REUSE_CORRECTION_ACTION = "LEGACY_STATEMENT_DELETE_ID_REUSE_DISAMBIGUATED"
 _LEGACY_REUSE_PROOF = "historical_delete_created_before_reused_statement"
-CURRENT_DATABASE_REVISION = ZERO_FEE_REVISION
+CURRENT_DATABASE_REVISION = ANNUAL_REVISION
 PATH_REBASE_TRIGGER_NAMES = (
     "trg_attachment_financial_history_update",
     "trg_attachment_update_block_finalized_evidence",
@@ -669,18 +671,23 @@ class RestoreStageResult:
     cleanup_warning: str | None = None
 
 
-def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None = None) -> Path:
+def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None = None, *, _source_app_version: str | None = None) -> Path:
+    # Only the audited registered-1.2.0 upgrade calls this internal option.
+    if _source_app_version not in (None, "1.2.0"):
+        raise ValueError("不支持的升级前备份版本")
     settings = get_settings()
     now = datetime.now()
     snapshot_year = now.year if snapshot_year is None else snapshot_year
-    snapshot_quarter = ((now.month - 1) // 3 + 1) if snapshot_quarter is None else snapshot_quarter
+    from .settlement_cycle import read_cycle
+    settlement_cycle = read_cycle(settings.database_path)
+    snapshot_quarter = (0 if settlement_cycle == "ANNUAL" else (now.month - 1) // 3 + 1) if snapshot_quarter is None else snapshot_quarter
     if (
         isinstance(snapshot_year, bool)
         or not isinstance(snapshot_year, int)
         or not 2000 <= snapshot_year <= 2100
         or isinstance(snapshot_quarter, bool)
         or not isinstance(snapshot_quarter, int)
-        or not 1 <= snapshot_quarter <= 4
+        or not (snapshot_quarter == 0 if settlement_cycle == "ANNUAL" else 1 <= snapshot_quarter <= 4)
     ):
         raise ValueError("数据包检查批次必须是2000至2100年及Q1至Q4")
     database_directory = settings.database_path.parent
@@ -696,9 +703,10 @@ def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None
     backup_directory = settings.data_root / "backups"
     backup_directory.mkdir(parents=True, exist_ok=True)
     timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
+    period_suffix = "Annual" if settlement_cycle == "ANNUAL" else f"Q{snapshot_quarter}"
     with tempfile.NamedTemporaryFile(
         dir=backup_directory,
-        prefix=f".financial_system_data_package_{snapshot_year}_Q{snapshot_quarter}_{timestamp}_",
+        prefix=f".financial_system_data_package_{snapshot_year}_{period_suffix}_{timestamp}_",
         suffix=".zip.tmp",
         delete=False,
     ) as temporary_file:
@@ -764,7 +772,8 @@ def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None
             manifest = {
                 "format": BACKUP_FORMAT,
                 "version": BACKUP_VERSION,
-                "app_version": APP_VERSION,
+                "app_version": _source_app_version or APP_VERSION,
+                "settlement_cycle": settlement_cycle,
                 "snapshot_period": {
                     "year": snapshot_year,
                     "quarter": snapshot_quarter,
@@ -772,6 +781,9 @@ def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None
                 "created_at": now.isoformat(),
                 "files": files,
             }
+            if _source_app_version is not None:
+                manifest.pop("settlement_cycle")
+                _validate_upgrade_revision(manifest, _sqlite_database_revision(db_copy))
             (tmp / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -787,7 +799,10 @@ def create_backup(snapshot_year: int | None = None, snapshot_quarter: int | None
 
             # Do not publish a backup filename until the exact ZIP which will
             # be returned has passed the same strict restore validation.
-            validate_backup(temporary_output_path, tmp / "validation")
+            if _source_app_version is None:
+                validate_backup(temporary_output_path, tmp / "validation")
+            else:
+                validate_backup(temporary_output_path, tmp / "validation", allow_upgrade=True)
 
         # The source and destination are in the same directory.  ``rename`` is
         # atomic and, unlike ``replace``, refuses to overwrite an unexpected
@@ -935,6 +950,9 @@ def validate_backup_archive_root(root: Path, *, allow_upgrade: bool = False) -> 
             raise ValueError("数据包数据库版本与当前系统不一致")
         if allow_upgrade:
             _validate_upgrade_revision(manifest, _sqlite_database_revision(database_path))
+        from .settlement_cycle import read_cycle
+        if manifest.get("settlement_cycle", "QUARTERLY") != read_cycle(database_path, archived=True):
+            raise ValueError("数据包清单与数据库的结算周期不一致")
         _validate_data_package_file_references(database_path, root, records)
     return manifest
 
@@ -1475,7 +1493,7 @@ def _validate_zip_member_type(member: zipfile.ZipInfo, is_directory: bool) -> No
 def _validate_upgrade_revision(manifest: dict, revision: str | None) -> None:
     # These released formats have complete current file-reference semantics.
     # Earlier formats require their matching program; never infer compatibility.
-    revisions = {"1.1.4": MEETING_REVISION, "1.1.5": MEETING_REVISION, "1.1.6": ZERO_FEE_REVISION,
+    revisions = {"1.1.4": MEETING_REVISION, "1.1.5": MEETING_REVISION, "1.1.6": ZERO_FEE_REVISION, "1.2.0": ZERO_FEE_REVISION,
                  APP_VERSION: CURRENT_DATABASE_REVISION}
     if manifest.get("app_version") not in revisions or revision != revisions[manifest["app_version"]]:
         raise ValueError("该数据包版本或数据库结构尚不支持自动升级，请先用对应版本转换")
@@ -1487,15 +1505,19 @@ def _validate_manifest(manifest: object, *, allow_upgrade: bool = False) -> dict
 
     manifest_format = manifest.get("format")
     if manifest_format == BACKUP_FORMAT:
-        if set(manifest) != MANIFEST_KEYS:
-            raise ValueError("数据包清单结构无效")
         version = manifest.get("app_version")
-        if allow_upgrade and version not in {"1.1.4", "1.1.5", "1.1.6", APP_VERSION}:
+        if allow_upgrade and version not in {"1.1.4", "1.1.5", "1.1.6", "1.2.0", APP_VERSION}:
             raise ValueError("该数据包版本暂不支持；高于当前程序的版本请先升级程序")
         if not allow_upgrade and version != APP_VERSION:
             raise ValueError(
                 f"数据包系统版本不一致：数据包为{manifest.get('app_version')}，当前系统为{APP_VERSION}"
             )
+        expected_keys = CURRENT_MANIFEST_KEYS if manifest.get("app_version") == APP_VERSION else MANIFEST_KEYS
+        if set(manifest) != expected_keys:
+            raise ValueError("数据包清单结构无效")
+        cycle = manifest.get("settlement_cycle", "QUARTERLY")
+        if cycle not in {"QUARTERLY", "ANNUAL"}:
+            raise ValueError("数据包结算周期无效")
         snapshot_period = manifest.get("snapshot_period")
         if (
             not isinstance(snapshot_period, dict)
@@ -1503,7 +1525,7 @@ def _validate_manifest(manifest: object, *, allow_upgrade: bool = False) -> dict
             or type(snapshot_period.get("year")) is not int
             or not 2000 <= snapshot_period["year"] <= 2100
             or type(snapshot_period.get("quarter")) is not int
-            or not 1 <= snapshot_period["quarter"] <= 4
+            or not (snapshot_period["quarter"] == 0 if cycle == "ANNUAL" else 1 <= snapshot_period["quarter"] <= 4)
         ):
             raise ValueError("数据包检查批次无效")
     elif manifest_format == LEGACY_BACKUP_FORMAT:
@@ -1857,13 +1879,13 @@ def validate_database_structure(connection: sqlite3.Connection) -> None:
             "7f3c2a91b6e4",
             "c1a7d5e9b402",
             "d4f8a1c73b29",
-            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION,
+            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION,
         }:
             _require_named_partial_unique_index(
                 connection,
                 "invoices",
-                "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} else "uq_invoices_active_client_period_plan",
-                ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
+                "uq_invoices_active_client_period" if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} else "uq_invoices_active_client_period_plan",
+                ("client_id", "year", "quarter") if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} else ("client_id", "year", "quarter", "fee_plan_id"),
                 "lifecycle_status IN ('DRAFT', 'ISSUING', 'ISSUED')",
             )
             _require_named_partial_unique_index(
@@ -1888,7 +1910,7 @@ def validate_database_structure(connection: sqlite3.Connection) -> None:
             "7f3c2a91b6e4",
             "c1a7d5e9b402",
             "d4f8a1c73b29",
-            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION,
+            "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION,
         }:
             settlement_columns = {
                 row[1]
@@ -2049,12 +2071,14 @@ def validate_database_structure(connection: sqlite3.Connection) -> None:
                 if database_revision == "7f3c2a91b6e4"
                 else LATEST_HEAD_TRIGGER_NAMES
             )
-            if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}:
+            if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
                 expected_trigger_names = expected_trigger_names | set(CODE_TRIGGER_SQL)
-            if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}:
+            if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
                 expected_trigger_names = expected_trigger_names | set(HWM_TRIGGER_SQL)
-            if database_revision in {MEETING_REVISION, ZERO_FEE_REVISION}:
+            if database_revision in {MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
                 expected_trigger_names = (expected_trigger_names - set(CODE_TRIGGER_SQL)) | set(EVIDENCE_TRIGGER_SQL)
+            if database_revision == ANNUAL_REVISION:
+                expected_trigger_names = expected_trigger_names | set(PERIOD_TRIGGER_SQL)
             if set(trigger_sql) != expected_trigger_names or any(
                 not trigger_sql[name].strip() for name in expected_trigger_names
             ):
@@ -2110,24 +2134,24 @@ def validate_database_structure(connection: sqlite3.Connection) -> None:
                 "trg_invoice_block_void_with_payment", ""
             ):
                 raise ValueError("备份数据库结构不兼容")
-            if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}:
+            if database_revision in {"c1a7d5e9b402", "d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
                 _validate_backup_id_high_water_settings(connection)
                 if not delete_guard_trigger_sql_is_current(trigger_sql):
                     raise ValueError("备份数据库结构不兼容")
             if database_revision in {"7f3c2a91b6e4", "c1a7d5e9b402"}:
                 if not settlement_boundary_trigger_sql_is_legacy(trigger_sql):
                     raise ValueError("备份数据库结构不兼容")
-            elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}:
+            elif database_revision in {"d4f8a1c73b29", "e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
                 if not settlement_boundary_trigger_sql_is_current(trigger_sql):
                     raise ValueError("备份数据库结构不兼容")
                 workflow_valid = (
                     workflow_trigger_sql_is_current(trigger_sql)
-                    if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}
+                    if database_revision in {"e8b2c6d91a04", PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}
                     else workflow_trigger_sql_is_legacy(trigger_sql)
                 )
                 if not workflow_valid:
                     raise ValueError("备份数据库财务流程保护结构不兼容")
-        if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION}:
+        if database_revision in {PAYEE_REVISION, INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}:
             if not payee_trigger_sql_is_current(trigger_sql):
                 raise ValueError("备份数据库收款公司保护结构不兼容")
             for table, column in (("invoices", "payee_company_id"), ("invoice_corrections", "target_company_id")):
@@ -2135,20 +2159,22 @@ def validate_database_structure(connection: sqlite3.Connection) -> None:
                 foreign_keys = {(row[3], row[2], row[4], row[6]) for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')}
                 if column not in info or info[column][2].upper() != 'INTEGER' or (column, 'companies', 'id', 'RESTRICT') not in foreign_keys:
                     raise ValueError("备份数据库收款公司字段或外键结构不兼容")
-        if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} and not invoice_group_schema_is_current(connection):
+        if database_revision in {INVOICE_GROUP_REVISION, COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not invoice_group_schema_is_current(connection):
             raise ValueError("备份数据库客户季度合并保护结构不兼容")
-        if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} and not company_scope_schema_is_current(connection, codes_removed=database_revision in {MEETING_REVISION, ZERO_FEE_REVISION}):
+        if database_revision in {COMPANY_SCOPE_REVISION, RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not company_scope_schema_is_current(connection, codes_removed=database_revision in {MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION}):
             raise ValueError("备份数据库公司解绑保护结构不兼容")
-        if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} and not release_100_schema_is_current(connection):
+        if database_revision in {RELEASE_100_REVISION, CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not release_100_schema_is_current(connection):
             raise ValueError("备份数据库首次HWM或月度编号结构不兼容")
-        if database_revision in {CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} and not correction_schema_is_current(connection):
+        if database_revision in {CORRECTION_REVISION, CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not correction_schema_is_current(connection):
             raise ValueError("备份数据库统一更正保护结构不兼容")
-        if database_revision in {CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION} and not closing_date_schema_is_current(connection):
+        if database_revision in {CLOSING_DATE_REVISION, MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not closing_date_schema_is_current(connection):
             raise ValueError("备份数据库Closing日期保护结构不兼容")
-        if database_revision in {MEETING_REVISION, ZERO_FEE_REVISION} and not meeting_schema_is_current(connection):
+        if database_revision in {MEETING_REVISION, ZERO_FEE_REVISION, ANNUAL_REVISION} and not meeting_schema_is_current(connection):
             raise ValueError("备份数据库财务会议保护结构不兼容")
-        if database_revision == ZERO_FEE_REVISION and not zero_fee_schema_is_current(connection):
+        if database_revision in {ZERO_FEE_REVISION, ANNUAL_REVISION} and not zero_fee_schema_is_current(connection):
             raise ValueError("备份数据库零金额账单保护结构不兼容")
+        if database_revision == ANNUAL_REVISION and not annual_schema_is_current(connection):
+            raise ValueError("备份数据库结算周期保护结构不兼容")
     if integrity_rows != [("ok",)]:
         raise ValueError("备份数据库完整性校验失败")
     if foreign_key_rows:

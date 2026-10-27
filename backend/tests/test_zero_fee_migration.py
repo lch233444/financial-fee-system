@@ -19,7 +19,7 @@ def test_zero_fee_migration_changes_only_amount_guard_and_revision(tmp_path, mon
     with sqlite3.connect(settings.database_path) as db:
         tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name!='alembic_version'")]
         rows = {t:db.execute(f'SELECT * FROM "{t}"').fetchall() for t in tables}
-    command.upgrade(config, 'head')
+    command.upgrade(config, ZERO_FEE_REVISION)
     after = _trigger_sql(settings.database_path)
     assert len(before) == len(after) == 60
     assert {n for n in before if before[n] != after[n]} == {'trg_invoice_validate_issue'}

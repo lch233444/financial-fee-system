@@ -223,7 +223,7 @@ class SettlementCalculateRequest(BaseModel):
     platform_id: int
     fee_plan_id: int
     year: int = Field(ge=2000, le=2200)
-    quarter: int = Field(ge=1, le=4)
+    quarter: int = Field(ge=0, le=4, description="季度包为1至4，年度包为0；服务端复验包内周期")
     start_date: date | None = None
     closing_date: date | None = None
     account_lines: list[SettlementAccountInput] = Field(min_length=1)
@@ -233,7 +233,7 @@ class InvoiceDraftCreate(BaseModel):
     payee_company_id: int | None = Field(default=None, gt=0)
     client_id: int
     year: int = Field(ge=2000, le=2200)
-    quarter: int = Field(ge=1, le=4)
+    quarter: int = Field(ge=0, le=4, description="季度包为1至4，年度包为0；服务端复验包内周期")
     # Legacy callers may send this field; it never filters the client-quarter bill.
     fee_plan_id: int | None = Field(default=None, deprecated=True)
     language: Literal["zh", "en"] = "zh"

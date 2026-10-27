@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..services.settlement_cycle import require_period
+
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
@@ -284,6 +286,7 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
 @router.post("", status_code=201)
 def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_db)) -> dict:
     _begin_immediate(db)
+    require_period(db, payload.quarter)
     client = db.get(Client, payload.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client不存在")
@@ -299,7 +302,7 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         )
     )
     if existing_group is not None:
-        raise HTTPException(status_code=409, detail="该客户和季度已有有效Invoice")
+        raise HTTPException(status_code=409, detail="该客户和结算期间已有有效Invoice")
 
     settlements = db.scalars(
         _draft_settlement_query()
@@ -312,7 +315,7 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         .order_by(QuarterlySettlement.platform_id, QuarterlySettlement.fee_plan_id, QuarterlySettlement.id)
     ).unique().all()
     if not settlements:
-        raise HTTPException(status_code=404, detail="该客户和季度没有Finalized Settlement")
+        raise HTTPException(status_code=404, detail="该客户和结算期间没有Finalized Settlement")
     correction = _validate_open_correction_sources(
         db,
         client_id=payload.client_id,
@@ -368,6 +371,7 @@ def create_invoice_draft(payload: InvoiceDraftCreate, db: Session = Depends(get_
         client_id=payload.client_id,
         year=payload.year,
         quarter=payload.quarter,
+        period_type=require_period(db, payload.quarter),
         company_id=correction.original_invoice.company_id if correction else payee_id,
         payee_company_id=payee_id,
         fc_id=anchor.fc_id,
@@ -1254,7 +1258,7 @@ def complete_invoice_correction(
         or replacement.year != original.year
         or replacement.quarter != original.quarter
     ):
-        raise HTTPException(status_code=409, detail="替代Invoice与原Invoice的Client、年度或季度不一致")
+        raise HTTPException(status_code=409, detail="替代Invoice与原Invoice的Client或结算期间不一致")
     if not _replacement_sources_follow_original(db, original, replacement):
         raise HTTPException(status_code=409, detail="替代Invoice的活动Settlement来源未通过完整replaces链覆盖原来源")
     expected_company_id = correction.target_company_id or original.receiving_company_id

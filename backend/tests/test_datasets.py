@@ -105,7 +105,7 @@ def old_package(tmp_path, version):
     settings = config.Settings(data_root=tmp_path / "legacy", codex_home=tmp_path / "old-codex", testing=True)
     settings.ensure_directories()
     with config.using_settings(settings):
-        command.upgrade(_alembic_config(settings), MEETING_REVISION)
+        command.upgrade(_alembic_config(settings), "d016f0ee1160" if version in {"1.1.6", "1.2.0"} else MEETING_REVISION)
     with closing(sqlite3.connect(settings.database_path)) as db:
         db.execute("INSERT INTO clients(id,name,status,created_at,updated_at) VALUES (1,'legacy customer','DRAFT','2026-10-23','2026-10-23')")
         db.execute("UPDATE app_settings SET value='1' WHERE key='id_high_water.clients'")
@@ -121,7 +121,7 @@ def old_package(tmp_path, version):
     return package
 
 
-@pytest.mark.parametrize("version", ["1.1.4", "1.1.5"])
+@pytest.mark.parametrize("version", ["1.1.4", "1.1.5", "1.1.6", "1.2.0"])
 def test_old_package_migrates_independently_preserves_original(workspace, tmp_path, version):
     client, manager, settings = workspace
     package = old_package(tmp_path, version)

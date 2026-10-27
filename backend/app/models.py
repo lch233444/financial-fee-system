@@ -199,6 +199,7 @@ class QuarterlySettlement(TimestampMixin, Base):
     )
     year: Mapped[int] = mapped_column(Integer, index=True)
     quarter: Mapped[int] = mapped_column(Integer, index=True)
+    period_type: Mapped[str] = mapped_column(String(20), default="QUARTERLY", server_default="QUARTERLY")
     start_date: Mapped[date] = mapped_column(Date)
     closing_date: Mapped[date] = mapped_column(Date)
     days: Mapped[int] = mapped_column(Integer)
@@ -321,6 +322,7 @@ class Invoice(TimestampMixin, Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True)
     year: Mapped[int] = mapped_column(Integer, index=True)
     quarter: Mapped[int] = mapped_column(Integer, index=True)
+    period_type: Mapped[str] = mapped_column(String(20), default="QUARTERLY", server_default="QUARTERLY")
     # Compatibility anchor only; the authoritative plans belong to each source.
     fee_plan_id: Mapped[int] = mapped_column(
         ForeignKey("fee_plans.id", ondelete="RESTRICT"), index=True

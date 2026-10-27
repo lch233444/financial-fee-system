@@ -34,7 +34,8 @@ def upgraded_closing_date_triggers(previous: dict[str, str]) -> dict[str, str]:
 
 
 def closing_date_trigger_sql_is_current(trigger_sql: dict[str, str]) -> bool:
-    sql = _normalized(trigger_sql.get(FINALIZE_TRIGGER_NAME, ""))
+    from .annual_period_contract import legacy_finalize
+    sql = _normalized(legacy_finalize(trigger_sql.get(FINALIZE_TRIGGER_NAME, "")))
     return (
         "when new.status = 'finalized' and old.status != 'finalized'" in sql
         and sql.count(_normalized(CLOSING_DATE_GUARD)) == 1

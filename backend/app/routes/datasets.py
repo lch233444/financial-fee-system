@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 class NewDataset(BaseModel):
     name: str
+    settlement_cycle: Literal["QUARTERLY", "ANNUAL"] = "QUARTERLY"
 
 
 class SwitchDataset(BaseModel):
@@ -26,7 +28,7 @@ def list_datasets():
 @router.post("")
 def create_dataset(body: NewDataset):
     try:
-        return get_datasets().create(body.name)
+        return get_datasets().create(body.name, settlement_cycle=body.settlement_cycle)
     except (ValueError, OSError, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
 

@@ -102,6 +102,8 @@ def init_db(*, target_settings=None, target_engine=None) -> None:
         for table in Base.metadata.sorted_tables:
             table.to_metadata(bootstrap_metadata)
         bootstrap_metadata.remove(bootstrap_metadata.tables["invoice_monthly_sequences"])
+        for period_table in ("quarterly_settlements", "invoices"):
+            bootstrap_metadata.tables[period_table]._columns.remove(bootstrap_metadata.tables[period_table].c.period_type)
         bootstrap_lines = bootstrap_metadata.tables["settlement_account_lines"]
         for field in ("hwm_source_type", "hwm_override_reason", "hwm_override_confirmed"):
             bootstrap_lines._columns.remove(bootstrap_lines.c[field])

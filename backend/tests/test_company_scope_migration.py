@@ -25,11 +25,14 @@ def test_migration_preserves_every_row_including_duplicate_codes_and_frozen_hist
     _seed_history(settings)
     command.upgrade(config, PREVIOUS)
     engine = create_engine(settings.database_url)
+    from historical_schema_fixtures import historical_model
+    HistoricalSettlement = historical_model(QuarterlySettlement, engine)
+    HistoricalInvoice = historical_model(Invoice, engine)
     with Session(engine) as db:
-        settlement = db.get(QuarterlySettlement, 1)
+        settlement = db.get(HistoricalSettlement, 1)
         line = db.execute(text('SELECT id, account_id, start_date, closing_date FROM settlement_account_lines WHERE settlement_id=:id'), {'id': settlement.id}).mappings().first()
         account_number = db.execute(text('SELECT account_number FROM sub_accounts WHERE id=:id'), {'id': line['account_id']}).scalar_one()
-        bill = Invoice(settlement_id=settlement.id, client_id=settlement.client_id,
+        bill = HistoricalInvoice(settlement_id=settlement.id, client_id=settlement.client_id,
                        company_id=settlement.company_id, fc_id=settlement.fc_id, fee_plan_id=settlement.fee_plan_id,
                        year=2026, quarter=1, amount_cents=12000)
         db.add(bill)

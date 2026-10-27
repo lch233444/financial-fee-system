@@ -101,6 +101,7 @@ def _mark_as_legacy_backup(manifest: dict) -> None:
     manifest["format"] = backup_service.LEGACY_BACKUP_FORMAT
     manifest.pop("app_version", None)
     manifest.pop("snapshot_period", None)
+    manifest.pop("settlement_cycle", None)
 
 
 def _mutate_archive_database(
@@ -509,7 +510,7 @@ def test_data_package_rebases_all_persisted_file_paths_for_another_computer(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
-        ).fetchone() == (60,)
+        ).fetchone() == (68,)
 
 
 def test_backup_creation_does_not_publish_or_leave_temp_when_self_validation_fails(

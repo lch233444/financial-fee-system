@@ -1,3 +1,4 @@
+import { periodLabel } from "./settlementCycle";
 import { paymentMethodLabel } from "./uiText";
 import { formatDate } from "./types";
 import { useEffect, useId, useRef, useState } from "react";
@@ -48,7 +49,7 @@ export default function PaymentEvidenceDialog({ invoice, corrections, onClose }:
   }, []);
   return <dialog className="payment-evidence-dialog" ref={dialog} aria-labelledby={titleId}
     onCancel={(event) => { event.preventDefault(); onClose(); }}>
-    <header><div><h2 id={titleId}>已付款 · 付款凭证</h2><p>{invoice.invoice_number} · {invoice.client_name} · {invoice.year}年第{invoice.quarter}季度</p></div>
+    <header><div><h2 id={titleId}>已付款 · 付款凭证</h2><p>{invoice.invoice_number} · {invoice.client_name} · {periodLabel(invoice.year, invoice.quarter)}</p></div>
       <button className="ghost icon-button" type="button" aria-label="关闭付款凭证" onClick={onClose}><X size={20} /></button></header>
     <div className="invoice-balance"><span>账单应付 <Money value={invoice.amount} /></span><span>计入本单现金 <Money value={invoice.paid_amount} /></span><span>公司承担差额 <Money value={invoice.adjustment_amount} /></span></div>
     <div className="table-wrap" tabIndex={0} role="region" aria-label="付款及原始凭证"><table><thead><tr><th>收款日期 / 方式</th><th>原收款来源</th><th>计入本单现金</th><th>凭证</th></tr></thead><tbody>

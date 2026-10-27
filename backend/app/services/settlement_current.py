@@ -21,9 +21,9 @@ from .calculation import (
     SettlementCalculation,
     aggregate_account_settlements,
     calculate_account_settlement,
-    quarter_dates,
 )
 from .settlement_period import cash_flow_conditions
+from .settlement_cycle import period_dates, require_period, period_label
 
 
 ACCOUNT_HWM_MODE = "ACCOUNT_HWM"
@@ -227,20 +227,21 @@ def calculate_current_settlement(
     if not client or not platform or not fee_plan:
         raise SettlementCurrentStateError(404, "Client、Platform或Fee Plan不存在")
     if client.status != "ACTIVE":
-        raise SettlementCurrentStateError(409, "只有Active Client可以建立季度Settlement")
+        raise SettlementCurrentStateError(409, "只有Active Client可以建立期间Settlement")
     if not client.fc_id:
         raise SettlementCurrentStateError(409, "Client必须补全FC后再Calculate")
     fc = db.get(FC, client.fc_id)
     if not fc:
         raise SettlementCurrentStateError(409, "Client FC不存在，请修正后重新Calculate")
 
-    natural_start, natural_end = quarter_dates(year, quarter)
+    require_period(db, quarter)
+    natural_start, natural_end = period_dates(year, quarter)
     start_date = default_start_date or natural_start
     closing_date = default_closing_date or natural_end
     if start_date < natural_start or start_date > natural_end:
-        raise SettlementCurrentStateError(400, "Starting Date必须位于所选季度内")
+        raise SettlementCurrentStateError(400, "Starting Date必须位于所选结算期间内")
     if closing_date < start_date or closing_date > natural_end:
-        raise SettlementCurrentStateError(400, "Closing Date必须位于所选季度且不早于Starting Date")
+        raise SettlementCurrentStateError(400, "Closing Date必须位于所选结算期间且不早于Starting Date")
 
     account_ids = [line.account_id for line in line_specs]
     if not account_ids:
@@ -264,11 +265,11 @@ def calculate_current_settlement(
             )
         if account.status != "ACTIVE":
             raise SettlementCurrentStateError(
-                409, f"Sub Account {account.account_number}不是Active，不能建立季度Settlement"
+                409, f"Sub Account {account.account_number}不是Active，不能建立期间Settlement"
             )
         if account.start_date is None:
             raise SettlementCurrentStateError(
-                409, f"Sub Account {account.account_number}缺少开始管理日期，不能建立季度Settlement"
+                409, f"Sub Account {account.account_number}缺少开始管理日期，不能建立期间Settlement"
             )
 
     duplicate_period = same_period_non_void_for_accounts(
@@ -281,7 +282,7 @@ def calculate_current_settlement(
     if duplicate_period:
         raise SettlementCurrentStateError(
             409,
-            f"同一Sub Account在{year} Q{quarter}已存在Settlement #{duplicate_period.id}，"
+            f"同一Sub Account在{period_label(year, quarter, english=quarter != 0)}已存在Settlement #{duplicate_period.id}，"
             "即使更换Platform或Fee Plan也不能重复结算",
         )
 
@@ -295,7 +296,7 @@ def calculate_current_settlement(
     if later:
         raise SettlementCurrentStateError(
             409,
-            f"存在后续Settlement #{later.id}（{later.year} Q{later.quarter}），请先按时间倒序作废后再补算",
+            f"存在后续Settlement #{later.id}（{period_label(later.year, later.quarter)}），请先按时间倒序作废后再补算",
         )
 
     current_lines: list[CurrentSettlementLine] = []
@@ -303,10 +304,10 @@ def calculate_current_settlement(
         line_start_date = spec.start_date or start_date
         line_closing_date = spec.closing_date or closing_date
         if line_start_date < natural_start or line_start_date > natural_end:
-            raise SettlementCurrentStateError(400, "账户Starting Date必须位于所选季度内")
+            raise SettlementCurrentStateError(400, "账户Starting Date必须位于所选结算期间内")
         if line_closing_date < line_start_date or line_closing_date > natural_end:
             raise SettlementCurrentStateError(
-                400, "账户Closing Date必须位于所选季度且不早于Starting Date"
+                400, "账户Closing Date必须位于所选结算期间且不早于Starting Date"
             )
 
         account = accounts[spec.account_id]
@@ -323,22 +324,22 @@ def calculate_current_settlement(
         if closing_snapshot.as_of_date != line_closing_date:
             raise SettlementCurrentStateError(400, "Closing Snapshot日期必须等于该账户Closing Date")
         if line_closing_date != natural_end and line_closing_date != account.end_date:
-            raise SettlementCurrentStateError(400, "Closing Date必须是所选季末或Sub Account当前实际退出日")
+            raise SettlementCurrentStateError(400, "Closing Date必须是所选期末或Sub Account当前实际退出日")
 
         previous_line = previous_finalized_line(
             db, account_id=spec.account_id, year=year, quarter=quarter
         )
         if previous_line:
             if spec.hwm_override_reason or spec.hwm_override_confirmed:
-                raise SettlementCurrentStateError(409, "后续季度HWM必须继承，不允许修改原因或覆盖确认")
+                raise SettlementCurrentStateError(409, "后续期间HWM必须继承，不允许修改原因或覆盖确认")
             previous = db.get(QuarterlySettlement, previous_line.settlement_id)
-            if previous.year * 4 + previous.quarter != year * 4 + quarter - 1:
-                missing_year = previous.year + (previous.quarter == 4)
-                missing_quarter = previous.quarter % 4 + 1
+            if previous.year * 4 + previous.quarter != year * 4 + quarter - (4 if quarter == 0 else 1):
+                missing_year = previous.year + (previous.quarter in (0, 4))
+                missing_quarter = 0 if quarter == 0 else previous.quarter % 4 + 1
                 raise SettlementCurrentStateError(
                     409,
                     f"Sub Account {account.account_number}必须先补齐并Finalize "
-                    f"{missing_year} Q{missing_quarter}，不能跳季结算",
+                    f"{period_label(missing_year, missing_quarter, english=quarter != 0)}，不能跳期结算",
                 )
             if previous_line.closing_snapshot_id is None or previous_line.next_hwm_cents is None:
                 raise SettlementCurrentStateError(409, "前序账户结算缺少Closing Snapshot或Next HWM")
@@ -375,7 +376,7 @@ def calculate_current_settlement(
             ):
                 raise SettlementCurrentStateError(
                     400,
-                    "首次Beginning Snapshot必须等于Starting Date；季度首日也可选择上一季末快照",
+                    "首次Beginning Snapshot必须等于Starting Date；自然期间首日也可选择紧邻前期末快照",
                 )
             beginning_snapshot_id = beginning_snapshot.id
             beginning_cents = beginning_snapshot.total_balance_cents

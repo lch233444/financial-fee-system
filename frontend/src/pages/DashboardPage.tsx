@@ -1,3 +1,4 @@
+import { isAnnualDataset, cycleText } from "../settlementCycle";
 import { TaskTabs, TaskView } from "../TaskTabs";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Banknote, BriefcaseBusiness, CircleDollarSign, UsersRound } from "lucide-react";
@@ -55,7 +56,7 @@ export default function DashboardPage() {
         <div className="workbench-heading"><div><span className="eyebrow">日常办理</span><h2 id="workbench-title">今天从哪里开始？</h2><p>新客户先建档，已有客户从本次需要的环节继续。</p></div><a className="text-link" href="#/setup">基础资料设置 <ArrowRight size={17} aria-hidden="true" /></a></div>
         <div className="task-cards">
           <a href="#/clients"><FileInput aria-hidden="true" /><strong>客户建档与查询</strong><span>导入原件或手动建立客户、账户。</span><b>进入客户与账户 <ArrowRight size={16} aria-hidden="true" /></b></a>
-          <a href="#/transactions"><WalletCards aria-hidden="true" /><strong>准备本季资料</strong><span>补充结余、供款、加款及取款凭证。</span><b>进入资金与余额 <ArrowRight size={16} aria-hidden="true" /></b></a>
+          <a href="#/transactions"><WalletCards aria-hidden="true" /><strong>{cycleText("准备本季资料")}</strong><span>补充结余、供款、加款及取款凭证。</span><b>进入资金与余额 <ArrowRight size={16} aria-hidden="true" /></b></a>
           <a href="#/settlements"><Calculator aria-hidden="true" /><strong>计算收费 / 导出 Excel</strong><span>逐账户计算，复核锁定后导出明细。</span><b>进入账单计算 <ArrowRight size={16} aria-hidden="true" /></b></a>
         </div>
         <div className="workbench-secondary"><a href="#/invoices">出具客户账单 <ArrowRight size={16} aria-hidden="true" /></a><a href="#/payments">登记收款 / 查看凭证 <ArrowRight size={16} aria-hidden="true" /></a></div>
@@ -66,11 +67,11 @@ export default function DashboardPage() {
       </TaskView>
       <TaskView id="home-overview" active={view === "home-overview"}>
       <div className="overview-heading"><h2>经营概览</h2><span>选择期间查看统计</span></div>
-      <WorkflowSection id="dashboard-period" title="统计期间" description="选择并确认年度，可进一步按季度查看。">
+      <WorkflowSection id="dashboard-period" title="统计期间" description={isAnnualDataset() ? "选择并确认统计年度。当前包按自然年度结算。" : "选择并确认年度，可进一步按季度查看。"}>
       <div className="dashboard-period">
         <div className="settlement-controls dashboard-period-controls">
           <Field group label="统计年度"><SearchableSelect label="统计年度" required value={String(year)} onChange={(value) => setYear(Number(value))} options={years.map((value) => ({ value: String(value), label: `${value}年` }))} optionLimit={years.length} centerSelectedOnOpen searchPlaceholder="输入年份搜索" /></Field>
-          <Field label="统计季度"><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">全年 · 全部季度</option><option value="1">第一季度</option><option value="2">第二季度</option><option value="3">第三季度</option><option value="4">第四季度</option></select></Field>
+          {!isAnnualDataset() && <Field label={cycleText("统计季度")}><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">{cycleText("全年 · 全部季度")}</option><option value="1">{cycleText("第一季度")}</option><option value="2">{cycleText("第二季度")}</option><option value="3">{cycleText("第三季度")}</option><option value="4">{cycleText("第四季度")}</option></select></Field>}
         </div>
       </div>
       </WorkflowSection>

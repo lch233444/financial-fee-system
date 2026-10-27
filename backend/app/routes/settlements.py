@@ -20,6 +20,7 @@ from ..models import (
 from ..money import to_cents
 from ..schemas import SettlementCalculateRequest, VoidRequest
 from ..serializers import settlement_dict
+from ..services.settlement_cycle import require_period
 from ..services.evidence_counts import snapshot_evidence_counts
 from ..services.evidence_integrity import (
     snapshot_evidence_problem,
@@ -70,6 +71,8 @@ def list_settlements(
     quarter: int | None = None,
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    if quarter is not None:
+        require_period(db, quarter)
     query = _loaded_query().order_by(QuarterlySettlement.year.desc(), QuarterlySettlement.quarter.desc())
     if year:
         query = query.where(QuarterlySettlement.year == year)
@@ -206,6 +209,7 @@ def calculate_or_update_settlement(
             fee_plan_id=payload.fee_plan_id,
             year=payload.year,
             quarter=payload.quarter,
+            period_type=require_period(db, payload.quarter),
             version_no=(latest.version_no + 1) if latest else 1,
             replaces_settlement_id=latest.id if latest and latest.status == "VOID" else None,
         )

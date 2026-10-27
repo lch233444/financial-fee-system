@@ -25,6 +25,11 @@ from .services.shutdown import get_shutdown_coordinator
 async def lifespan(_app: FastAPI):
     get_datasets().startup()
     apply_pending_restore()
+    from .services.dataset_upgrade import upgrade_registered_dataset
+    manager = get_datasets()
+    from . import database
+    database.engine.dispose()
+    upgrade_registered_dataset(get_settings(), manager.engine_for)
     init_db()
     reconcile_statement_delete_pending_files()
     sessions = BrowserSessions(get_shutdown_coordinator())

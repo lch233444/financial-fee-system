@@ -30,7 +30,7 @@ from ..models import (
 from ..money import money_string
 from ..serializers import invoice_accounting_cents, invoice_is_overdue
 from ..services.backup import create_backup, stage_restore
-from ..services.calculation import quarter_dates
+from ..services.settlement_cycle import period_dates, require_period
 from ..services.excel_export import export_settlements_to_template, file_sha256
 from ..services.export_files import generated_export_file
 from ..services.pdf_invoice import generate_settlement_pdf
@@ -130,16 +130,17 @@ def system_info() -> dict:
 @router.get("/dashboard")
 def dashboard(
     year: int | None = Query(default=None, ge=2000, le=2200),
-    quarter: int | None = Query(default=None, ge=1, le=4),
+    quarter: int | None = Query(default=None, ge=0, le=4),
     db: Session = Depends(get_db),
 ) -> dict:
+    require_period(db, quarter, optional=True)
     year = year or date.today().year
     query = select(QuarterlySettlement).where(
         QuarterlySettlement.status == "FINALIZED",
         _generated_fee_is_current(),
         QuarterlySettlement.year == year,
     )
-    if quarter:
+    if quarter is not None:
         query = query.where(QuarterlySettlement.quarter == quarter)
     settlements = db.scalars(query).all()
     invoice_query = (
@@ -154,7 +155,7 @@ def dashboard(
             Invoice.year == year,
         )
     )
-    if quarter:
+    if quarter is not None:
         invoice_query = invoice_query.where(Invoice.quarter == quarter)
     invoices = db.scalars(invoice_query).all()
     generated_fee = sum(item.service_fee_cents for item in settlements)
@@ -162,8 +163,7 @@ def dashboard(
     paid = sum(paid_cents for paid_cents, _, _ in accounting)
     outstanding = sum(outstanding_cents for _, _, outstanding_cents in accounting)
     overdue = sum(1 for invoice in invoices if invoice_is_overdue(invoice))
-    period_start = quarter_dates(year, quarter or 1)[0]
-    period_end = quarter_dates(year, quarter or 4)[1]
+    period_start, period_end = period_dates(year, quarter if quarter is not None else 0)
     managed_accounts = db.scalars(
         select(SubAccount).options(
             selectinload(SubAccount.client).selectinload(Client.fc),
@@ -242,6 +242,7 @@ def fc_report(
     quarter: int | None = None,
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    require_period(db, quarter, optional=True)
     fcs = db.scalars(select(FC).order_by(FC.name)).all()
     result: list[dict] = []
     for fc in fcs:
@@ -378,7 +379,7 @@ def export_settlement_pdf(
 @router.post("/backups")
 def make_backup(
     year: int = Query(..., ge=2000, le=2100, description="检查批次年度"),
-    quarter: int = Query(..., ge=1, le=4, description="检查批次季度"),
+    quarter: int = Query(..., ge=0, le=4, description="检查批次期间：年度包为0，季度包为1至4"),
 ) -> FileResponse:
     path = create_backup(snapshot_year=year, snapshot_quarter=quarter)
     return FileResponse(path, media_type="application/zip", filename=path.name)

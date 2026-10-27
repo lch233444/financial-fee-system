@@ -163,6 +163,35 @@ try:
     assert client.get("/api/clients").raise_for_status().json()[0]["name"] == customer["name"]
     assert client.get("/api/invoices").raise_for_status().json() == []
     report["checks"].append("independent-datasets/create/import/switch/stale-request/restart")
+    annual = client.post('/api/datasets', json={'name':'Annual synthetic customers', 'settlement_cycle':'ANNUAL'}).raise_for_status().json()
+    state = client.post('/api/datasets/switch', json={'id':annual['id']}).raise_for_status().json()
+    client.headers['X-Financial-Dataset'] = state['token']
+    assert state['settlement_cycle'] == 'ANNUAL'
+    from test_annual_settlement import calculate, finalize
+    annual_data = _group(client, 'ANNUALDIST', platform_count=1)
+    first = finalize(client, calculate(client, annual_data)[0])
+    assert first['service_fee'] == '120.00' and first['period_type'] == 'ANNUAL'
+    second = finalize(client, calculate(client, annual_data, year=2027, ending='2000.00', initial=False)[0])
+    assert second['service_fee'] == '80.00'
+    assert client.get('/api/dashboard?year=2026&quarter=1').status_code == 409
+    pdf = client.post(f"/api/exports/pdf?settlement_id={first['id']}&language=en").raise_for_status().content
+    (work/'annual-settlement.pdf').write_bytes(pdf)
+    assert 'Annual Settlement' in ''.join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+    invoice = _draft(client, annual_data, year=2026, quarter=0).raise_for_status().json()
+    invoice = client.post(f"/api/invoices/{invoice['id']}/issue", json={'issue_date':'2027-01-05'}).raise_for_status().json()
+    assert invoice['amount'] == '120.00' and invoice['period_type'] == 'ANNUAL'
+    annual_package = client.post('/api/backups?year=2026&quarter=0').raise_for_status().content
+    restored = client.post('/api/backups/restore', files={'file':('annual.zip',annual_package,'application/zip')}).raise_for_status().json()
+    assert restored['staged']
+    process.wait(timeout=30)
+    start()
+    assert client.get('/api/datasets').raise_for_status().json()['settlement_cycle'] == 'ANNUAL'
+    assert client.get('/api/invoices').raise_for_status().json()[0]['invoice_number'] == invoice['invoice_number']
+    state = client.post('/api/datasets/switch', json={'id':'primary'}).raise_for_status().json()
+    client.headers['X-Financial-Dataset'] = state['token']
+    assert state['settlement_cycle'] == 'QUARTERLY'
+    assert client.get('/api/invoices').raise_for_status().json()[0]['invoice_number'] == issued['invoice_number']
+    report['checks'].append('annual/full-year/next-year-HWM/invoice/PDF/restore/isolation')
     stop()
     report["checks"].append("safe-shutdown")
     report["status"] = "passed"

@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 import app.config as config_module
 import app.database as database_module
 from app.config import Settings
+from app.services.annual_period_contract import PERIOD_TRIGGER_SQL
 from app.services.backup import CURRENT_DATABASE_REVISION, _validate_sqlite_database
 from app.services.settlement_boundary_contract import (
     settlement_boundary_trigger_sql_is_current,
@@ -74,8 +75,8 @@ def test_7f_head_upgrades_to_delete_guard_head_with_exact_trigger_contract(
     command.upgrade(config, "head")
 
     triggers = _trigger_sql(settings.database_path)
-    assert set(triggers) == set(previous_triggers) | DELETE_GUARD_TRIGGERS | {"trg_attachment_financial_history_update", "trg_attachment_financial_history_delete", "trg_settlement_hwm_confirm_finalize"}
-    assert len(triggers) == 60
+    assert set(triggers) == set(PERIOD_TRIGGER_SQL) | set(previous_triggers) | DELETE_GUARD_TRIGGERS | {"trg_attachment_financial_history_update", "trg_attachment_financial_history_delete", "trg_settlement_hwm_confirm_finalize"}
+    assert len(triggers) == 68
     assert all(sql.strip() for sql in triggers.values())
     assert settlement_boundary_trigger_sql_is_current(triggers)
     with sqlite3.connect(settings.database_path) as connection:

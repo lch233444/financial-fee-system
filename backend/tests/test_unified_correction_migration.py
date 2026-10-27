@@ -45,7 +45,7 @@ def test_migration_preserves_open_corrections_and_all_existing_financial_fields(
         assert sql.execute('PRAGMA foreign_key_check').fetchall() == []
         for correction in corrections:
             assert sql.execute('SELECT recalculate_settlements,revision_no FROM invoice_corrections WHERE id=?', (correction['id'],)).fetchone() == (None, 1)
-        assert len(_trigger_sql(settings.database_path)) == 60
+        assert len(_trigger_sql(settings.database_path)) == 68
 
 
 def test_migration_failure_rolls_back_columns_and_triggers(tmp_path, monkeypatch):

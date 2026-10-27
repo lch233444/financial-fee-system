@@ -1,3 +1,4 @@
+import { isAnnualDataset, cycleText } from "../settlementCycle";
 import { DetailBack } from "../Progressive";
 import { TaskTabs, TaskView } from "../TaskTabs";
 import ChineseDateInput from "../ChineseDateInput";
@@ -26,10 +27,10 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
   const [detailId, setDetailId] = useState<number | null>(null);
   const [manualStep, setManualStep] = useState<"manual-client" | "manual-account">("manual-client");
   const [view, setView] = useState<"query" | "create">("query");
-  const [filters, setFilters] = useState({ ...defaultRecordFilters, year: initialYear, quarter: initialQuarter });
+  const [filters, setFilters] = useState({ ...defaultRecordFilters, year: initialYear, quarter: isAnnualDataset() ? "" : initialQuarter });
   const [queryScope, setQueryScope] = useState<"period" | "all">("period");
   const [clientStatus, setClientStatus] = useState("");
-  useEffect(() => { setQueryScope("period"); setFilters((current) => ({ ...current, year: initialYear, quarter: initialQuarter })); }, [initialYear, initialQuarter]);
+  useEffect(() => { setQueryScope("period"); setFilters((current) => ({ ...current, year: initialYear, quarter: isAnnualDataset() ? "" : initialQuarter })); }, [initialYear, initialQuarter]);
   const managedAccounts = accounts.data.filter((account) => accountManagedInPeriod(account, filters.year, filters.quarter));
   const filteredAccounts = (queryScope === "all" ? accounts.data : managedAccounts).filter((account) => !filters.feePlanId || account.fee_plan_id === Number(filters.feePlanId));
   const managedClientIds = new Set(managedAccounts.map((account) => account.client_id));
@@ -129,7 +130,7 @@ export default function ClientsPage({ notify, initialYear = "2026", initialQuart
       <div className="tabs workflow-tabs" role="group" aria-label="客户功能"><button type="button" className={view === "query" ? "active" : ""} aria-pressed={view === "query"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("query"); setAccountClientId(""); }}>查询信息</button><button type="button" className={view === "create" ? "active" : ""} aria-pressed={view === "create"} disabled={importerBusy || formAction.pending || Boolean(deletingKey)} onClick={() => { setView("create"); setFilters((current) => ({ ...current, clientId: "" })); }}>新增客户</button></div>
       {error ? <ErrorBanner message={error} /> : null}
       <div hidden={view !== "query" || detailId !== null}>
-      {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? "全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。" : "所选期间实际受管客户；中介人及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
+      {view === "query" ? <Panel id="client-directory" title="客户与账户清单" subtitle={queryScope === "all" ? cycleText("全部客户档案，不受年／季度限制；选择客户后查看账户，空档案仍按原有规则删除。") : "所选期间实际受管客户；中介人及收费计划显示当前档案关系，无收费或尚未出账单也计入。"}>
 
         <Field label="查询范围"><select value={queryScope} disabled={Boolean(deletingKey)} onChange={(event) => { setQueryScope(event.target.value as "period" | "all"); setFilters((current) => ({ ...current, clientId: "" })); }}><option value="period">所选期间在管客户</option><option value="all">全部档案</option></select></Field>
         <RecordFilters showPeriod={queryScope === "period"} value={filters} onChange={setFilters} clients={clients.data} accounts={accounts.data} fcs={fcs.data} plans={plans.data} clientLabel="查询客户账户" disabled={Boolean(deletingKey)}>

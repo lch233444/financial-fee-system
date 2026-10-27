@@ -1,3 +1,4 @@
+import { cycleText } from "../settlementCycle";
 import { TaskTabs, TaskView } from "../TaskTabs";
 import { type FormEvent, lazy, Suspense, useMemo, useState } from "react";
 import SearchableSelect from "../SearchableSelect";
@@ -20,7 +21,7 @@ type Supplement = { type: "SNAPSHOT" | "TRANSACTION"; id: number; label: string 
 async function uploadProofs(data: FormData, entityType: string, required: boolean): Promise<number[]> {
   const files = data.getAll("files").filter((file): file is File => file instanceof File && file.size > 0);
   if (required && !files.length) throw new Error("请至少选择一份凭证，再保存记录。");
-  if (entityType === "SNAPSHOT" && files.some((file) => !/\.(png|jpe?g)$/i.test(file.name))) throw new Error("手动导入季度结余只接受 JPG 或 PNG 图片，每张图片单独上传。");
+  if (entityType === "SNAPSHOT" && files.some((file) => !/\.(png|jpe?g)$/i.test(file.name))) throw new Error(cycleText("手动导入季度结余只接受 JPG 或 PNG 图片，每张图片单独上传。"));
   const ids: number[] = [];
   for (const file of files) {
     const payload = new FormData(); payload.set("entity_type", entityType); payload.set("file", file);
@@ -115,7 +116,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
         const attachmentIds = await uploadProofs(data, "SNAPSHOT", true);
         return postJson("/api/balance-snapshots", { account_id: Number(data.get("account_id")), as_of_date: data.get("date"),
           total_balance: data.get("balance"), remark: data.get("remark") || null, attachment_ids: attachmentIds });
-      }, afterSave: () => setSnapshotAccountId(""), refresh, message: "季度结余与图片凭证已一并保存",
+      }, afterSave: () => setSnapshotAccountId(""), refresh, message: cycleText("季度结余与图片凭证已一并保存"),
     });
   }
   function submitCorrection(event: FormEvent<HTMLFormElement>) {
@@ -140,16 +141,16 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
       }, afterSave: () => setSupplement(null), refresh, message: "历史记录的凭证已补存",
     });
   }
-  const accountSelect = (kind: "transaction" | "snapshot", disabled: boolean) => <Field group label="子账户"><SearchableSelect name="account_id" label={kind === "transaction" ? "资金记录账户" : "季度结余账户"} required value={kind === "transaction" ? transactionAccountId : snapshotAccountId} onChange={kind === "transaction" ? setTransactionAccountId : setSnapshotAccountId} disabled={disabled || !filters.clientId} placeholder="搜索并选择账户" searchPlaceholder="搜索账户…" options={filteredAccounts.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>;
+  const accountSelect = (kind: "transaction" | "snapshot", disabled: boolean) => <Field group label="子账户"><SearchableSelect name="account_id" label={kind === "transaction" ? "资金记录账户" : cycleText("季度结余账户")} required value={kind === "transaction" ? transactionAccountId : snapshotAccountId} onChange={kind === "transaction" ? setTransactionAccountId : setSnapshotAccountId} disabled={disabled || !filters.clientId} placeholder="搜索并选择账户" searchPlaceholder="搜索账户…" options={filteredAccounts.map((item) => ({ value: String(item.id), label: accountIdentityLabel(item) }))} /></Field>;
   const identity = (id: number, fallback: string) => { const account = accountById.get(id); return <><strong>{account?.client_name || "客户资料待核对"}</strong><small className="cell-note">{account ? accountIdentityDetail(account) : fallback}</small></>; };
   const remarkField = (type: string, disabled: boolean, initial = "") => <Field label={type === "CONTRIBUTION" ? "加款备注（必填）" : "备注"} hint={type === "CONTRIBUTION" ? "请填写加款说明，至少2字；系统自动附上到账日期、户口和金额，总长度不超过500字。" : undefined}><textarea name="remark" rows={2} defaultValue={initial} required={type === "CONTRIBUTION"} minLength={type === "CONTRIBUTION" ? 2 : undefined} maxLength={type === "CONTRIBUTION" ? 500 : undefined} disabled={disabled} /></Field>;
 
   return <div className="workflow-page">
-    <PageHeader title="资金与余额" subtitle="准备收费所需的结余和资金凭证。先选客户，再查询记录或补充本季资料。" />
+    <PageHeader title="资金与余额" subtitle={cycleText("准备收费所需的结余和资金凭证。先选客户，再查询记录或补充本季资料。")} />
     {error ? <ErrorBanner message={error} /> : null}
     <TaskTabs label="资料任务" value={task} onChange={setTask} disabled={busy} items={[
       { id: "cash-query", label: "记录查询", detail: "核对已有资金、结余及凭证" },
-      { id: "cash-balance", label: "导入季度结余", detail: "识别原件或手动填写" },
+      { id: "cash-balance", label: cycleText("导入季度结余"), detail: "识别原件或手动填写" },
       { id: "cash-entry", label: "登记资金变动", detail: "供款、加款或取款" },
     ]} />
     <Panel id="cash-context" title="选择客户与期间">
@@ -176,7 +177,7 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
         {snapshots.loading || accounts.loading || settlements.loading ? <Loading /> : visibleSnapshots.length ? <div tabIndex={0} role="region" aria-label="历史结余表" className="table-wrap balance-ledger-table"><table><thead><tr><th>结余日期</th><th>客户／平台／账户</th><th>结余金额</th><th>凭证</th></tr></thead><tbody>{visibleSnapshots.map((item) => <tr key={item.id}>
           <td>{formatDate(item.as_of_date)}{item.opening ? <small className="cell-note">期初结余</small> : null}</td><td>{identity(item.account_id, item.account_number)}</td><td><Money value={item.total_balance} /></td>
           <td>{item.statement_import_id || recordProofs("SNAPSHOT", item.id).length ? <button className="text-link snapshot-source-link" type="button" onClick={() => showProofs("SNAPSHOT", item.id, item.statement_import_id)}>查看原始凭证</button> : <><span>待补凭证</span><button className="ghost" type="button" disabled={busy} onClick={() => setSupplement({ type: "SNAPSHOT", id: item.id, label: `${formatDate(item.as_of_date)} · ${item.account_number} · 港币 ${item.total_balance}` })}>补存凭证</button></>}</td>
-        </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有历史结余" : "请先搜索并选定客户"} detail="显示本季结余及按账户结算规则适用的期初结余。" />}
+        </tr>)}</tbody></table></div> : <EmptyState title={filters.clientId ? "当前筛选没有历史结余" : "请先搜索并选定客户"} detail={cycleText("显示本季结余及按账户结算规则适用的期初结余。")} />}
       </section>
       </TaskView>
       {visibleAttachments.length ? <details className="record-archive"><summary>结算凭证归档 · {visibleAttachments.length}份</summary><div tabIndex={0} role="region" aria-label="结算凭证归档" className="table-wrap"><table><thead><tr><th>记录</th><th>文件</th><th>归档时间</th><th>操作</th></tr></thead><tbody>{visibleAttachments.map((item) => <tr key={item.id}><td>{item.entity_type === "SNAPSHOT" ? "历史结余" : item.entity_type === "TRANSACTION" ? "资金记录" : "历史账户凭证"} #{item.entity_id}{item.superseded ? <small className="cell-note">旧凭证（已替换，保留追溯）</small> : null}</td><td>{item.original_name}</td><td>{formatDateTime(item.created_at)}</td><td><button className="text-link" type="button" onClick={() => setPreviewDocuments([{ path: `/api/attachments/${item.id}/file`, title: "结算凭证原件", filename: item.original_name }])}>查看原件</button></td></tr>)}</tbody></table></div></details> : null}
@@ -193,9 +194,9 @@ export default function TransactionsPage({ notify }: { notify: (message: string)
     </Panel>
     </TaskView>
     <TaskView id="cash-balance" active={task === "cash-balance"}>
-    <Panel id="balance-import" title="导入季度结余" subtitle="上传原始账单识别并人工确认，或填写结余并附上图片凭证。">
+    <Panel id="balance-import" title={cycleText("导入季度结余")} subtitle="上传原始账单识别并人工确认，或填写结余并附上图片凭证。">
       <div className="tabs workflow-tabs" role="group" aria-label="结余导入方式"><button type="button" aria-pressed={importMode === "auto"} className={importMode === "auto" ? "active" : ""} disabled={busy} onClick={() => setImportMode("auto")}>原件识别导入</button><button type="button" aria-pressed={importMode === "manual"} className={importMode === "manual" ? "active" : ""} disabled={busy} onClick={() => setImportMode("manual")}>手动填写并附图</button></div>
-      {importMode === "auto" ? showImporter ? <div className="workflow-embedded"><Suspense fallback={<Loading />}><ImportsPage notify={notify} onBusyChange={setImporterBusy} embedded guided onConfirmed={() => { void refresh(); void accounts.reload(); void clients.reload(); }} /></Suspense></div> : <div className="import-entry"><ol className="workflow-outline" aria-label="原件识别导入步骤"><li>上传原始账单</li><li>选择导入记录并查看原件</li><li>核对客户、账户及结余，确认保存</li></ol><button className="primary" type="button" onClick={() => setShowImporter(true)}>开始导入季度结余</button></div> : <form className="form-grid" onSubmit={(event) => void submitSnapshot(event)}>
+      {importMode === "auto" ? showImporter ? <div className="workflow-embedded"><Suspense fallback={<Loading />}><ImportsPage notify={notify} onBusyChange={setImporterBusy} embedded guided onConfirmed={() => { void refresh(); void accounts.reload(); void clients.reload(); }} /></Suspense></div> : <div className="import-entry"><ol className="workflow-outline" aria-label="原件识别导入步骤"><li>上传原始账单</li><li>选择导入记录并查看原件</li><li>核对客户、账户及结余，确认保存</li></ol><button className="primary" type="button" onClick={() => setShowImporter(true)}>{cycleText("开始导入季度结余")}</button></div> : <form className="form-grid" onSubmit={(event) => void submitSnapshot(event)}>
         <WorkflowStep number={1} title="选择结余账户" detail={selectedClient ? `当前客户：${selectedClient.name}。请选择本次结余对应的账户。` : "请先在上方“选择客户与期间”选定客户，再选择本次结余的账户。"} />
         {accountSelect("snapshot", busy)}
         <WorkflowStep number={2} title="填写结余资料" />

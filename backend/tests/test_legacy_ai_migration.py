@@ -250,7 +250,7 @@ def test_unstamped_complete_9d_shape_runs_0_2_14_migration_instead_of_false_head
         )
         assert connection.execute(
             text("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
-        ).scalar_one() == 60
+        ).scalar_one() == 68
         settlement_columns = {
             row[1]
             for row in connection.exec_driver_sql(
@@ -297,7 +297,7 @@ def test_unstamped_complete_0_2_14_shape_runs_delete_guard_migration(
                 text("SELECT name FROM sqlite_master WHERE type='trigger'")
             )
         }
-    assert len(triggers) == 60
+    assert len(triggers) == 68
     assert {
         "trg_client_delete_no_cascade",
         "trg_account_delete_no_cascade",

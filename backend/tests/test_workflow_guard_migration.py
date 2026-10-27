@@ -28,6 +28,8 @@ HEAD = CURRENT_DATABASE_REVISION
 
 def _seed_history(settings, *, finalize_q3=True):
     engine = create_engine(settings.database_url)
+    from historical_schema_fixtures import historical_model
+    HistoricalSettlement = historical_model(QuarterlySettlement, engine)
     # Seed the actual historical schema, not columns introduced by later releases.
     historical_tables = {model: Table(model.__tablename__, MetaData(), autoload_with=engine)
                          for model in (SettlementAccountLine, FC, FeePlan, Attachment)}
@@ -78,7 +80,7 @@ def _seed_history(settings, *, finalize_q3=True):
                 contribution_cents=contribution, withdrawal_cents=0,
                 original_hwm_cents=beginning.total_balance_cents, fee_rate_bps=2000,
             ).to_dict()
-            row = add(QuarterlySettlement, client_id=client.id, platform_id=platform.id,
+            row = add(HistoricalSettlement, client_id=client.id, platform_id=platform.id,
                       fee_plan_id=plan.id, company_id=company.id, fc_id=fc.id,
                       year=2026, quarter=quarter,
                       previous_settlement_id=previous.settlement_id if previous else None, **values)
@@ -103,11 +105,18 @@ def _seed_history(settings, *, finalize_q3=True):
 
 
 def _business_rows(path):
+    """Compare pre-annual business columns; annual migration has its own full audit."""
     with sqlite3.connect(path) as connection:
         tables = [row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('alembic_version', 'sqlite_sequence') ORDER BY name"
         )]
-        return {table: connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
+        result = {}
+        for table in tables:
+            names = [r[1] for r in connection.execute(f'PRAGMA table_info("{table}")') if r[1] != 'period_type']
+            projection = ','.join(f'"{name}"' for name in names)
+            condition = "WHERE key != 'settlement_cycle'" if table == 'app_settings' else ''
+            result[table] = connection.execute(f'SELECT {projection} FROM "{table}" {condition} ORDER BY rowid').fetchall()
+        return result
 
 
 def test_upgrade_preserves_skipped_history_and_locks_every_used_cash_date(tmp_path, monkeypatch):
@@ -124,7 +133,7 @@ def test_upgrade_preserves_skipped_history_and_locks_every_used_cash_date(tmp_pa
         before[table] = [row[:3] + row[4:] for row in before[table]]
     after['attachments'] = [row[:-1] for row in after['attachments']]
     assert after == before
-    assert len(_trigger_sql(settings.database_path)) == 60
+    assert len(_trigger_sql(settings.database_path)) == 68
     assert workflow_trigger_sql_is_current(_trigger_sql(settings.database_path))
     engine = create_engine(settings.database_url)
     with Session(engine) as db:
